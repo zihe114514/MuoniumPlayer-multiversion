@@ -12,8 +12,8 @@ import java.util.List;
 
 public final class TransparentPresetDomain implements PresetDomain {
     public static final String ID = "transparent";
-    private static final KeyPolicy POLICY = KeyPolicy.builder().facet(Facet.MOTION, "enabled", "compression", "width").build();
-    private static final List<String> SHARE_KEYS = Collections.unmodifiableList(Arrays.asList("enabled", "compression", "width"));
+    private static final KeyPolicy POLICY = KeyPolicy.builder().facet(Facet.MOTION, "enabled", "compression", "width", "cameraFollows").build();
+    private static final List<String> SHARE_KEYS = Collections.unmodifiableList(Arrays.asList("enabled", "compression", "width", "cameraFollows"));
     public String id() { return ID; }
     public String displayName() { return "通透模式"; }
     public int fragmentVersion() { return 1; }
@@ -24,7 +24,8 @@ public final class TransparentPresetDomain implements PresetDomain {
     public JsonObject defaults() { return TransparentMode.defaultsJson(); }
     public void apply(JsonObject state, CompatReport report) {
         TransparentMode.applyAll(bool(state.get("enabled"), TransparentMode.isEnabled()),
-                number(state.get("compression"), TransparentMode.compressionPercent()), number(state.get("width"), TransparentMode.widthPercent()));
+                number(state.get("compression"), TransparentMode.compressionPercent()), number(state.get("width"), TransparentMode.widthPercent()),
+                bool(state.get("cameraFollows"), TransparentMode.cameraFollows()));
     }
     static boolean bool(JsonElement value, boolean fallback) {
         try { return value != null && value.isJsonPrimitive() ? value.getAsBoolean() : fallback; }

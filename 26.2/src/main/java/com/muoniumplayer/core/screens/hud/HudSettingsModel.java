@@ -1457,146 +1457,6 @@ public final class HudSettingsModel {
                                 toggle("语音广播", "开着放歌时，附近玩家会在你所在位置听到正在放的音乐（走 Simple Voice Chat 的语音通道，你还能同时正常说话）。需要你和服务器都装 Simple Voice Chat；没插麦克风时广播不出声；电台/直播流不广播。关闭只停广播，不影响你本地听歌。",
                                         VoicechatBroadcast::isEnabled,
                                         () -> VoicechatBroadcast.setEnabled(!VoicechatBroadcast.isEnabled()))),
-                        new Group("通透模式", HudSettingsIcons.SPEED,
-                                toggle("\"通透模式\"", "整活特效：跟着正在放的音乐节拍，把视野里的生物和玩家（含自己）像果冻一样压扁再回弹。节拍是实时从播放信号上测的，任何歌都自动卡点；只在本机画面生效，不改变碰撞箱。",
-                                        TransparentMode::isEnabled,
-                                        () -> TransparentMode.setEnabled(!TransparentMode.isEnabled())),
-                                slider(HudSetting.TRANSPARENT_COMPRESSION,
-                                        "鼓点最响那一刻压多扁：50% 就是压到一半高。0 等于不压，只看别人变宽。"),
-                                slider(HudSetting.TRANSPARENT_WIDTH,
-                                        "压扁的同时往两边涨多少：50% 就是模型横向胖一半。深度不变。"),
-                                toggle("陀螺模式", "整活特效：跟着正在放的音乐节拍，让人物模型每拍甩动一步（默认 90°，一圈四拍）。拍点是实时从播放信号上测的，任何歌都自动卡点；暂停时定格在当前角度。",
-                                        MusicSpin::isEnabled,
-                                        () -> MusicSpin.setEnabled(!MusicSpin.isEnabled())),
-                                choice("转给谁看", "「只本机画面」只改你屏幕上的模型，服务器和其他玩家看不到；两个发包档会把旋转写进朝向数据让所有人看到——那在服务器上等价于 spinbot，可能被反作弊盯上，风险自担。",
-                                        MusicSpin::modeLabel,
-                                        MusicSpin::cycleMode,
-                                        MusicSpin.modeLabels(),
-                                        MusicSpin::setModeByLabel,
-                                        MusicSpin::isEnabled),
-                                choice("转谁", "本机画面里谁跟着音乐转。发包档永远转你自己（那是「你」在网络上转），这一档只管你眼前看到的范围。",
-                                        MusicSpin::rangeLabel,
-                                        MusicSpin::cycleRange,
-                                        MusicSpin.rangeLabels(),
-                                        MusicSpin::setRangeByLabel,
-                                        MusicSpin::isEnabled),
-                                slider(HudSetting.SPIN_STEP,
-                                        "每个拍点甩多少度：90° 就是一圈四拍，180° 一圈两拍。转速自动跟 BPM 走，歌越快甩越急。", MusicSpin::isEnabled),
-                                toggle("头乱晃", "在陀螺模式之上再给头部加戏：左右乱晃 / 低头旋转 / 360°转头三档可选。纯本机画面效果，别人看不到；暂停时头部缓缓回正。",
-                                        MusicSpin::isHeadShakeEnabled,
-                                        () -> MusicSpin.setHeadShakeEnabled(!MusicSpin.isHeadShakeEnabled()),
-                                        MusicSpin::isEnabled),
-                                choice("头部动作", "乱晃：两个不合拍的频率叠出来左右摇加点头；低头旋转：头压低 65° 看地面身体继续转；360°转头：头相对身体匀速整圈，一圈四拍跟 BPM 走。",
-                                        MusicSpin::headStyleLabel,
-                                        MusicSpin::cycleHeadStyle,
-                                        MusicSpin.headStyleLabels(),
-                                        MusicSpin::setHeadStyleByLabel,
-                                        () -> MusicSpin.isEnabled() && MusicSpin.isHeadShakeEnabled())),
-                        new Group("卡点运镜", HudSettingsIcons.SPEED,
-                                toggle("卡点运镜", "电影化自动运镜：播放中挂机一阵后，镜头按音乐节拍在「环绕玩家 / 风景 / 移动生物」之间切换，切点压在拍点上；任何输入立即恢复你的视角。开关与全部参数存在 cine.json。",
-                                        CineSettings::isEnabled,
-                                        () -> CineSettings.setEnabled(!CineSettings.isEnabled())),
-                                choice("挂机多久启动", "播放中持续无输入多少秒后进入运镜。越长越接近屏保，越短越容易在你操作间隙突然接管。",
-                                        () -> {
-                                            int s = CineSettings.idleSeconds();
-                                            return s + " 秒";
-                                        },
-                                        () -> {
-                                            int s = CineSettings.idleSeconds();
-                                            int[] steps = {10, 30, 60, 120, 300, 600};
-                                            int idx = 0;
-                                            for (int i = 0; i < steps.length; i++) if (s >= steps[i]) idx = i;
-                                            idx = (idx + 1) % steps.length;
-                                            CineSettings.setIdleSeconds(steps[idx]);
-                                        },
-                                        new String[]{"10 秒", "30 秒", "60 秒", "2 分钟", "5 分钟", "10 分钟"},
-                                        v -> {
-                                            int minutes = v.endsWith("分钟") ? Integer.parseInt(v.replace(" 分钟", "").replace("分钟", "").trim()) : 0;
-                                            CineSettings.setIdleSeconds(minutes > 0 ? minutes * 60 : 10);
-                                        },
-                                        CineSettings::isEnabled),
-                                choice("切换频率", "每个镜头多久切一次。拍数越少切换越密（MV 快切感），越多越舒缓；实际时长受歌曲快慢与能量影响，但不会短于下面的「最短镜头」。仅参考节拍的会话生效。",
-                                        () -> CineSettings.shotBeats() + " 拍",
-                                        () -> CineSettings.setShotBeats(
-                                                CineSettings.shotBeats() >= 16 ? 2 : CineSettings.shotBeats() * 2),
-                                        new String[]{"2 拍", "4 拍", "8 拍", "16 拍"},
-                                        v -> CineSettings.setShotBeats(Integer.parseInt(v.replace(" 拍", "").trim())),
-                                        CineSettings::isEnabled),
-                                choice("最短镜头", "再快的歌，单个镜头也不短于这个秒数：防快歌闪切看晕。默认 3 秒；调到 1 秒就是极限快切。",
-                                        () -> {
-                                            float f = CineSettings.minShotSeconds();
-                                            return f == (int) f ? (int) f + " 秒" : f + " 秒";
-                                        },
-                                        () -> CineSettings.setMinShotSeconds(
-                                                CineSettings.minShotSeconds() >= 12f ? 1f
-                                                        : Math.round((CineSettings.minShotSeconds() + 1f) * 10f) / 10f),
-                                        new String[]{"1 秒", "2 秒", "3 秒", "5 秒", "8 秒", "12 秒"},
-                                        v -> CineSettings.setMinShotSeconds(Float.parseFloat(v.replace(" 秒", "").trim())),
-                                        CineSettings::isEnabled),
-                                choice("运镜速度", "镜头内环绕/推拉的速度乘数。0 = 机位冻结（只剩切镜），2 以上相当激进。",
-                                        () -> {
-                                            float f = CineSettings.speedMultiplier();
-                                            return f == (int) f ? (int) f + "×" : f + "×";
-                                        },
-                                        () -> CineSettings.setSpeedMultiplier(Math.round(CineSettings.speedMultiplier() * 10f) >= 40f
-                                                ? 0f : Math.round((CineSettings.speedMultiplier() + 0.1f) * 10f) / 10f),
-                                        new String[]{"0×", "0.5×", "0.7×", "1×", "1.5×", "2×", "3×", "4×"},
-                                        v -> CineSettings.setSpeedMultiplier(
-                                                Float.parseFloat(v.replace("×", "").trim())),
-                                        CineSettings::isEnabled),
-                                toggle("隐藏 HUD", "运镜时隐藏全部 HUD（退出时恢复原状）。注意：隐藏时转场遮罩与黑边仍会显示。",
-                                        CineSettings::hideHud,
-                                        () -> CineSettings.setHideHud(!CineSettings.hideHud()),
-                                        CineSettings::isEnabled),
-                                toggle("电影黑边", "画面顶部与底部各加一条黑边（宽银幕造型）。每侧高度 13% ≈ 2.39:1。",
-                                        CineSettings::showCinematicBars,
-                                        () -> CineSettings.setShowCinematicBars(!CineSettings.showCinematicBars()),
-                                        CineSettings::isEnabled),
-                                toggle("追踪生物", "允许镜头专门切给附近正在移动的生物；敌对生物与蝙蝠默认排除。",
-                                        CineSettings::enableMobFocus,
-                                        () -> CineSettings.setEnableMobFocus(!CineSettings.enableMobFocus()),
-                                        CineSettings::isEnabled),
-                                toggle("鼓点变焦", "鼓点上 FOV 瞬间冲出再回落（呼吸冲击感）。0% 等于关闭。",
-                                        () -> CineSettings.fovPunchDegrees() > 0f,
-                                        () -> CineSettings.setFovPunchDegrees(
-                                                CineSettings.fovPunchDegrees() > 0f ? 0f : 8f),
-                                        CineSettings::isEnabled),
-                                choice("转场效果", "切镜瞬间的全屏遮罩样式：黑淡 / 白淡 / 横擦 / 竖擦 / 光圈。循环选择；要混用多种去改 cine.json 的 transitionMask 位掩码。",
-                                        () -> {
-                                            int m = CineSettings.transitionMask();
-                                            if (m == 0) return "硬切";
-                                            if (m == 0b00001) return "黑淡";
-                                            if (m == 0b00010) return "白淡";
-                                            if (m == 0b00100) return "横擦";
-                                            if (m == 0b01000) return "竖擦";
-                                            if (m == 0b10000) return "光圈";
-                                            if (m == CineSettings.TRANSITION_MASK_ALL) return "全部随机";
-                                            return "自定义 " + Integer.bitCount(m) + " 种";
-                                        },
-                                        () -> {
-                                            // 单选循环:黑淡→白淡→横擦→竖擦→光圈→硬切→黑淡;全开/自定义归位到黑淡
-                                            int m = CineSettings.transitionMask();
-                                            int next = switch (m) {
-                                                case 0b00001 -> 0b00010;
-                                                case 0b00010 -> 0b00100;
-                                                case 0b00100 -> 0b01000;
-                                                case 0b01000 -> 0b10000;
-                                                case 0b10000 -> 0b00001;
-                                                default -> 0b00001;
-                                            };
-                                            CineSettings.setTransitionMask(next);
-                                        },
-                                        new String[]{"硬切", "黑淡", "白淡", "横擦", "竖擦", "光圈", "全部随机", "自定义"},
-                                        v -> CineSettings.setTransitionMask(switch (v) {
-                                            case "硬切" -> 0;
-                                            case "黑淡" -> 0b00001;
-                                            case "白淡" -> 0b00010;
-                                            case "横擦" -> 0b00100;
-                                            case "竖擦" -> 0b01000;
-                                            case "光圈" -> 0b10000;
-                                            default -> CineSettings.TRANSITION_MASK_ALL;
-                                        }),
-                                        CineSettings::isEnabled)),
                         new Group("基本设置", HudSettingsIcons.SPEED,
                                 toggle("无缝切换", "打开后提前解码下一首并交叉淡化；关掉则切歌时先停下再重新下载解码，中间有静音间隙。",
                                         new BooleanSupplier() {
@@ -1786,6 +1646,158 @@ public final class HudSettingsModel {
                                             public void run() { cycleStrengthStep(); }
                                         }, STRENGTH_STEPS, HudSettingsModel::setStrengthStep))),
 
+                new Category("fun", "娱乐", "整活特效：跟着节拍压扁、转圈、甩头与自动运镜", 0xFFB58CFF, HudSettingsIcons.SPEED,
+                        new Group("通透模式", HudSettingsIcons.SPEED,
+                                toggle("\"通透模式\"", "整活特效：跟着正在放的音乐节拍，把视野里的生物和玩家（含自己）像果冻一样压扁再回弹。节拍是实时从播放信号上测的，任何歌都自动卡点；只在本机画面生效，不改变碰撞箱。",
+                                        TransparentMode::isEnabled,
+                                        () -> TransparentMode.setEnabled(!TransparentMode.isEnabled())),
+                                toggle("镜头跟随压扁", "开：自己的镜头眼高跟着压扁一起下沉（老口径，第一人称会上下颠）；关：镜头纹丝不动，压扁动画只在第三人称/别人身上可见。默认关。",
+                                        TransparentMode::cameraFollows,
+                                        () -> TransparentMode.setCameraFollows(!TransparentMode.cameraFollows())),
+                                slider(HudSetting.TRANSPARENT_COMPRESSION,
+                                        "鼓点最响那一刻压多扁：50% 就是压到一半高。0 等于不压，只看别人变宽。"),
+                                slider(HudSetting.TRANSPARENT_WIDTH,
+                                        "压扁的同时往两边涨多少：50% 就是模型横向胖一半。深度不变。"),
+                                toggle("陀螺模式", "整活特效：跟着正在放的音乐节拍，让人物模型每拍甩动一步（默认 90°，一圈四拍）。拍点是实时从播放信号上测的，任何歌都自动卡点；暂停时定格在当前角度。",
+                                        MusicSpin::isEnabled,
+                                        () -> MusicSpin.setEnabled(!MusicSpin.isEnabled())),
+                                choice("转给谁看", "「只本机画面」只改你屏幕上的模型，服务器和其他玩家看不到；两个发包档会把旋转写进朝向数据让所有人看到——那在服务器上等价于 spinbot，可能被反作弊盯上，风险自担。",
+                                        MusicSpin::modeLabel,
+                                        MusicSpin::cycleMode,
+                                        MusicSpin.modeLabels(),
+                                        MusicSpin::setModeByLabel,
+                                        MusicSpin::isEnabled),
+                                choice("转谁", "本机画面里谁跟着音乐转。发包档永远转你自己（那是「你」在网络上转），这一档只管你眼前看到的范围。",
+                                        MusicSpin::rangeLabel,
+                                        MusicSpin::cycleRange,
+                                        MusicSpin.rangeLabels(),
+                                        MusicSpin::setRangeByLabel,
+                                        MusicSpin::isEnabled),
+                                slider(HudSetting.SPIN_STEP,
+                                        "每个拍点甩多少度：90° 就是一圈四拍，180° 一圈两拍。转速自动跟 BPM 走，歌越快甩越急。", MusicSpin::isEnabled),
+                                slider(HudSetting.SPIN_BASE_SPEED,
+                                        "不按节拍时的基础转速（度/秒）：拍与拍之间也匀速前进，不再停顿；0 退回纯拍点步进。节拍来时弹簧照样加速甩一步。", MusicSpin::isEnabled),
+                                toggle("头乱晃", "在陀螺模式之上再给头部加戏：左右乱晃 / 低头旋转 / 360°转头三档可选。纯本机画面效果，别人看不到；暂停时头部缓缓回正。",
+                                        MusicSpin::isHeadShakeEnabled,
+                                        () -> MusicSpin.setHeadShakeEnabled(!MusicSpin.isHeadShakeEnabled()),
+                                        MusicSpin::isEnabled),
+                                choice("头部动作", "乱晃：两个不合拍的频率叠出来左右摇加点头；低头旋转：头压低 65° 看地面身体继续转；360°转头：头相对身体匀速整圈，一圈四拍跟 BPM 走。",
+                                        MusicSpin::headStyleLabel,
+                                        MusicSpin::cycleHeadStyle,
+                                        MusicSpin.headStyleLabels(),
+                                        MusicSpin::setHeadStyleByLabel,
+                                        () -> MusicSpin.isEnabled() && MusicSpin.isHeadShakeEnabled()),
+                                choice("头部给谁看", "「只本机画面」别人看不到；「发包·真实朝向」把头部动作叠进真实朝向包，其他人看到你整个人（身体+头）跟着甩——协议里头部朝向由朝向包推导，头身分离没法单独发。会被反作弊盯上，风险自担。",
+                                        MusicSpin::headPacketLabel,
+                                        MusicSpin::cycleHeadPacket,
+                                        MusicSpin.headPacketLabels(),
+                                        MusicSpin::setHeadPacketByLabel,
+                                        () -> MusicSpin.isEnabled() && MusicSpin.isHeadShakeEnabled())),
+                        new Group("卡点运镜", HudSettingsIcons.SPEED,
+                                toggle("卡点运镜", "电影化自动运镜：播放中挂机一阵后，镜头按音乐节拍在「环绕玩家 / 风景 / 移动生物」之间切换，切点压在拍点上；任何输入立即恢复你的视角。开关与全部参数存在 cine.json。",
+                                        CineSettings::isEnabled,
+                                        () -> CineSettings.setEnabled(!CineSettings.isEnabled())),
+                                choice("挂机多久启动", "播放中持续无输入多少秒后进入运镜。越长越接近屏保，越短越容易在你操作间隙突然接管。",
+                                        () -> {
+                                            int s = CineSettings.idleSeconds();
+                                            return s + " 秒";
+                                        },
+                                        () -> {
+                                            int s = CineSettings.idleSeconds();
+                                            int[] steps = {10, 30, 60, 120, 300, 600};
+                                            int idx = 0;
+                                            for (int i = 0; i < steps.length; i++) if (s >= steps[i]) idx = i;
+                                            idx = (idx + 1) % steps.length;
+                                            CineSettings.setIdleSeconds(steps[idx]);
+                                        },
+                                        new String[]{"10 秒", "30 秒", "60 秒", "2 分钟", "5 分钟", "10 分钟"},
+                                        v -> {
+                                            int minutes = v.endsWith("分钟") ? Integer.parseInt(v.replace(" 分钟", "").replace("分钟", "").trim()) : 0;
+                                            CineSettings.setIdleSeconds(minutes > 0 ? minutes * 60 : 10);
+                                        },
+                                        CineSettings::isEnabled),
+                                choice("切换频率", "每个镜头多久切一次。拍数越少切换越密（MV 快切感），越多越舒缓；实际时长受歌曲快慢与能量影响，但不会短于下面的「最短镜头」。仅参考节拍的会话生效。",
+                                        () -> CineSettings.shotBeats() + " 拍",
+                                        () -> CineSettings.setShotBeats(
+                                                CineSettings.shotBeats() >= 16 ? 2 : CineSettings.shotBeats() * 2),
+                                        new String[]{"2 拍", "4 拍", "8 拍", "16 拍"},
+                                        v -> CineSettings.setShotBeats(Integer.parseInt(v.replace(" 拍", "").trim())),
+                                        CineSettings::isEnabled),
+                                choice("最短镜头", "再快的歌，单个镜头也不短于这个秒数：防快歌闪切看晕。默认 3 秒；调到 1 秒就是极限快切。",
+                                        () -> {
+                                            float f = CineSettings.minShotSeconds();
+                                            return f == (int) f ? (int) f + " 秒" : f + " 秒";
+                                        },
+                                        () -> CineSettings.setMinShotSeconds(
+                                                CineSettings.minShotSeconds() >= 12f ? 1f
+                                                        : Math.round((CineSettings.minShotSeconds() + 1f) * 10f) / 10f),
+                                        new String[]{"1 秒", "2 秒", "3 秒", "5 秒", "8 秒", "12 秒"},
+                                        v -> CineSettings.setMinShotSeconds(Float.parseFloat(v.replace(" 秒", "").trim())),
+                                        CineSettings::isEnabled),
+                                choice("运镜速度", "镜头内环绕/推拉的速度乘数。0 = 机位冻结（只剩切镜），2 以上相当激进。",
+                                        () -> {
+                                            float f = CineSettings.speedMultiplier();
+                                            return f == (int) f ? (int) f + "×" : f + "×";
+                                        },
+                                        () -> CineSettings.setSpeedMultiplier(Math.round(CineSettings.speedMultiplier() * 10f) >= 40f
+                                                ? 0f : Math.round((CineSettings.speedMultiplier() + 0.1f) * 10f) / 10f),
+                                        new String[]{"0×", "0.5×", "0.7×", "1×", "1.5×", "2×", "3×", "4×"},
+                                        v -> CineSettings.setSpeedMultiplier(
+                                                Float.parseFloat(v.replace("×", "").trim())),
+                                        CineSettings::isEnabled),
+                                toggle("隐藏 HUD", "运镜时隐藏全部 HUD（退出时恢复原状）。注意：隐藏时转场遮罩与黑边仍会显示。",
+                                        CineSettings::hideHud,
+                                        () -> CineSettings.setHideHud(!CineSettings.hideHud()),
+                                        CineSettings::isEnabled),
+                                toggle("电影黑边", "画面顶部与底部各加一条黑边（宽银幕造型）。每侧高度 13% ≈ 2.39:1。",
+                                        CineSettings::showCinematicBars,
+                                        () -> CineSettings.setShowCinematicBars(!CineSettings.showCinematicBars()),
+                                        CineSettings::isEnabled),
+                                toggle("追踪生物", "允许镜头专门切给附近正在移动的生物；敌对生物与蝙蝠默认排除。",
+                                        CineSettings::enableMobFocus,
+                                        () -> CineSettings.setEnableMobFocus(!CineSettings.enableMobFocus()),
+                                        CineSettings::isEnabled),
+                                toggle("鼓点变焦", "鼓点上 FOV 瞬间冲出再回落（呼吸冲击感）。0% 等于关闭。",
+                                        () -> CineSettings.fovPunchDegrees() > 0f,
+                                        () -> CineSettings.setFovPunchDegrees(
+                                                CineSettings.fovPunchDegrees() > 0f ? 0f : 8f),
+                                        CineSettings::isEnabled),
+                                choice("转场效果", "切镜瞬间的全屏遮罩样式：黑淡 / 白淡 / 横擦 / 竖擦 / 光圈。循环选择；要混用多种去改 cine.json 的 transitionMask 位掩码。",
+                                        () -> {
+                                            int m = CineSettings.transitionMask();
+                                            if (m == 0) return "硬切";
+                                            if (m == 0b00001) return "黑淡";
+                                            if (m == 0b00010) return "白淡";
+                                            if (m == 0b00100) return "横擦";
+                                            if (m == 0b01000) return "竖擦";
+                                            if (m == 0b10000) return "光圈";
+                                            if (m == CineSettings.TRANSITION_MASK_ALL) return "全部随机";
+                                            return "自定义 " + Integer.bitCount(m) + " 种";
+                                        },
+                                        () -> {
+                                            // 单选循环:黑淡→白淡→横擦→竖擦→光圈→硬切→黑淡;全开/自定义归位到黑淡
+                                            int m = CineSettings.transitionMask();
+                                            int next = switch (m) {
+                                                case 0b00001 -> 0b00010;
+                                                case 0b00010 -> 0b00100;
+                                                case 0b00100 -> 0b01000;
+                                                case 0b01000 -> 0b10000;
+                                                case 0b10000 -> 0b00001;
+                                                default -> 0b00001;
+                                            };
+                                            CineSettings.setTransitionMask(next);
+                                        },
+                                        new String[]{"硬切", "黑淡", "白淡", "横擦", "竖擦", "光圈", "全部随机", "自定义"},
+                                        v -> CineSettings.setTransitionMask(switch (v) {
+                                            case "硬切" -> 0;
+                                            case "黑淡" -> 0b00001;
+                                            case "白淡" -> 0b00010;
+                                            case "横擦" -> 0b00100;
+                                            case "竖擦" -> 0b01000;
+                                            case "光圈" -> 0b10000;
+                                            default -> CineSettings.TRANSITION_MASK_ALL;
+                                        }),
+                                        CineSettings::isEnabled))),
                 new Category("界面与主题", "主题皮肤、频谱、真玻璃和播放器来源", 0xFFE59AC8, HudSettingsIcons.NOTE,
                         new Group("音乐频谱", HudSettingsIcons.NOTE,
                                 toggle("音乐频谱", "频谱总开关；隐藏时停止采样，不影响播放。",

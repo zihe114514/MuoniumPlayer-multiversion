@@ -127,7 +127,9 @@ public enum HudSetting {
     ISLAND_MINI_CARD_SCALE("迷你卡缩放", 0.50f, 2.00f),
     // ---- 陀螺模式（接在末尾：这套条目的 id 有按序号落盘的历史，插中间会让老配置错位）----
     /** 每个拍点步进的转角（度）：90 就是一圈四拍。开关与档位存共享层 MusicSpin，这里只出滑条。 */
-    SPIN_STEP("陀螺模式 每拍转角", 30.0f, 360.0f);
+    SPIN_STEP("陀螺模式 每拍转角", 30.0f, 360.0f),
+    /** 不按节拍时的基础恒速（度/秒）：0 退回纯拍点步进，节拍间完全停住。 */
+    SPIN_BASE_SPEED("陀螺模式 过渡转速", 0.0f, 360.0f);
 
     private final String label;
     private final float min;
@@ -230,6 +232,7 @@ public enum HudSetting {
             case TRANSPARENT_WIDTH: return TransparentMode.widthPercent();
             case ISLAND_MINI_CARD_SCALE: return HudConfig.islandMiniCardScale;
             case SPIN_STEP: return MusicSpin.stepDegrees();
+            case SPIN_BASE_SPEED: return MusicSpin.baseSpeed();
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -318,6 +321,7 @@ public enum HudSetting {
             case TRANSPARENT_WIDTH: TransparentMode.setWidthPercent(clamped); break;
             case ISLAND_MINI_CARD_SCALE: HudConfig.islandMiniCardScale = clamped; break;
             case SPIN_STEP: MusicSpin.setStepDegrees(clamped); break;
+            case SPIN_BASE_SPEED: MusicSpin.setBaseSpeed(clamped); break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }

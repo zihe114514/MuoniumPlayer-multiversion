@@ -83,6 +83,10 @@ public final class MusicSpin {
     public static final float DEFAULT_STEP = 90f;
     public static final boolean DEFAULT_HEAD_SHAKE = false;
     public static final int DEFAULT_HEAD_STYLE = HEAD_WOBBLE;
+    public static final boolean DEFAULT_HEAD_PACKET = false;
+    /** 过渡转速默认 45°/s：慢到不抢戏、快到节拍间不停滞。 */
+    public static final float DEFAULT_BASE_SPEED = 45f;
+    public static final float BASE_MIN = 0f, BASE_MAX = 360f;
 
     private static boolean loaded;
     private static boolean enabled = DEFAULT_ENABLED;
@@ -90,18 +94,34 @@ public final class MusicSpin {
     private static int range = DEFAULT_RANGE;
     /** 每个拍点步进的转角（度）：90 就是一圈四拍，120 BPM 时角速度约 180°/s。 */
     private static float stepDegrees = DEFAULT_STEP;
-    /** 头乱晃总开关：开在陀螺模式之下，本机视觉，与发包档位正交。 */
+    /** 头乱晃总开关：开在陀螺模式之下，与发包档位正交。 */
     private static boolean headShake = DEFAULT_HEAD_SHAKE;
     private static int headStyle = DEFAULT_HEAD_STYLE;
+    /** 头乱晃发包开关：开 = 头部动作叠进真实朝向包（yaw+pitch），其他人可见。 */
+    private static boolean headPacket = DEFAULT_HEAD_PACKET;
+    /** 过渡转速（度/秒）：不按节拍时的基础恒速，节拍间的过渡不再停顿。 */
+    private static float baseSpeed = DEFAULT_BASE_SPEED;
 
     // ---- 头部状态（渲染线程单消费者，与弹簧同款去重纪律）----
     /** 活性包络 0..1：开了头乱晃但刚进入/离开活性窗口时，头部角度按它缓入缓出，不瞬移。 */
     private static float headEnvelope;
-    /** 360°转头档的累计角（度）：只在活性窗口内推进，暂停冻结、恢复无跳变。 */
+    /** 360°转头档的累计角（度）：一圈四拍（BPM 驱动，兜底 180°/s），活性窗口内推进、
+     * 暂停冻结。pitch 不另设时钟——按累计角的两倍频正弦与之锁定，球面扫掠才丝滑。
+     */
     private static float headTurnAngle;
+    /**
+     * 本帧头部输出缓存（度）：advance 里按当前风格算好，本机渲染（headDeltas）与
+     * 发包（packetYaw/packetPitch）同源同值——同帧多消费者吃同一份。
+     */
+    private static float headYawOut;
+    private static float headPitchOut;
+    /** onClientTick 收到的真实俯仰：REAL 档相机俯仰覆盖的加法基底。 */
+    private static float lastRealPitch;
 
     // ---- 弹簧与步进（渲染线程 + client tick 单消费者；见 advance）----
-    /** 弹簧当前角（度，无界累计，消费侧各自 wrap）。 */
+    /** 基础恒速累计角（度，无界）：过渡转速 × 活性时长，节拍间的「底速」。 */
+    private static float baseAngle;
+    /** 弹簧当前位移（度，相对量）：节拍步进的目标由它带着速度追。 */
     private static float springAngle;
     /** 弹簧当前角速度（度/秒）。 */
     private static float springVelocity;
@@ -119,6 +139,7 @@ public final class MusicSpin {
 
     /** 开关翻转时把弹簧归位：关着积累的角度不该在下次开着的首帧突然甩出来。 */
     private static void resetSpring() {
+        baseAngle = 0f;
         springAngle = 0f;
         springVelocity = 0f;
         targetAngle = 0f;
@@ -129,6 +150,9 @@ public final class MusicSpin {
         activeUntilNanos = 0L;
         headEnvelope = 0f;
         headTurnAngle = 0f;
+        headYawOut = 0f;
+        headPitchOut = 0f;
+        lastRealPitch = 0f;
     }
 
     private MusicSpin() {
@@ -144,7 +168,7 @@ public final class MusicSpin {
 
     public static void setEnabled(boolean value) {
         resetSpring(); // 开关翻转即归位：关着积累的角度不该在下次开着的首帧突然甩出来
-        write(value, null, null, null, null, null);
+        write(value, null, null, null, null, null, null, null);
     }
 
     public static int mode() {
@@ -155,7 +179,7 @@ public final class MusicSpin {
     }
 
     public static void setMode(int value) {
-        write(null, value, null, null, null, null);
+        write(null, value, null, null, null, null, null, null);
     }
 
     public static int range() {
@@ -166,7 +190,7 @@ public final class MusicSpin {
     }
 
     public static void setRange(int value) {
-        write(null, null, value, null, null, null);
+        write(null, null, value, null, null, null, null, null);
     }
 
     public static float stepDegrees() {
@@ -177,7 +201,18 @@ public final class MusicSpin {
     }
 
     public static void setStepDegrees(float value) {
-        write(null, null, null, value, null, null);
+        write(null, null, null, value, null, null, null, null);
+    }
+
+    public static float baseSpeed() {
+        load();
+        synchronized (LOCK) {
+            return baseSpeed;
+        }
+    }
+
+    public static void setBaseSpeed(float value) {
+        write(null, null, null, null, null, null, value, null);
     }
 
     public static boolean isHeadShakeEnabled() {
@@ -188,7 +223,7 @@ public final class MusicSpin {
     }
 
     public static void setHeadShakeEnabled(boolean value) {
-        write(null, null, null, null, value, null);
+        write(null, null, null, null, value, null, null, null);
     }
 
     public static int headStyle() {
@@ -199,7 +234,18 @@ public final class MusicSpin {
     }
 
     public static void setHeadStyle(int value) {
-        write(null, null, null, null, null, value);
+        write(null, null, null, null, null, value, null, null);
+    }
+
+    public static boolean isHeadPacketEnabled() {
+        load();
+        synchronized (LOCK) {
+            return headPacket;
+        }
+    }
+
+    public static void setHeadPacketEnabled(boolean value) {
+        write(null, null, null, null, null, null, null, value);
     }
 
     // ---- 设置页的 choice 辅助（与 FocusVolumeDucker 的 choice 接线同构）----
@@ -207,6 +253,7 @@ public final class MusicSpin {
     private static final String[] MODE_LABELS = {"只本机画面", "发包·视角跟着转", "发包·视角不动"};
     private static final String[] RANGE_LABELS = {"只有自己", "其他玩家", "全部生物玩家"};
     private static final String[] HEAD_LABELS = {"左右乱晃", "低头旋转", "360°转头"};
+    private static final String[] HEAD_PACKET_LABELS = {"只本机画面", "发包·真实朝向"};
 
     public static String[] modeLabels() {
         return MODE_LABELS.clone();
@@ -266,6 +313,27 @@ public final class MusicSpin {
         for (int i = 0; i < HEAD_LABELS.length; i++) {
             if (HEAD_LABELS[i].equals(label)) {
                 setHeadStyle(i);
+                return;
+            }
+        }
+    }
+
+    public static String[] headPacketLabels() {
+        return HEAD_PACKET_LABELS.clone();
+    }
+
+    public static String headPacketLabel() {
+        return HEAD_PACKET_LABELS[headPacket ? 1 : 0];
+    }
+
+    public static void cycleHeadPacket() {
+        setHeadPacketEnabled(!headPacket);
+    }
+
+    public static void setHeadPacketByLabel(String label) {
+        for (int i = 0; i < HEAD_PACKET_LABELS.length; i++) {
+            if (HEAD_PACKET_LABELS[i].equals(label)) {
+                setHeadPacketEnabled(i == 1);
                 return;
             }
         }
@@ -334,15 +402,36 @@ public final class MusicSpin {
      * @return {@link Float#NaN} 表示不动朝向；否则是「发包·视角跟着转」档此刻应写入
      *         的真实 yaw。返回值由树内代码写回 {@code player}，共享层不碰 MC 符号。
      */
-    public static float onClientTick(boolean inWorld, float realYaw) {
+    public static float onClientTick(boolean inWorld, float realYaw, float realPitch) {
         if (!isEnabled()) {
             return Float.NaN;
         }
+        lastRealPitch = realPitch;
         float angle = advance();
         if (mode() == MODE_PACKET_REAL && inWorld && nowNanos() < activeUntilNanos) {
-            return wrapDegrees(angle);
+            float yaw = wrapDegrees(angle);
+            if (headShake && headPacket) {
+                yaw = wrapDegrees(yaw + headYawOut);
+            }
+            return yaw;
         }
         return Float.NaN;
+    }
+
+    /**
+     * REAL 档（视角跟着转）的相机俯仰覆盖：头乱晃发包开着时，真实俯仰也叠上头部
+     * 动作——服务器从俯仰推导你的抬头/点头，其他人可见。代价是自己的视角跟着点头
+     * （derp 档的本意）；NaN = 不动。
+     */
+    public static float cameraPitchOverride() {
+        load();
+        if (!enabled || !headShake || !headPacket || mode() != MODE_PACKET_REAL) {
+            return Float.NaN;
+        }
+        if (nowNanos() >= activeUntilNanos) {
+            return Float.NaN;
+        }
+        return clampPitch(lastRealPitch + headPitchOut);
     }
 
     /**
@@ -352,13 +441,40 @@ public final class MusicSpin {
      * 活性窗口后，下一个 yRot 差值包会把服务端朝向自然收敛回真实相机，无跳变。</p>
      */
     public static float packetYaw(float realYaw) {
-        if (!isEnabled() || mode() != MODE_PACKET_SILENT) {
+        load();
+        if (!enabled) {
             return realYaw;
+        }
+        boolean active = nowNanos() < activeUntilNanos;
+        float body = mode() == MODE_PACKET_SILENT && active
+                ? wrapDegrees(lastFrameAngle) : realYaw;
+        if (headShake && headPacket && active) {
+            // 头部 yaw 动作叠进包层：LOCAL 档叠在真实相机 yaw 上（人照常看，头在甩），
+            // SILENT 档叠在身体总角上。协议没有「头相对身体」通道，其他人看到的是
+            // 整个人跟着甩——这是服务端推导头部的唯一来源。
+            return wrapDegrees(body + headYawOut);
+        }
+        return body;
+    }
+
+    /**
+     * {@code sendPosition} 内 xRot 读取的替换点（树内 @Redirect 调）：头乱晃发包开且
+     * 活跃时，把头部 pitch 动作叠在真实俯仰上——低头档=压 65°、乱晃/转头=点头扫掠，
+     * 其他人可见。加法语义：自己的相机不受影响，服务端自行钳 ±90。
+     */
+    public static float packetPitch(float realPitch) {
+        load();
+        if (!enabled || !headShake || !headPacket) {
+            return realPitch;
         }
         if (nowNanos() >= activeUntilNanos) {
-            return realYaw;
+            return realPitch;
         }
-        return wrapDegrees(lastFrameAngle);
+        return clampPitch(realPitch + headPitchOut);
+    }
+
+    private static float clampPitch(float pitch) {
+        return pitch > 90f ? 90f : pitch < -90f ? -90f : pitch;
     }
 
     /** 范围档判定：控制本机画面里谁在转。 */
@@ -402,23 +518,45 @@ public final class MusicSpin {
         // 头部：活性包络缓入缓出（不瞬移）+ 360°转头档的匀速累计（暂停冻结）。
         // 与弹簧同一个 dt 口径；包络的目标位读字段不进锁（调用链上 load 已发生过）。
         if (dt > 0f) {
+            // 基础转速：活性窗口内恒速前进——「不按节拍时也在转」，节拍间的过渡
+            // 不再停顿；暂停（窗口过期）冻结，与弹簧的定格口径一致。
+            if (now < activeUntilNanos) {
+                baseAngle += clampFloat(baseSpeed, BASE_MIN, BASE_MAX) * dt;
+            }
             float envTarget = enabled && headShake && now < activeUntilNanos ? 1f : 0f;
             headEnvelope += (envTarget - headEnvelope) * Math.min(1f, dt * HEAD_ENV_RATE);
             if (headEnvelope < 0.001f) {
                 headEnvelope = 0f;
-            } else {
+            } else if (headStyle == HEAD_TURN) {
+                // 匀速整圈 × 包络：缓入缓出全程角速度连续，丝滑不抽搐。
                 headTurnAngle += turnDegreesPerSec() * dt * headEnvelope;
+            }
+            if (enabled && headShake) {
+                float[] out = headDeltasFor(headStyle, headEnvelope, now / 1.0e9f, headTurnAngle);
+                headYawOut = out[0];
+                headPitchOut = out[1];
+            } else {
+                headYawOut = 0f;
+                headPitchOut = 0f;
             }
         }
 
         if (dt <= 0f) {
-            return springAngle; // 首帧：不动
+            return totalAngle(); // 首帧：不动
         }
         float[] next = integrate(springAngle, springVelocity, targetAngle, dt);
         springAngle = next[0];
         springVelocity = next[1];
-        lastFrameAngle = springAngle;
-        return springAngle;
+        lastFrameAngle = totalAngle();
+        return lastFrameAngle;
+    }
+
+    /**
+     * 身体总角 = 基础恒速角（过渡转速 × 活性时长）+ 节拍弹簧位移——前者保证
+     * 节拍间丝滑前进，后者在拍点上加速补转一步（欠阻尼过冲是「甩」的手感）。
+     */
+    private static float totalAngle() {
+        return baseAngle + springAngle;
     }
 
     /**
@@ -432,17 +570,17 @@ public final class MusicSpin {
         return (long) (periodSeconds * 0.75 * 1.0e9);
     }
 
+    /** 360°转头档的角速度：90°/拍 = 一圈四拍，BPM 驱动；拿不到按 120 BPM 兜底。 */
+    private static float turnDegreesPerSec() {
+        float bpm = BeatPulseSource.bpm();
+        return bpm > 0f ? bpm / 60f * 90f : 180f;
+    }
+
     /** 升沿 + 不应期判定：拍点包络从阈值下冲上阈值，且距上次步进满一个不应期。纯函数。 */
     static boolean shouldStep(float pulse, float lastPulse, long nowNanos, long lastStepNanos,
                               long refractory) {
         return pulse > STEP_EDGE_THRESHOLD && lastPulse <= STEP_EDGE_THRESHOLD
                 && nowNanos - lastStepNanos >= refractory;
-    }
-
-    /** 360°转头档的角速度：90°/拍 = 一圈四拍，BPM 驱动；拿不到按 120 BPM 兜底。 */
-    private static float turnDegreesPerSec() {
-        float bpm = BeatPulseSource.bpm();
-        return bpm > 0f ? bpm / 60f * 90f : 180f;
     }
 
     /**
@@ -470,7 +608,7 @@ public final class MusicSpin {
             return ZERO_DELTAS;
         }
         advance();
-        return headDeltasFor(headStyle, headEnvelope, nowNanos() / 1.0e9f, headTurnAngle);
+        return new float[] {headYawOut, headPitchOut};
     }
 
     /** 头部三种动作的纯数学：包络缩好幅度，yaw/pitch 直接进渲染态/模型头部件。 */
@@ -482,9 +620,13 @@ public final class MusicSpin {
             case HEAD_DOWN:
                 // 低头旋转：头压低看地面，身体继续转——经典 derp 画风。
                 return new float[] {0f, HEAD_DOWN_PITCH * env};
-            case HEAD_TURN:
-                // 360°转头：头相对身体匀速整圈（一圈四拍）；wrap 后角度语义不变。
-                return new float[] {wrapDegrees(turnAngle) * env, 0f};
+            case HEAD_TURN: {
+                // 360°转头：yaw 匀速整圈 + pitch 按累计角两倍频正弦上下扫——
+                // 球面扫掠覆盖左右与上下，全程正弦无折角，丝滑；wrap 后角度语义不变。
+                float pitch = HEAD_TURN_PITCH
+                        * (float) Math.sin(turnAngle * ((float) Math.PI / 180f) * 2f);
+                return new float[] {wrapDegrees(turnAngle) * env, pitch * env};
+            }
             default:
                 // 左右乱晃：两个不相称频率的正弦叠 yaw + 一个慢正弦点头——
                 // 「乱」来自频率互质不重合，节拍感有但不死板。
@@ -536,6 +678,8 @@ public final class MusicSpin {
     private static final float HEAD_DOWN_PITCH = 65f;
     /** 包络速率（1/秒）：~0.3s 缓入缓出，头部不瞬移。 */
     private static final float HEAD_ENV_RATE = 8f;
+    /** 360°转头的 pitch 扫掠幅度（度）：一圈点头两回，上抬与下压对称。 */
+    private static final float HEAD_TURN_PITCH = 30f;
     private static final float WOBBLE_YAW = 30f;
     private static final float WOBBLE_YAW2 = 16f;
     private static final float WOBBLE_PITCH = 14f;
@@ -552,7 +696,8 @@ public final class MusicSpin {
      */
     static final class SpinProbe {
         private final float stepDegrees;
-        private float angle;
+        private float base;
+        private float offset;
         private float velocity;
         private float target;
         private float lastPulse;
@@ -562,19 +707,28 @@ public final class MusicSpin {
             this.stepDegrees = clampFloat(stepDegrees, STEP_MIN, STEP_MAX);
         }
 
-        /** 喂一帧：pulse 是这一帧的节拍脉冲，nowNanos 是这一帧的时钟。返回推进后的角。 */
+        /** 喂一帧（无基础转速的旧口径，老测试用）。 */
         float step(float pulse, float dtSeconds, long nowNanos, long refractoryNanos) {
+            return step(pulse, dtSeconds, nowNanos, refractoryNanos, 0f);
+        }
+
+        /** 喂一帧：pulse 是这一帧的节拍脉冲，nowNanos 是这一帧的时钟。返回推进后的总角。 */
+        float step(float pulse, float dtSeconds, long nowNanos, long refractoryNanos, float baseDegPerSec) {
             if (shouldStep(pulse, lastPulse, nowNanos, lastStepNanos, refractoryNanos)) {
                 target += stepDegrees;
                 lastStepNanos = nowNanos;
             }
             lastPulse = pulse;
             float dt = Math.max(0f, Math.min(MAX_FRAME_SECONDS, dtSeconds));
-            if (dt == 0f) return angle;
-            float[] next = integrate(angle, velocity, target, dt);
-            angle = next[0];
+            if (dt == 0f) return base + offset;
+            // 基础转速与生产 advance 同口径：活性（脉冲高过地板）才前进。
+            if (pulse > ACTIVE_PULSE_FLOOR) {
+                base += clampFloat(baseDegPerSec, BASE_MIN, BASE_MAX) * dt;
+            }
+            float[] next = integrate(offset, velocity, target, dt);
+            offset = next[0];
             velocity = next[1];
-            return angle;
+            return base + offset;
         }
     }
 
@@ -605,7 +759,8 @@ public final class MusicSpin {
      * 预设域（{@code SpinPresetDomain}）的批量应用入口，与 {@link TransparentMode#applyAll} 同构。
      */
     public static void applyAll(boolean enable, int modeValue, int rangeValue, float step,
-                                boolean headShakeValue, int headStyleValue) {
+                                boolean headShakeValue, int headStyleValue, float baseSpeedValue,
+                                boolean headPacketValue) {
         load();
         synchronized (LOCK) {
             if (enabled != enable) resetSpring();
@@ -615,6 +770,10 @@ public final class MusicSpin {
             if (Float.isFinite(step)) stepDegrees = Math.max(STEP_MIN, Math.min(STEP_MAX, step));
             headShake = headShakeValue;
             if (headStyleValue >= HEAD_MIN && headStyleValue <= HEAD_MAX) headStyle = headStyleValue;
+            if (Float.isFinite(baseSpeedValue)) {
+                baseSpeed = Math.max(BASE_MIN, Math.min(BASE_MAX, baseSpeedValue));
+            }
+            headPacket = headPacketValue;
             try {
                 JsonConfigStorage.writeObject(ConfigPaths.SPIN_MODE, GSON, toJsonLocked());
             } catch (java.io.IOException failure) {
@@ -638,6 +797,8 @@ public final class MusicSpin {
         root.addProperty("step", DEFAULT_STEP);
         root.addProperty("headShake", DEFAULT_HEAD_SHAKE);
         root.addProperty("headStyle", DEFAULT_HEAD_STYLE);
+        root.addProperty("baseSpeed", DEFAULT_BASE_SPEED);
+        root.addProperty("headPacket", DEFAULT_HEAD_PACKET);
         return root;
     }
 
@@ -649,11 +810,14 @@ public final class MusicSpin {
         root.addProperty("step", stepDegrees);
         root.addProperty("headShake", headShake);
         root.addProperty("headStyle", headStyle);
+        root.addProperty("baseSpeed", baseSpeed);
+        root.addProperty("headPacket", headPacket);
         return root;
     }
 
     private static void write(Boolean enable, Integer modeValue, Integer rangeValue, Float step,
-                              Boolean headShakeValue, Integer headStyleValue) {
+                              Boolean headShakeValue, Integer headStyleValue, Float baseSpeedValue,
+                              Boolean headPacketValue) {
         load();
         synchronized (LOCK) {
             if (enable != null && enable != enabled) resetSpring();
@@ -667,6 +831,10 @@ public final class MusicSpin {
             if (headStyleValue != null && headStyleValue >= HEAD_MIN && headStyleValue <= HEAD_MAX) {
                 headStyle = headStyleValue;
             }
+            if (baseSpeedValue != null && Float.isFinite(baseSpeedValue)) {
+                baseSpeed = Math.max(BASE_MIN, Math.min(BASE_MAX, baseSpeedValue));
+            }
+            if (headPacketValue != null) headPacket = headPacketValue;
             saveLocked();
         }
     }
@@ -686,6 +854,8 @@ public final class MusicSpin {
                 stepDegrees = clampFloat(optFloat(root, "step", stepDegrees), STEP_MIN, STEP_MAX);
                 headShake = optBool(root, "headShake", false);
                 headStyle = clampInt((int) optFloat(root, "headStyle", headStyle), HEAD_MIN, HEAD_MAX);
+                baseSpeed = clampFloat(optFloat(root, "baseSpeed", baseSpeed), BASE_MIN, BASE_MAX);
+                headPacket = optBool(root, "headPacket", false);
             } catch (Throwable ignored) {
                 // 配置坏了用默认值,不能影响播放。
             }
@@ -744,6 +914,8 @@ public final class MusicSpin {
         stepDegrees = DEFAULT_STEP;
         headShake = DEFAULT_HEAD_SHAKE;
         headStyle = DEFAULT_HEAD_STYLE;
+        baseSpeed = DEFAULT_BASE_SPEED;
+        headPacket = DEFAULT_HEAD_PACKET;
         testClockHooked = false;
         testNowNanos = 1_000_000_000L;
     }

@@ -133,6 +133,24 @@ class MusicSpinTest {
         }
     }
 
+    @Test
+    void 过渡转速让节拍间也匀速前进() {
+        // 恒 0.3 脉冲（活跃但不过阈）：纯基础转速，无步进——5s @60°/s = 300°。
+        MusicSpin.SpinProbe probe = new MusicSpin.SpinProbe(90f);
+        float angle = 0f;
+        for (int i = 0; i < 300; i++) {
+            angle = probe.step(0.3f, 1f / 60f, START_NANOS + i * 16_666_667L, REFRACTORY_NANOS, 60f);
+        }
+        assertEquals(300f, angle, 2f, "基础转速必须线性累计（过渡不再停顿）");
+        // baseSpeed=0 退回老版纯拍点步进口径。
+        MusicSpin.SpinProbe still = new MusicSpin.SpinProbe(90f);
+        float stillAngle = 0f;
+        for (int i = 0; i < 60; i++) {
+            stillAngle = still.step(0.3f, 1f / 60f, START_NANOS + i * 16_666_667L, REFRACTORY_NANOS, 0f);
+        }
+        assertEquals(0f, stillAngle, 1e-4f, "过渡转速 0 = 节拍间完全停住（老口径）");
+    }
+
     // ---------------- 头乱晃三档 ----------------
 
     @Test
@@ -140,7 +158,7 @@ class MusicSpinTest {
         assertArrayEquals(new float[] {0f, 0f},
                 MusicSpin.headDeltasFor(MusicSpin.HEAD_WOBBLE, 0f, 123f, 200f), 1e-6f);
         assertArrayEquals(new float[] {0f, 0f},
-                MusicSpin.headDeltasFor(MusicSpin.HEAD_DOWN, 0f, 123f, 200f), 1e-6f);
+                MusicSpin.headDeltasFor(MusicSpin.HEAD_DOWN, 0f, 123f, 0f), 1e-6f);
         assertArrayEquals(new float[] {0f, 0f},
                 MusicSpin.headDeltasFor(MusicSpin.HEAD_TURN, 0f, 123f, 200f), 1e-6f);
     }
@@ -157,14 +175,23 @@ class MusicSpinTest {
     }
 
     @Test
-    void 转头档匀速整圈且wrap语义不变() {
-        // turnAngle=200° wrap 到 -160°：同一旋转角，最短路径表示。
-        float[] turn = MusicSpin.headDeltasFor(MusicSpin.HEAD_TURN, 1f, 0f, 200f);
-        assertEquals(-160f, turn[0], 1e-4f, "360°转头按最短路径角渲染");
-        assertEquals(0f, turn[1], 1e-6f, "转头档不许带 pitch");
-        // 一整圈 = 原样回零。
-        float[] full = MusicSpin.headDeltasFor(MusicSpin.HEAD_TURN, 1f, 0f, 360f);
-        assertEquals(0f, full[0], 1e-4f);
+    void 转头档平滑双轴扫掠() {
+        // yaw 匀速整圈：turnAngle=200 wrap 到 -160（同一旋转角，最短路径）。
+        // pitch 与累计角两倍频锁定：45° 处正弦峰 +30（下压）、90° 处过零、135° 处 -30（上抬）
+        // —— 一整圈点头两回，全程正弦无折角。
+        float[] quarter = MusicSpin.headDeltasFor(MusicSpin.HEAD_TURN, 1f, 0f, 45f);
+        assertEquals(45f, quarter[0], 1e-4f);
+        assertEquals(30f, quarter[1], 1e-3f, "45° 处 pitch 到下压峰");
+        float[] half = MusicSpin.headDeltasFor(MusicSpin.HEAD_TURN, 1f, 0f, 90f);
+        assertEquals(0f, half[1], 1e-3f, "90° 处 pitch 过零");
+        float[] threeQuarter = MusicSpin.headDeltasFor(MusicSpin.HEAD_TURN, 1f, 0f, 135f);
+        assertEquals(-30f, threeQuarter[1], 1e-3f, "135° 处 pitch 到上抬峰");
+        float[] wrapped = MusicSpin.headDeltasFor(MusicSpin.HEAD_TURN, 1f, 0f, 200f);
+        assertEquals(-160f, wrapped[0], 1e-4f, "yaw 按最短路径角渲染");
+        // 半包络 = 恰好缩半（缓入缓出线性）。
+        float[] envelope = MusicSpin.headDeltasFor(MusicSpin.HEAD_TURN, 0.5f, 0f, 45f);
+        assertEquals(22.5f, envelope[0], 1e-4f);
+        assertEquals(15f, envelope[1], 1e-3f);
     }
 
     @Test

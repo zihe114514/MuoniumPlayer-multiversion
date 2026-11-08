@@ -34,6 +34,9 @@ abstract class TransparentCameraMixin {
                                   boolean thirdPersonReverse, float partialTick, CallbackInfo ci) {
         if (!(entity instanceof Player player) || player != Minecraft.getInstance().player
                 || !player.isAlive() || player.isSleeping()) return;
+        // 镜头跟随开关（默认关）：关着时镜头纹丝不动，压扁动画只在第三人称/
+        // 别人身上可见——第一人称不再随节拍上下颠。
+        if (!TransparentMode.cameraFollows()) return;
         float heightScale = TransparentMode.heightScale();
         if (heightScale >= 1f) return;
         Vec3 position = ((Camera) (Object) this).position();

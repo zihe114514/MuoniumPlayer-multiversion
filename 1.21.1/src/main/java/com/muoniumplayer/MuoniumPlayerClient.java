@@ -250,9 +250,16 @@ public final class MuoniumPlayerClient {
         // SpinEntityMixin。角度推进与节拍步进在共享层按墙上时钟去重，这里只是一次
         // 浮点比较；共享层不碰 MC 符号，yaw 的读写都留在树内。
         float spinYaw = com.muoniumplayer.core.ncm.music.MusicSpin.onClientTick(
-                mc.player != null, mc.player == null ? 0f : mc.player.getYRot());
+                mc.player != null, mc.player == null ? 0f : mc.player.getYRot(),
+                mc.player == null ? 0f : mc.player.getXRot());
         if (mc.player != null && !Float.isNaN(spinYaw)) {
             mc.player.setYRot(spinYaw);
+        }
+        // 头乱晃发包在「视角跟着转」档的相机俯仰通道：真实俯仰叠上点头/压低，
+        // 其他人可见（代价是自己视角跟着点头——derp 档本意）；NaN = 原样不动。
+        float spinPitch = com.muoniumplayer.core.ncm.music.MusicSpin.cameraPitchOverride();
+        if (mc.player != null && !Float.isNaN(spinPitch)) {
+            mc.player.setXRot(spinPitch);
         }
         // ---- 缺少 ffmpeg 的一次性全屏提示 ----
         // 每 tick 问一次而不是在界面切换事件里换掉主菜单：探测在后台线程上跑，主菜单出现的那一刻
