@@ -81,9 +81,9 @@ public final class MuoniumConfigDownload {
             Map.entry("1.21.1/neoforge", new Build("muoniumconfig-1.7.0.jar",
                     25405065L, "c1b4c317f548c4fc309e239c883aa11dad8783cab0582194c2e42843b892cb47")),
             Map.entry("1.20.1/fabric", new Build("muoniumconfig-1.7.0.jar",
-                    26098898L, "2d3d2eaf6d0e5ab9e58fcef2f4013d92bc23c669f96cd85940449804e4d7361a")),
+                    26099680L, "6ab789df360fe573b92f6e5759f75e3094994cdcd1210550aef04c1d366f8c6a")),
             Map.entry("1.20.1/forge", new Build("muoniumconfig-1.7.0.jar",
-                    24019127L, "705df6ded49925e8e74137c5bbde09e3fd36f136cc7681e00cfaea70252cc130"))
+                    25754294L, "9b3942a84fe04745d9bfe653da01a98998359a6b3439f19a1fe07b00e58fed28"))
     );
 
     /** 一个可下载的构建：文件名 + 钉死的字节数与 sha256。 */
