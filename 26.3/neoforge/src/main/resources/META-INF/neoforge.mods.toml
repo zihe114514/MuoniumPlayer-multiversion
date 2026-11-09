@@ -13,7 +13,14 @@ description = '''
 Minecraft music client mod: 8 sources (NetEase / QQ / KuGou / Bilibili / Qishui / YouTube Music / Spotify / GD), word-by-word lyrics, Dynamic Island, Automix crossfade, listen-together rooms. Client-only.
 '''
 displayURL = "https://melodifymc.cc.cd/"
-logoFile = "assets/muonium/icon.png"
+# 方形图标（128x128）用 iconFile。旧的 logoFile 在 NeoForge 里已废弃，留着会让
+# 每次启动卡在「Warnings while loading mods」界面，要玩家手点才能继续：
+#   Mod muonium uses the deprecated `logoFile` property; change to `bannerFile`
+#   and/or (for square icons) `iconFile`
+# bannerFile 是横幅（宽图）专用，我们的图是方形，所以用 iconFile。
+# 注意：Forge 1.20.1 的 mods.toml 只认 logoFile（那里没有这两个新字段），
+# 所以 1.20.1 那条车道保持原样，不要跟着改。
+iconFile = "assets/muonium/icon.png"
 
 # 客户端专用：装到服务端上不需要、也不应该加载。
 [[dependencies.muonium]]
