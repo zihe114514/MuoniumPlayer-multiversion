@@ -488,6 +488,9 @@ public final class MuoniumPlayerClient {
         }
         try {
             RenderLayerNotice.draw(graphics, onScreen);
+            // MuoniumConfig 自动下载/更新提示：同一挂点、同一代际 API；钉在左上角，
+            // 与左下角的渲染层停用提示同时出现也不叠。
+            com.muoniumplayer.core.screens.MuoniumConfigNotice.draw(graphics, onScreen);
         } catch (Throwable t) {
             noticeRenderDisabled = true;
             System.err.println("[MuoniumPlayer] 停用提示渲染已关闭：" + t);
