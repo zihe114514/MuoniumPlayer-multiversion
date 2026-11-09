@@ -227,6 +227,10 @@ public final class WorldLyricsRenderer {
      */
     public static void render(WorldLyricsState state, WorldLyricsState.CameraView camera,
                               WorldLyricsSettings settings, Host host, long nowNanos) {
+        // 帧边界：重置字形图集的帧内烘焙预算。图集自己认不出帧（曾在内部拿
+        // nanoTime 当帧标记，条件恒真、预算从未生效），这里每帧一次是唯一可靠
+        // 的重置点 —— 见 LyricGlyphAtlas.beginFrame。
+        LyricGlyphAtlas.beginFrame();
         try {
             renderGuarded(state, camera, settings, host, nowNanos);
             consecutiveFailures = 0;

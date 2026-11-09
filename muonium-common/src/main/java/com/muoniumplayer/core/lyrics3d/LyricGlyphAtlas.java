@@ -130,8 +130,25 @@ public final class LyricGlyphAtlas {
      * 毫秒闸兜住 HDR bloom 晕格（单格 ~3ms）与普通格混跑时的最坏帧。 */
     private static final int BAKES_PER_FRAME_BUDGET = 4;
     private static final long BAKE_NANOS_BUDGET = 8_000_000L;
-    /** 预算记账（nanoTime 值天然唯一，当帧标记用）。 */
-    private static long bakeFrameEndNanos;
+    /**
+     * 墨格的独立预算（比晕格宽得多）。
+     *
+     * <p>墨格是<b>不可缺</b>的字形本体：返回 null 时宿主会逐字回退像素字
+     * （非绘光档）或静默跳过（绘光档），两种都是肉眼可见的闪烁/吞字 —— 比
+     * 掉一帧难看得多。晕格则可以安全丢弃（只丢光晕、不丢字）。所以墨格给
+     * 更宽的额度，只用来兜住「首次遇到大量生字」的极端帧（换句 + 换字体 +
+     * 清缓存叠加），正常帧远达不到。</p>
+     */
+    private static final int INK_BAKES_PER_FRAME_BUDGET = 24;
+    private static final long INK_BAKE_NANOS_BUDGET = 24_000_000L;
+    /**
+     * 预算记账。帧边界由 {@link #beginFrame()} 显式重置 —— <b>不能用 nanoTime
+     * 当帧标记</b>：之前写的是「每次取格现读 nanoTime，与上次不相同就认为换了
+     * 一帧」，而 nanoTime 每次调用天然唯一，条件恒真 → 计数每格都清零，
+     * 预算形同虚设（换句首帧一次性同步烘几十格，掉帧尖峰）。
+     */
+    private static int inkBakesThisFrame;
+    private static long inkBakeNanosThisFrame;
     private static int bakesThisFrame;
     private static long bakeNanosThisFrame;
     /** 上次页逐出的时刻（防抖：刚逐出过就不再建新页）。 */
@@ -142,6 +159,26 @@ public final class LyricGlyphAtlas {
 
     public static void setHost(Host h) {
         host = h;
+    }
+
+    /**
+     * 帧头调用（渲染线程，每帧一次）：重置帧内烘焙预算计数。
+     *
+     * <p>必须由渲染层在每帧开始时显式调用 —— 预算记账没有别的可靠帧边界。
+     * 之前的实现拿 {@code System.nanoTime()} 当帧身份（「值与上次不同就是新
+     * 帧」），而它每次调用天然唯一，条件恒真，于是每取一格都清零计数：
+     * {@link #BAKES_PER_FRAME_BUDGET} 与毫秒闸从未真正生效，换句首帧会把整句
+     * 几十格一次性同步烘完（每格含 5× 超采样重采样 + 高斯 bloom），掉帧尖峰。</p>
+     *
+     * <p>幂等且廉价（两次赋值），重复调用只是提前放行预算。</p>
+     */
+    public static void beginFrame() {
+        synchronized (LOCK) {
+            bakesThisFrame = 0;
+            bakeNanosThisFrame = 0;
+            inkBakesThisFrame = 0;
+            inkBakeNanosThisFrame = 0;
+        }
     }
 
     /**
@@ -280,7 +317,16 @@ public final class LyricGlyphAtlas {
                 return cell;
             }
 
+            // ---- 帧内烘焙预算（墨格用独立宽额度，见 INK_BAKES_PER_FRAME_BUDGET）----
+            if (inkBakesThisFrame >= INK_BAKES_PER_FRAME_BUDGET
+                    || inkBakeNanosThisFrame >= INK_BAKE_NANOS_BUDGET) {
+                return null;
+            }
+            inkBakesThisFrame++;
+            long inkBakeStart = System.nanoTime();
+
             GlyphCell made = bakeInkLocked(h, font, key, ch, inkRgb);
+            inkBakeNanosThisFrame += System.nanoTime() - inkBakeStart;
             if (made == null) return null;
             CELLS.put(key, made);
             return made;
@@ -314,13 +360,7 @@ public final class LyricGlyphAtlas {
                 return cell;
             }
 
-            // ---- 帧内烘焙预算（与墨格共享同一预算池）----
-            long now = System.nanoTime();
-            if (bakeFrameEndNanos != now) {
-                bakeFrameEndNanos = now;
-                bakesThisFrame = 0;
-                bakeNanosThisFrame = 0;
-            }
+            // ---- 帧内烘焙预算（与墨格共享同一预算池，帧边界由 beginFrame 给）----
             if (bakesThisFrame >= BAKES_PER_FRAME_BUDGET || bakeNanosThisFrame >= BAKE_NANOS_BUDGET) {
                 return null;
             }
