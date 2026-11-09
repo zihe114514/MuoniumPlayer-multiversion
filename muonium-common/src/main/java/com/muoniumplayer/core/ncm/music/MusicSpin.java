@@ -117,6 +117,20 @@ public final class MusicSpin {
     private static float headPitchOut;
     /** onClientTick 收到的真实俯仰：REAL 档相机俯仰覆盖的加法基底。 */
     private static float lastRealPitch;
+    /**
+     * 包层连续角组。远端客户端对 yRot 做 yRotO→yRot 的逐帧插值，插值需要<b>连续</b>
+     * 的角度流：逐 tick {@code wrapDegrees} 会在 ±180 边界让角度反向跳 360°，别人
+     * 眼里就是「瞬移/倒甩」。所以发包路径全部走连续累计——每 tick 只叠加最短差值
+     * （{@link #continuousStep}），永不整圈 wrap；激活瞬间从当前相机角播种，接管无缝。
+     */
+    private static float continuousTotalAngle;
+    private static float lastTotalAngle;
+    private static float continuousHeadTurnRaw;
+    private static float lastHeadTurnRaw;
+    /** 头部 yaw 的包层连续值（= 原始连续角 × 活性包络；乱晃本身正弦连续，转头走累计）。 */
+    private static float continuousHeadYaw;
+    /** 包层活跃沿：上升沿播种连续角到当前相机角，下降沿自然回落真实朝向。 */
+    private static boolean wasPacketActive;
 
     // ---- 弹簧与步进（渲染线程 + client tick 单消费者；见 advance）----
     /** 基础恒速累计角（度，无界）：过渡转速 × 活性时长，节拍间的「底速」。 */
@@ -153,6 +167,12 @@ public final class MusicSpin {
         headYawOut = 0f;
         headPitchOut = 0f;
         lastRealPitch = 0f;
+        continuousTotalAngle = 0f;
+        lastTotalAngle = 0f;
+        continuousHeadTurnRaw = 0f;
+        lastHeadTurnRaw = 0f;
+        continuousHeadYaw = 0f;
+        wasPacketActive = false;
     }
 
     private MusicSpin() {
@@ -409,11 +429,9 @@ public final class MusicSpin {
         lastRealPitch = realPitch;
         float angle = advance();
         if (mode() == MODE_PACKET_REAL && inWorld && nowNanos() < activeUntilNanos) {
-            float yaw = wrapDegrees(angle);
-            if (headShake && headPacket) {
-                yaw = wrapDegrees(yaw + headYawOut);
-            }
-            return yaw;
+            // 与包层同一连续流：写进真实 yaw 的角度绝不 wrap（本地 yRotO→yRot 插值
+            // 与远端插值都需要连续输入），播种/叠加语义也和 sendPosition 侧完全一致。
+            return packetYaw(realYaw);
         }
         return Float.NaN;
     }
@@ -443,18 +461,24 @@ public final class MusicSpin {
     public static float packetYaw(float realYaw) {
         load();
         if (!enabled) {
+            wasPacketActive = false;
             return realYaw;
         }
         boolean active = nowNanos() < activeUntilNanos;
-        float body = mode() == MODE_PACKET_SILENT && active
-                ? wrapDegrees(lastFrameAngle) : realYaw;
-        if (headShake && headPacket && active) {
-            // 头部 yaw 动作叠进包层：LOCAL 档叠在真实相机 yaw 上（人照常看，头在甩），
-            // SILENT 档叠在身体总角上。协议没有「头相对身体」通道，其他人看到的是
-            // 整个人跟着甩——这是服务端推导头部的唯一来源。
-            return wrapDegrees(body + headYawOut);
+        if (active && !wasPacketActive) {
+            // 活跃沿播种：从当前相机角接管，远端看不到起跳。
+            continuousTotalAngle = realYaw;
         }
-        return body;
+        wasPacketActive = active;
+        if (!active) {
+            return realYaw;
+        }
+        // body：LOCAL 档相机照常（body=realYaw），REAL/SILENT 档走连续自转角。
+        float body = mode() == MODE_LOCAL ? realYaw : continuousTotalAngle;
+        // 头部 yaw 动作叠进包层：协议没有「头相对身体」通道，其他人看到的是整个人
+        // 跟着甩——这是服务端推导头部的唯一来源。连续流上叠加，绝不 wrap。
+        float head = headShake && headPacket ? continuousHeadYaw : 0f;
+        return body + head;
     }
 
     /**
@@ -531,13 +555,24 @@ public final class MusicSpin {
                 // 匀速整圈 × 包络：缓入缓出全程角速度连续，丝滑不抽搐。
                 headTurnAngle += turnDegreesPerSec() * dt * headEnvelope;
             }
+            // 包层连续角：身体总角与转头累计各走各的 continuousStep（每 tick 差值
+            // 必然是短弧，wrap 出来的语义就是「最短路径」而非「跳变」）。
+            continuousTotalAngle = continuousStep(continuousTotalAngle, lastTotalAngle, lastFrameAngle);
+            lastTotalAngle = lastFrameAngle;
+            continuousHeadTurnRaw = continuousStep(continuousHeadTurnRaw, lastHeadTurnRaw, headTurnAngle);
+            lastHeadTurnRaw = headTurnAngle;
             if (enabled && headShake) {
                 float[] out = headDeltasFor(headStyle, headEnvelope, now / 1.0e9f, headTurnAngle);
                 headYawOut = out[0];
                 headPitchOut = out[1];
+                // 包层头 yaw：转头档用连续累计角（渲染侧的 wrap 版会跨边界跳变）；
+                // 乱晃/低头本就是连续正弦/常量，直接用渲染值。乘包络 = 平滑进出。
+                continuousHeadYaw = (headStyle == HEAD_TURN ? continuousHeadTurnRaw : headYawOut)
+                        * headEnvelope;
             } else {
                 headYawOut = 0f;
                 headPitchOut = 0f;
+                continuousHeadYaw = 0f;
             }
         }
 
@@ -741,6 +776,14 @@ public final class MusicSpin {
         if (wrapped <= -180f) wrapped += 360f;
         else if (wrapped > 180f) wrapped -= 360f;
         return wrapped;
+    }
+
+    /**
+     * 连续角推进：当前连续角 + 新旧原始角的最短差值。纯函数（静态测试钉「跨 ±180
+     * 边界不瞬移」用）——发包路径的所有角度都必须经它累计，不许直接 wrap。
+     */
+    static float continuousStep(float currentContinuous, float previousRaw, float nextRaw) {
+        return currentContinuous + wrapDegrees(nextRaw - previousRaw);
     }
 
     private static int clampInt(int value, int min, int max) {

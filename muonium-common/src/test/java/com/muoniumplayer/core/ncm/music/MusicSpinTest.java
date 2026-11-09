@@ -151,6 +151,22 @@ class MusicSpinTest {
         assertEquals(0f, stillAngle, 1e-4f, "过渡转速 0 = 节拍间完全停住（老口径）");
     }
 
+    @Test
+    void 连续角跨边界不瞬移() {
+        // 原始角在 ±180 边界两侧来回（179 → -179 → 179）：wrap 版是 ±2° 的短步，
+        // 连续累计版一路正向前进——远端插值看到的差值恒小，绝无 360° 反向跳。
+        assertEquals(2f, MusicSpin.continuousStep(0f, 179f, -179f), 1e-6f,
+                "跨 ±180 边界必须走最短差值（2°），不是 -358°");
+        // -179 → 179 的最短路径本来就是倒转 2°（不是 +358°）：连续累计忠实记录
+        // 每一步的最短差值，累计不等于单调——远端看到的小步插值才是丝滑的本质。
+        assertEquals(0f, MusicSpin.continuousStep(2f, -179f, 179f), 1e-6f);
+        assertEquals(2f, MusicSpin.continuousStep(0f, 179f, -179f), 1e-6f);
+        // 同向长行程：5° → 175° 连续累计 = +170°，不因越过 180 而 wrap 成负向。
+        assertEquals(170f, MusicSpin.continuousStep(0f, 5f, 175f), 1e-6f);
+        // 静止 = 不动。
+        assertEquals(0f, MusicSpin.continuousStep(0f, 90f, 90f), 1e-6f);
+    }
+
     // ---------------- 头乱晃三档 ----------------
 
     @Test
