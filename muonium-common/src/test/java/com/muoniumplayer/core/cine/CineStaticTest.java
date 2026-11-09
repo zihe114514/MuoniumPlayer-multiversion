@@ -99,7 +99,11 @@ class CineStaticTest {
                 assertTrue(source.contains("CineFovMixin"), loader + " 必须注册 CineFovMixin");
             }
         }
-        // 相机 mixin:26.x 注 alignWithEntity 首个 setPosition AFTER;旧世代注 setup 同点
+        // 相机 mixin:26.x 注 alignWithEntity TAIL;旧世代注 setup TAIL。
+        // 单 TAIL 终裁是 5fb9ad67 修实机抽搐的结论、2026-11-09 回打六树:
+        // INVOKE setPosition AFTER 点设的 pose 会被后续第三人称 move(-maxZoom)
+        // 推走(entered 切 THIRD_PERSON_BACK,detached 必真),currentPose 一帧两调
+        // 状态双推进——双注入不许回来。
         String camera = readTree("mixin", "CineCameraMixin.java");
         assertTrue(camera.contains("@Mixin(Camera.class)"));
         if (is26x()) {
@@ -107,8 +111,12 @@ class CineStaticTest {
                     "26.x 注入点必须是 alignWithEntity(与 TransparentCameraMixin 相邻)");
         } else {
             assertTrue(camera.contains("method = \"setup\""),
-                    "1.21.11 前无 alignWithEntity,注入点必须是 setup 首个 setPosition");
+                    "1.21.11 前无 alignWithEntity,注入点必须是 setup");
         }
+        assertFalse(camera.contains("shift = At.Shift.AFTER"),
+                "相机 mixin 必须单 TAIL 终裁,不许 INVOKE setPosition AFTER+TAIL 双注入(抽搐/不生效根因)");
+        assertFalse(camera.contains("muonium$cinePose") && camera.contains("muonium$cineFinalize"),
+                "双 handler 是双注入的残迹,必须合并成单 muonium$cineApply");
         assertTrue(camera.contains("CineDirector.isActive()"),
                 "接管必须以 isActive() 为门");
         // FOV mixin:旧世代挂 GameRenderer.getFov(主投影);26.3 有意不注册——
@@ -209,5 +217,17 @@ class CineStaticTest {
                 "二级估算必须复用 BeatPulseSource 的探针");
         assertFalse(beat.contains("new AudioPlayer("),
                 "CineBeatSource 不许自建播放器分析(节拍链单真相)");
+    }
+
+    @Test
+    void 调度器日志走slf4j不许SystemOut() throws Exception {
+        // neoforge 侧日志后端吞 System.out(1.21.1/26.x neoforge 全部历史会话
+        // stdout=0,fabric 正常):运镜启没启动在 neoforge 日志里曾完全不可观测。
+        // slf4j 是 muonium-lan 亲证的可观测通道(MC 运行时自带 api)。
+        String director = readShared("core", "cine", "CineDirector.java");
+        assertTrue(director.contains("org.slf4j.LoggerFactory"),
+                "CineDirector 日志必须走 slf4j(neoforge 吞 System.out)");
+        assertFalse(director.contains("System.out.println"),
+                "CineDirector 不许 System.out.println(neoforge 日志不可见)");
     }
 }
