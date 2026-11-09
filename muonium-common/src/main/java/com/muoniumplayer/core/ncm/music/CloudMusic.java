@@ -2505,8 +2505,24 @@ public class CloudMusic implements SharedConstants {
             e.printStackTrace();
             String message = rootCauseMessage(e);
             DownloadDynamicIsland.showPlaybackFailure(song == null ? "当前歌曲" : song.getName(),
-                    message.isEmpty() ? "音频加载或解码失败" : message);
+                    describePlayerInitializationFailure(e, message));
             System.err.printf(EnumChatColor.RED + "[NCM] Failed to initiate audio player! Error: %s\n", message);
+        }
+
+        /**
+         * 引擎异常翻译成用户能行动的信息。裸引擎话术（如「Tried to queue 6 channel data
+         * to a 1 channel port」）只会让人以为网络坏了；声道不匹配说清是「这份音频的声道
+         * 布局播放引擎不支持」，并且提醒删缓存重试（换一档音质往往就是普通立体声流）。
+         */
+        private String describePlayerInitializationFailure(Throwable e, String rawMessage) {
+            Throwable cause = e;
+            while (cause != null) {
+                if (cause instanceof ChannelMismatchException) {
+                    return "音频声道布局不受支持，请清除该歌曲缓存后重试";
+                }
+                cause = cause.getCause();
+            }
+            return rawMessage.isEmpty() ? "音频加载或解码失败" : rawMessage;
         }
 
         /** 暴露最深层的原因，使解码/内存限制被解释而不是被隐藏。 */
@@ -2555,26 +2571,15 @@ public class CloudMusic implements SharedConstants {
                     }
                 }
             } catch (ChannelMismatchException mismatch) {
-                try {
-                    activePlayer.player.cleanUp();
-                    musicFile.delete();
-                    if (!isSessionUsable(targetSession)) return false;
-
-                    File retryFile = getMusicFile(playUrl, song);
-                    synchronized (PLAYER_STATE_LOCK) {
-                        if (!isSessionUsable(targetSession)) return false;
-                        player = initializePlayer(retryFile, song);
-                        ownedPlayer = player;
-                        targetSession.player = ownedPlayer;
-                        activePlayer = ownedPlayer;
-                        activePlayer.play();
-                    }
-                } catch (Throwable retryFailure) {
-                    if (!isPlaybackCancelled() && isSessionUsable(targetSession)) {
-                        handlePlayerInitializationError(song, retryFailure);
-                    }
-                    return false;
+                // 声道不匹配是<b>确定性</b>失败：同一条 URL 重新下载多少遍，字节都一样，
+                // 重试注定同样失败（还白拖 4 秒下载）。这里不再走「重下载再试」，直接按
+                // 初始化失败收场，归因走 handlePlayerInitializationError 的专门文案。
+                // 解码侧的降混层（DownmixSample）已把多声道文件拦在引擎之前，
+                // 这条路径只剩极端兜底语义（见 AudioPlayer.loadUsableSoundFile 的前置校验）。
+                if (!isPlaybackCancelled() && isSessionUsable(targetSession)) {
+                    handlePlayerInitializationError(song, mismatch);
                 }
+                return false;
             }
 
             if (!isSessionUsable(targetSession)) return false;

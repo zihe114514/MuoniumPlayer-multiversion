@@ -983,13 +983,22 @@ public class AudioPlayer {
             throw new IllegalStateException("音频解码器加载失败，请重启游戏后重试："
                     + error.getClass().getSimpleName());
         }
-        if (isUsable(candidate))
+        if (isUsable(candidate)) {
+            // 引擎只认 1/2 声道（mono/stereo 读头）。解码入口（SampleLoader）已把
+            // >2 声道降混成立体声；这道闸是降混层失效时的最后防线——把确定性失败
+            // 拦在装载期说清楚，而不是等到 play() 的端口校验抛出引擎原文。
+            int channels = candidate.channels();
+            if (channels > 2) {
+                dispose(candidate);
+                throw new IllegalStateException("音频声道布局不受支持（" + channels
+                        + " 声道）：" + file.getName());
+            }
             return candidate;
+        }
 
         dispose(candidate);
         throw new IllegalStateException("Audio file contains no usable frames: " + file.getName());
     }
-
     private static boolean isUsable(SoundFile soundFile) {
         if (soundFile == null)
             return false;
