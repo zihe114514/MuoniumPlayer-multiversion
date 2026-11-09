@@ -431,6 +431,21 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 (cell.x + cell.w) / pageF - halfTexel, cell.y / pageF + halfTexel);
 
         // 同页合批：这里不再逐字 endBatch —— 页切换/帧尾统一收（见上）。
+        //
+        // ---- 必须重新登记页句柄（幽灵字形的根因）----
+        // 上面写阴影前的那次冲刷把 pendingGlyphPage 置了 null（避免阴影并进上一字的
+        // 墨批参与 sortOnUpload 重排），而本字的墨格是冲刷之后才写入的。若这里不重新
+        // 登记，end() 的 `pendingGlyphPage != null` 门控永远不成立 —— 本帧最后一个字形的
+        // 墨格 quad 留在共享 builder 里没人收，直到原版在歌词渲染窗口之外（手部/GUI 阶段）
+        // 替我们冲出去。那时模型视图与投影早已 pop 回原样，同一个 quad 被另一套矩阵
+        // 重新投影：位置偏离所属行，透视除法变化还会让它看起来更大。症状正是「某行
+        // 最后一个字飘到远处且变大」—— 有翻译副行时副行字形追加在主行之后，中招的
+        // 就是副行末字。
+        if (pendingGlyphPage != cell.page) {
+            pendingGlyphPage = cell.page;
+            pendingGlyphCount = 0;
+        }
+        pendingGlyphCount++;
 
         if (TRACE && !tracedSmooth) {
             tracedSmooth = true;

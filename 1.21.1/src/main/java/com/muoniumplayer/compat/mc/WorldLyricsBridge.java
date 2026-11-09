@@ -196,8 +196,15 @@ public final class WorldLyricsBridge {
                 GlCompat.depthTest(true);
                 GlCompat.depthMask(true);
                 GlCompat.cull(true);
+                // blend 必须显式关掉：blend(true)/blendFunc 只在本渲染窗口内成立，
+                // 之后的原版绘制（手部/GUI）期望默认态。虽然 1.21.1 的 renderLevel
+                // 末尾自己会 disableBlend（字节码 2638），但那是「挂在 renderLevel
+                // 内部」才有的兜底 —— 挂点一旦改成 RETURN/TAIL（与 1.20.1/1.21.10/
+                // 1.21.11 对齐），这个前提立刻失效，混合态残留会让没有 transparency
+                // shard 的 RenderType 继承环境 blend。1.20.1 同位置就是这么写的。
+                GlCompat.blend(false);
                 GlCompat.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
-                        GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                        GL11.GL_ONE, GL11.GL_ZERO);
                 if (bobFreed) bobFreeRestore();
                 RenderSystem.getModelViewStack().popMatrix();
                 RenderSystem.applyModelViewMatrix();
