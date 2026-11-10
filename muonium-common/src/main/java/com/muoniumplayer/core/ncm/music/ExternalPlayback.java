@@ -148,8 +148,19 @@ public final class ExternalPlayback {
      * <p>整段包在 try 里：这个位置抛异常会直接崩游戏，而它依赖的是一个外部进程的输出，
      * 外部进程说什么都有可能。</p>
      */
+    /** HudConfig 持久化的覆盖值是否已灌回稳定器。第一次 tick 做一次，之后零成本。 */
+    private static volatile boolean stabilizerRestored;
+
     public static void onClientTick() {
         try {
+            if (!stabilizerRestored) {
+                stabilizerRestored = true;
+                // HudConfig 是每树一份的 FORK 文件，滑条写盘后由这里灌回运行态；
+                // -1 = 跟随内置表（restore 对负值直接忽略）。
+                com.muoniumplayer.core.ncm.music.SmtcTimelineStabilizer.restoreUserOverrides(
+                        com.muoniumplayer.core.settings.HudConfig.smtcTimelineDelayMs,
+                        com.muoniumplayer.core.settings.HudConfig.smtcTimelineWindowMs);
+            }
             // 发布模式挂在这一条 tick 的最前面：它要在镜像分支提前 return 之前被喂到
             // （镜像让位、设置关了、主菜单里都得继续跑）。发布器内部自带 Throwable 闸，
             // 出错只影响它自己那一拍。

@@ -334,6 +334,10 @@ public final class MuoniumHudProviders {
             java.util.function.BooleanSupplier currentFx = () -> HudConfig.currentLyricEffectsEnabled;
             java.util.function.BooleanSupplier normalFx = () -> HudConfig.normalLyricEffectsEnabled;
             java.util.function.BooleanSupplier karaoke = () -> HudConfig.osdKaraokeEmphasisEnabled;
+            // SMTC 时间轴稳定器只在镜像态有调节对象：内部播放的时钟是自己解码回调，
+            // 没有「播放器上报延迟」这回事。
+            java.util.function.BooleanSupplier mirroring =
+                    () -> com.muoniumplayer.core.ncm.music.ExternalPlayback.isMirroring();
 
             return MuoniumHudProperties.set()
                     // ---- 显示开关：整块 HUD 的显隐，排在最前 ----
@@ -365,6 +369,30 @@ public final class MuoniumHudProviders {
                             60.0f, 480.0f, 5.0f,
                             () -> HudConfig.lyricHeight,
                             v -> { HudConfig.lyricHeight = v; HudConfig.save(); }))
+                    // ---- SMTC 时间轴稳定器（只在镜像态显示）----
+                    // 内置表来自 Lyricify 文档，但每台机器的输出链路延迟不同，
+                    // 最终以玩家的耳朵校准为准：歌词快了就加大补偿，歌词顿了就放宽窗口。
+                    .slider(new MuoniumHudProperties.Slider(
+                            "muonium.smtc.delay", "歌词进度微调（镜像）",
+                            "外部播放器上报的进度比实际慢多少毫秒。歌词比音乐先唱就加大，后唱就减小。-1 跟随内置表（Apple Music 会自动补 450ms）。",
+                            -1.0f, 2000.0f, 10.0f,
+                            () -> (float) HudConfig.smtcTimelineDelayMs,
+                            v -> {
+                                HudConfig.smtcTimelineDelayMs = Math.round(v);
+                                com.muoniumplayer.core.ncm.music.SmtcTimelineStabilizer.setUserDelayMs(
+                                        HudConfig.smtcTimelineDelayMs);
+                            }).visibleWhen(mirroring))
+                    .slider(new MuoniumHudProperties.Slider(
+                            "muonium.smtc.window", "进度平滑窗口（镜像）",
+                            "播放器长时间不上报新位置时，允许按墙钟外推多久。歌词一顿一顿就加大，暂停后歌词还在滚就减小。",
+                            500.0f, 15000.0f, 100.0f,
+                            () -> HudConfig.smtcTimelineWindowMs < 0
+                                    ? -1f : (float) HudConfig.smtcTimelineWindowMs,
+                            v -> {
+                                HudConfig.smtcTimelineWindowMs = Math.round(v);
+                                com.muoniumplayer.core.ncm.music.SmtcTimelineStabilizer.setUserWindowMs(
+                                        HudConfig.smtcTimelineWindowMs);
+                            }).visibleWhen(mirroring))
                     // ---- 特效总开关（组内子项跟着显隐） ----
                     .toggle(new MuoniumHudProperties.Toggle(
                             "muonium.lyric.current.fx", "当前歌词特效",
