@@ -151,8 +151,8 @@ public final class MuoniumConfigDownload {
                     27987682L, "9bec3dba3f9f430904ecb3ab2ef37b94c34cf393110f8045a078f756cc46b5b1")),
             Map.entry("1.20.1/fabric", new Build("muoniumconfig-1.8.0.jar",
                     25911194L, "9899a117b0a15fd5423a9716aff80893b011a9ba2582b0a0251666b687abd0df")),
-            Map.entry("1.20.1/forge", new Build("muoniumconfig-1.8.0.jar",
-                    28269616L, "615b14a8756118ea46264681bde6c8330c1003fa45e97b1295acdbc674727e11"))
+            Map.entry("1.20.1/forge", new Build("muoniumconfig-1.8.1.jar",
+                    28297094L, "1371bbc916c73521e88d4009933b343fee9438330f0b0ebbb6438c1dc786ad11"))
     );
 
     /** 内置兜底构建：文件名 + 钉死的字节数与 sha256。 */
