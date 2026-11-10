@@ -777,6 +777,9 @@ public final class MuoniumPlayerClient {
         if (screenRenderDisabled || this.api == null) {
             return;
         }
+        boolean editorOrOtherUi = screen instanceof GuiHudEditorPro
+                || (screen != null && !(screen instanceof NCMScreen));
+        if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()) return;
         try {
             inSkijaFrame(() -> onScreenRenderedUnguarded(screen));
         } catch (Throwable t) {

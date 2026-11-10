@@ -780,7 +780,7 @@ public final class MuoniumPlayerClient {
             return;
         }
         try {
-            inSkijaFrame(() -> onScreenRenderedUnguarded(screen));
+            onScreenRenderedUnguarded(screen);
         } catch (Throwable t) {
             screenRenderDisabled = true;
             reportRenderFailure("GuiScreen 覆盖层", t);
@@ -791,11 +791,10 @@ public final class MuoniumPlayerClient {
         RenderSystem.refreshResolution();
         Interpolations.calcFrameDelta();
 
+        boolean editorOrOtherUi = screen instanceof GuiHudEditorPro
+                || (screen != null && !(screen instanceof NCMScreen));
+        if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()) return;
         Runnable islandOverlay = () -> {
-            // HUD 设置界面自己画灵动岛的专用预览，这里再画一次会叠成双层；
-            // 背包/原版设置等其它界面也不叠常驻岛与切换动画（全屏播放器自管）。
-            boolean editorOrOtherUi = screen instanceof GuiHudEditorPro
-                    || (screen != null && !(screen instanceof NCMScreen));
             if (DownloadDynamicIsland.isDownloadActive() || !editorOrOtherUi) {
                 DownloadDynamicIsland.render();
             }
@@ -803,6 +802,7 @@ public final class MuoniumPlayerClient {
                 AutomixTransitionAnimation.render();
             }
         };
-        if (!SkijaHost.deferPostCompositeOverlay(islandOverlay)) islandOverlay.run();
+        // Deferred hosts own the drawing frame; immediate hosts still need a paired wrapper.
+        if (!SkijaHost.deferPostCompositeOverlay(islandOverlay)) inSkijaFrame(islandOverlay);
     }
 }

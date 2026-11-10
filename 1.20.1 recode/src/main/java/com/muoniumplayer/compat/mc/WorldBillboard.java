@@ -627,7 +627,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float strength = settings != null ? settings.glowStrength : 0f;
         float spread = settings != null ? settings.glowSpread : 1f;
         String key = text + "|" + Integer.toHexString(glowColor & 0xFFFFFF)
-                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f);
+                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f)
+                + "|" + LyricGlyphAtlas.fontGeneration();
 
         // 烘/复用：key 变才重烘像素并重灌纹理（尺寸不变时只重传，不重建）。
         int[] px = com.muoniumplayer.core.lyrics3d.RowGlowSprite.bake(

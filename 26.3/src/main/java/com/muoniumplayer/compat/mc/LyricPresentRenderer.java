@@ -38,11 +38,11 @@ final class LyricPresentRenderer {
 
     /** 采集的纹理段序列（quad 顺序，页切换即记录 —— 同页连续 quad 合一段）。
      *  段存页纹理资源路径：落屏端按它解析 GpuTextureView（官方通路不经裸 GL）。 */
-    private static final Object[] segTextures = new Object[256];
-    private static final int[] segQuadStart = new int[256];
-    private static final int[] segQuadCount = new int[256];
+    private static final Object[] segTextures = new Object[MAX_QUADS];
+    private static final int[] segQuadStart = new int[MAX_QUADS];
+    private static final int[] segQuadCount = new int[MAX_QUADS];
     /** 段的混合模式：true = 加色（晕格，srcAlpha,one）/ false = 标准 alpha（墨格）。 */
-    private static final boolean[] segAdditive = new boolean[256];
+    private static final boolean[] segAdditive = new boolean[MAX_QUADS];
     private static int segCount;
 
     /** 诊断：最近一次 draw 实际提交的 quad 数 / 采集端累计拒绝数（缓冲满/段满）。 */
@@ -50,6 +50,24 @@ final class LyricPresentRenderer {
     private static int rejectedQuads;
     /** 诊断：最近一次 draw 的顶点 z 范围（近平面裁剪判定依据；全 0 = 采集丢深度）。 */
     private static volatile String lastVertexZRange = "-";
+
+    private static java.nio.FloatBuffer uploadBuffer;
+
+    /** Reuse staging memory, but upload only the initialized quad prefix. */
+    static java.nio.FloatBuffer uploadData(Batch batch) {
+        if (batch.quadCount < 0 || batch.quadCount > MAX_QUADS) {
+            throw new IllegalArgumentException("Invalid lyric quad count: " + batch.quadCount);
+        }
+        int length = batch.quadCount * FLOATS_PER_QUAD;
+        if (uploadBuffer == null) {
+            uploadBuffer = java.nio.ByteBuffer.allocateDirect(batch.floats.length * Float.BYTES)
+                    .order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
+        }
+        uploadBuffer.clear();
+        uploadBuffer.put(batch.floats, 0, length);
+        uploadBuffer.flip();
+        return uploadBuffer;
+    }
 
     private LyricPresentRenderer() {
     }
@@ -266,7 +284,8 @@ final class LyricPresentRenderer {
 
                 org.lwjgl.opengl.GL30.glBindVertexArray(glVao);
                 org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER, glVbo);
-                org.lwjgl.opengl.GL15.glBufferData(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER, b.floats, org.lwjgl.opengl.GL15.GL_STREAM_DRAW);
+                org.lwjgl.opengl.GL15.glBufferData(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER,
+                        uploadData(b), org.lwjgl.opengl.GL15.GL_STREAM_DRAW);
                 org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ELEMENT_ARRAY_BUFFER, glEbo);
 
                 int drawn = 0;

@@ -726,7 +726,28 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 特效贴图（径迹/光晕/星芒/条纹/拖尾画布共用）：继承 {@link MipDynamicTexture}
      * 拿强制 LINEAR 采样器 —— 渐变/径向贴图 + NEAREST 会出条带。
      */
+    /** ABGR int[] writes are bounded by the canvas, never by spare array/texture capacity. */
+    static void writeCanvasPixels(NativeImage image, int[] pixels, int w, int h) {
+        long count = (long) w * h;
+        if (image == null || image.format() != NativeImage.Format.RGBA || pixels == null
+                || w <= 0 || h <= 0 || w > image.getWidth() || h > image.getHeight()
+                || count > pixels.length) {
+            throw new IllegalArgumentException("Invalid lyric canvas rectangle: " + w + "x" + h);
+        }
+        if (image.isClosed()) throw new IllegalStateException("Disposed lyric canvas image");
+        java.nio.IntBuffer target = org.lwjgl.system.MemoryUtil.memByteBuffer(image.getPointer(),
+                Math.toIntExact((long) image.getWidth() * image.getHeight() * Integer.BYTES))
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN).asIntBuffer();
+        for (int row = 0; row < h; row++) {
+            target.position(row * image.getWidth());
+            target.put(pixels, row * w, w);
+        }
+    }
+
     private static final class TrailTexture extends MipDynamicTexture {
+        private java.nio.ByteBuffer uploadBytes;
+        private java.nio.IntBuffer uploadPixels;
+
         TrailTexture(NativeImage img) {
             this((java.util.function.Supplier<String>) () -> "muoniumplayer_worldlyrics_trail", img);
         }
@@ -734,6 +755,25 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         /** 拖尾画布用：label 传自己的名字，GL 调试/截帧里一眼认出这块纹理。 */
         TrailTexture(java.util.function.Supplier<String> label, NativeImage img) {
             super(label, img);
+        }
+
+        void uploadSub(int[] pixels, int w, int h) {
+            com.mojang.blaze3d.systems.RenderSystem.assertOnRenderThread();
+            NativeImage image = this.getPixels();
+            writeCanvasPixels(image, pixels, w, h);
+            if (this.getTexture() == null) throw new IllegalStateException("Disposed lyric canvas texture");
+            if (uploadBytes == null) {
+                uploadBytes = java.nio.ByteBuffer.allocateDirect(image.getWidth() * image.getHeight() * Integer.BYTES)
+                        .order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                uploadPixels = uploadBytes.asIntBuffer();
+            }
+            int count = w * h;
+            uploadPixels.clear();
+            uploadPixels.put(pixels, 0, count);
+            uploadBytes.clear();
+            uploadBytes.limit(count * Integer.BYTES);
+            com.mojang.blaze3d.systems.RenderSystem.getDevice().createCommandEncoder()
+                    .writeToTexture(this.getTexture(), uploadBytes, NativeImage.Format.RGBA, 0, 0, 0, 0, w, h);
         }
     }
 
@@ -773,12 +813,30 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 因此没有 drawTrail 那种「共享缓冲被下一个字覆写」的拷贝问题。</p>
      */
     @Override
+    public boolean supportsGpuTrailCanvas() {
+        return com.muoniumplayer.render.skija.SkijaTrailRenderer.available();
+    }
+
+    @Override
+    public boolean drawGpuTrailCanvas(io.github.humbleui.skija.Picture picture, int w, int h,
+                                      float planeX, float planeY, float planeW, float planeH,
+                                      float alpha, int slot) {
+        return drawTrailCanvas(null, picture, w, h, planeX, planeY, planeW, planeH, alpha, slot);
+    }
+
+    @Override
     public boolean drawTrailCanvas(int[] px, int w, int h,
                                    float planeX, float planeY,
                                    float planeW, float planeH, float alpha,
                                    int slot) {
+        return drawTrailCanvas(px, null, w, h, planeX, planeY, planeW, planeH, alpha, slot);
+    }
+
+    private boolean drawTrailCanvas(int[] px, io.github.humbleui.skija.Picture picture, int w, int h,
+                                    float planeX, float planeY, float planeW, float planeH,
+                                    float alpha, int slot) {
         if (poseStack == null || mc == null || trailCanvasError
-                || px == null || w <= 0 || h <= 0 || alpha <= 0.01f
+                || (px == null && picture == null) || w <= 0 || h <= 0 || alpha <= 0.01f
                 || slot < 0 || slot >= trailCanvasRl.length) return false;
         OrderedSubmitNodeCollector submitter = WorldLyricsBridgeAccess.submitter(mc);
         if (submitter == null) return false;
@@ -802,22 +860,16 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 trailCanvasW[slot] = capW;
                 trailCanvasH[slot] = capH;
             }
-            NativeImage img = tex.getPixels();
-            if (img == null || px.length < w * h) return false;
-            // 共享层已按 NativeImage 内存序（ABGR、直通 alpha）输出 —— 这里是
-            // 纯数组拷贝，不再做每像素换位（拖尾活跃帧像素量几十万~上百万级，
-            // 每帧省一整遍位运算扫描）。整图逐帧全量覆写：尺寸复用时旧径迹必须
-            // 被清掉，透明像素也写 0 —— 留白跳写会残留上一帧拖尾。
-            // 边界钉死 w×h：曾有共享层缓冲大于画布时按 px.length 越界写、
-            // 写坏相邻 native 内存的教训。
-            for (int row = 0, i = 0; row < h; row++) {
-                for (int col = 0; col < w; col++, i++) {
-                    img.setPixelABGR(col, row, px[i]);
-                }
+            if (picture != null) {
+                int glId = ((com.mojang.blaze3d.opengl.GlTexture) tex.getTexture()).glId();
+                if (!com.muoniumplayer.render.skija.SkijaTrailRenderer.render(picture, w, h,
+                        glId, trailCanvasW[slot], trailCanvasH[slot], slot)) return false;
+            } else {
+                // Keep the capacity texture, but write/upload only the actual canvas rectangle.
+                tex.uploadSub(px, w, h);
             }
-            // 基底层每帧全量变化 → 重传（≤1600² 亚毫秒，仅飞行窗口）。
-            trailCanvasTex[slot].upload();
         } catch (Throwable t) {
+            if (picture != null) return false;
             trailCanvasError = true;
             trailCanvasErrSlot = slot;
             if (TRACE) System.out.println("[WorldLyrics/trace] 拖尾画布纹理失败，径迹退回 quad 带: " + t);
@@ -899,7 +951,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float strength = settings != null ? settings.glowStrength : 0f;
         float spread = settings != null ? settings.glowSpread : 1f;
         String key = text + "|" + Integer.toHexString(glowColor & 0xFFFFFF)
-                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f);
+                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f)
+                + "|" + LyricGlyphAtlas.fontGeneration();
         int s = Math.abs(slot) % GLOW_SLOTS;
 
         int[] px = com.muoniumplayer.core.lyrics3d.RowGlowSprite.bake(
@@ -933,14 +986,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 glowKey[s] = null;
             }
             if (!key.equals(glowKey[s])) {
-                NativeImage img = tex.getPixels();
-                if (img == null) return;
-                for (int row = 0, i = 0; row < h; row++) {
-                    for (int col = 0; col < w; col++, i++) {
-                        img.setPixelABGR(col, row, px[i]);
-                    }
-                }
-                tex.upload();
+                tex.uploadSub(px, w, h);
                 glowKey[s] = key;
             }
         } catch (Throwable t) {
