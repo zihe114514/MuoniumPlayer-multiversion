@@ -4,8 +4,10 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.regex.Pattern;
 
@@ -166,6 +168,10 @@ public final class WorldLyricsState {
                         long[] charTimes) {
             this(lines, null, null, false, startMs, revealMs, -1, x, y, z, spawnYawDeg, spawnPitchDeg, charTimes);
         }
+
+        private TextMetrics textMetrics;
+        private Object textMetricsOwner;
+        private long textMetricsGeneration = Long.MIN_VALUE;
 
         // ---- 心象模式缓存（句身持有：分块与词云布局都是行的纯函数，一次算好多帧复用；
         //      摄像机在 WorldLyricsState 实例上逐帧推进）----
@@ -1473,58 +1479,9 @@ public final class WorldLyricsState {
         int i4 = 0;
         float y = -(lines.size() * rowPitch) / 2f;
         for (String line : lines) {
-            // 每行抽词（splitWords 口径），分配词级字号
             List<String> words = splitWords(line);
             float[] wordScale = new float[words.size()];
-            int hero = -1;
-            int heroLen = 1;
-            for (int w = 0; w < words.size(); w++) {
-                String word = words.get(w);
-                boolean particle = word.length() == 1
-                        && (HUIGUANG_PARTICLES.indexOf(word.charAt(0)) >= 0
-                            || isPunctuation(word.charAt(0)));
-                if (particle) {
-                    wordScale[w] = HUIGUANG_PARTICLE_SCALE;
-                } else {
-                    wordScale[w] = 0.85f + (seededJitter(w, 0L, 81, seed + line.hashCode()) * 0.5f + 0.5f) * 0.35f;
-                    if (word.length() > heroLen) {
-                        heroLen = word.length();
-                        hero = w;
-                    }
-                }
-            }
-            if (hero >= 0) wordScale[hero] = HUIGUANG_HERO_SCALE;
-            // 逐字落位：advance 与基线按词倍率缩放，小字下沉 + 错落
-            float x = 0f;
-            for (int w = 0; w < words.size(); w++) {
-                String word = words.get(w);
-                float scale = wordScale[w];
-                for (int i = 0; i < word.length(); i++) {
-                    char c = word.charAt(i);
-                    if (Character.isWhitespace(c)) continue;
-                    float adv = widthOf.widthOf(String.valueOf(c)) * scale;
-                    // 错落：重点词不动，其余按种子上下抖（folia 小字 ±0.32/其余 ±0.2 字号）
-                    float jagAmp = scale >= HUIGUANG_HERO_SCALE - 0.01f ? 0f
-                            : (scale <= HUIGUANG_PARTICLE_SCALE + 0.01f ? 0.32f : 0.2f);
-                    float jag = seededJitter(i4, 0L, 83, seed + line.hashCode()) * jagAmp * LYRIC_SIZE;
-                    out[i4++] = x - widthOf.widthOf(line) * 0f; // 占位（x 基准在下方统一回填）
-                    out[i4++] = y + (1f - scale) * LYRIC_SIZE * 0.32f + jag;
-                    out[i4++] = 0f;
-                    out[i4++] = scale;
-                    x += adv;
-                }
-                x += widthOf.widthOf(" ") * 0.6f * scale; // 词间距
-            }
-            y += rowPitch;
-        }
-        // x 统一居中回填：按每行实际占用宽（含词距）算，去掉上面占位写法
-        i4 = 0;
-        for (String line : lines) {
-            // 重走一遍该行的词与倍率（与上一循环同种子 → 同倍率）
-            List<String> words = splitWords(line);
-            float[] wordScale = new float[words.size()];
-            int hero = -1;
-            int heroLen = 1;
+            int hero = -1, heroLen = 1;
             for (int w = 0; w < words.size(); w++) {
                 String word = words.get(w);
                 boolean particle = word.length() == 1
@@ -1543,26 +1500,32 @@ public final class WorldLyricsState {
             if (hero >= 0) wordScale[hero] = HUIGUANG_HERO_SCALE;
             float lineW = 0f;
             for (int w = 0; w < words.size(); w++) {
-                for (int i = 0; i < words.get(w).length(); i++) {
-                    if (!Character.isWhitespace(words.get(w).charAt(i))) {
-                        lineW += widthOf.widthOf(String.valueOf(words.get(w).charAt(i)))
-                                * wordScale[w];
-                    }
+                String word = words.get(w);
+                for (int i = 0; i < word.length(); i++) {
+                    char c = word.charAt(i);
+                    if (!Character.isWhitespace(c)) lineW += widthOf.charWidth(c) * wordScale[w];
                 }
-                if (w < words.size() - 1) lineW += widthOf.widthOf(" ") * 0.6f * wordScale[w];
+                if (w < words.size() - 1) lineW += widthOf.charWidth(' ') * 0.6f * wordScale[w];
             }
             float x = -lineW / 2f;
             for (int w = 0; w < words.size(); w++) {
-                for (int i = 0; i < words.get(w).length(); i++) {
-                    char c = words.get(w).charAt(i);
+                String word = words.get(w);
+                float scale = wordScale[w];
+                for (int i = 0; i < word.length(); i++) {
+                    char c = word.charAt(i);
                     if (Character.isWhitespace(c)) continue;
-                    // x 回填：只覆盖第一通道（y/rot/scale 已写好）
-                    out[i4 * 4] = x + 0f;
-                    x += widthOf.widthOf(String.valueOf(c)) * out[i4 * 4 + 3];
-                    i4++;
+                    float jagAmp = scale >= HUIGUANG_HERO_SCALE - 0.01f ? 0f
+                            : (scale <= HUIGUANG_PARTICLE_SCALE + 0.01f ? 0.32f : 0.2f);
+                    float jag = seededJitter(i4, 0L, 83, seed + line.hashCode()) * jagAmp * LYRIC_SIZE;
+                    out[i4++] = x + 0f;
+                    out[i4++] = y + (1f - scale) * LYRIC_SIZE * 0.32f + jag;
+                    out[i4++] = 0f;
+                    out[i4++] = scale;
+                    x += widthOf.charWidth(c) * scale;
                 }
-                if (w < words.size() - 1) x += widthOf.widthOf(" ") * 0.6f * wordScale[w];
+                if (w < words.size() - 1) x += widthOf.charWidth(' ') * 0.6f * scale;
             }
+            y += rowPitch;
         }
         return out;
     }
@@ -1914,7 +1877,7 @@ public final class WorldLyricsState {
                         if (!Character.isWhitespace(line.charAt(i))) nonWsCursor++;
                     }
                 }
-                CadenzaMotion.PixelMetrics metrics = c -> pixelWidthOf.widthOf(String.valueOf(c));
+                CadenzaMotion.PixelMetrics metrics = c -> pixelWidthOf.charWidth(c);
                 f.cadenzaTokens = tokens;
                 f.cadenzaStage = CadenzaMotion.layout(tokens, metrics, LINE_H,
                         Math.max(layoutWidth, 1.0));
@@ -1924,6 +1887,8 @@ public final class WorldLyricsState {
             cadenzaStage = f.cadenzaStage;
         }
         int cadenzaIndex = 0;
+        int cadenzaHero = cadenza ? heroIndexOf(cadenzaTokens) : 0;
+        CadenzaMotion.Pose cadenzaPose = cadenza ? new CadenzaMotion.Pose() : null;
 
         // ---- 绘光交接的起飞点（本句平面坐标）：上一句的落点投到本句平面。
         //      投影依赖交接瞬间定格的几何快照，首帧算好缓存在句身 —— 之后
@@ -1976,6 +1941,7 @@ public final class WorldLyricsState {
                         && f.huiguangOwnGeo != null && f.huiguangPrevGeo != null)
                         ? huiguangLayoutChars(f.huiguangPrev.lines, pixelWidthOf,
                                 f.huiguangPrev.lines.hashCode()) : null;
+                char[] prevChars = prevLayout == null ? null : nonWsChars(f.huiguangPrev.lines);
                 for (String line : lines) {
                     for (int i = 0; i < line.length(); i++) {
                         char c = line.charAt(i);
@@ -1985,7 +1951,7 @@ public final class WorldLyricsState {
                             // 绕字中心应用；落位后转换：顶点 = 字心 − 半宽/半高。
                             float cScale = huiguangLayout[kk * 4 + 3];
                             float tx = huiguangLayout[kk * 4]
-                                    + pixelWidthOf.widthOf(String.valueOf(c)) * cScale * 0.5f;
+                                    + pixelWidthOf.charWidth(c) * cScale * 0.5f;
                             float ty = huiguangLayout[kk * 4 + 1] + LYRIC_SIZE * 0.5f;
                             float fx, fy;
                             if (presetSrc) {
@@ -1993,14 +1959,14 @@ public final class WorldLyricsState {
                                 // 下移槽位（字面坐标，中心原点口径 —— 与 to 同轴）
                                 fx = huiguangLayout[kk * 4] * PRESET_SCALE
                                         + f.huiguangPresetDx
-                                        + pixelWidthOf.widthOf(String.valueOf(c)) * cScale
+                                        + pixelWidthOf.charWidth(c) * cScale
                                                 * PRESET_SCALE * 0.5f;
                                 fy = huiguangLayout[kk * 4 + 1] * PRESET_SCALE
                                         + LYRIC_SIZE * (PRESET_SCALE - 1f) * 0.32f
                                         + f.huiguangPresetDy + LYRIC_SIZE * 0.5f;
                             } else {
                                 float[] fp = (prevLayout != null)
-                                        ? projectFromPrev(f, kk, pixelWidthOf, prevLayout) : null;
+                                        ? projectFromPrev(f, kk, pixelWidthOf, prevLayout, prevChars) : null;
                                 if (fp != null) {
                                     fx = fp[0];
                                     fy = fp[1];
@@ -2076,7 +2042,7 @@ public final class WorldLyricsState {
                         // 预摆期（尚未开唱）文字隐藏：槽位静默占位，等转正后
                         // 字才从预摆位飞出（出场即特效，不提前露字）
                         if (!f.huiguangPresetDone && f.huiguangOwnPresetGeo != null && elapsedMs < 0f) {
-                            x += pixelWidthOf.widthOf(String.valueOf(c));
+                            x += pixelWidthOf.charWidth(c);
                             k++;
                             continue;
                         }
@@ -2114,7 +2080,7 @@ public final class WorldLyricsState {
                             // 与姿态四量 dx/dy 是「字顶」口径 —— 落位时把字心换回字顶。
                             float[] ps = HUIGUANG_POSE;
                             HuiguangMotion.poseAt(fl, elapsedMs, HuiguangMotion.ENTRY_WINDOW_MS, ps);
-                            gx = ps[0] - pixelWidthOf.widthOf(String.valueOf(c)) * layoutScale * 0.5f;
+                            gx = ps[0] - pixelWidthOf.charWidth(c) * layoutScale * 0.5f;
                             gy = ps[1] - LYRIC_SIZE * 0.5f;
                             rot = layoutRot + (float) Math.toDegrees(ps[2]);
                             scale = (1f - HuiguangMotion.FLIGHT_SHRINK * ps[3]) * layoutScale;
@@ -2193,7 +2159,7 @@ public final class WorldLyricsState {
                             out.appearAts.add(appearAt);
                             out.huiguangFlights.add(flying ? fl : null);
                         }
-                        x += pixelWidthOf.widthOf(String.valueOf(c));
+                        x += pixelWidthOf.charWidth(c);
                         k++;
                         continue;
                     }
@@ -2202,7 +2168,7 @@ public final class WorldLyricsState {
                         // ---- 心象模式：块姿态 + 词云落点 + 镜头位移 ----
                         CadenzaMotion.Token token = currentToken(cadenzaTokens, cadenzaIndex, n, k);
                         if (token != null) {
-                            CadenzaMotion.Pose pose = new CadenzaMotion.Pose();
+                            CadenzaMotion.Pose pose = cadenzaPose;
                             CadenzaMotion.pose(token, pose, elapsedMs, alphaMul, exiting, LYRIC_SIZE);
                             float a = (float) (pose.enterAlpha * (1.0 - pose.exitAlpha)) * alphaMul;
                             if (a > 0.02f) {
@@ -2222,7 +2188,7 @@ public final class WorldLyricsState {
                                 g.dx = (float) pose.dx;
                                 g.dy = (float) pose.dy;
                                 g.tokenRgb = CadenzaMotion.tokenColor(token,
-                                        heroIndexOf(cadenzaTokens), line.hashCode(), TEXT_RGB);
+                                        cadenzaHero, line.hashCode(), TEXT_RGB);
                                 g.cadenzaGlow = (float) CadenzaMotion.glowPulse(token, elapsedMs);
                                 g.tokenActive = elapsedMs >= token.startMs
                                         && elapsedMs <= token.endMs;
@@ -2230,7 +2196,7 @@ public final class WorldLyricsState {
                                 out.appearAts.add(appearAt);
                             }
                         }
-                        x += pixelWidthOf.widthOf(String.valueOf(c));
+                        x += pixelWidthOf.charWidth(c);
                         k++;
                         continue;
                     }
@@ -2266,7 +2232,7 @@ public final class WorldLyricsState {
                         }
                     }
                 }
-                x += pixelWidthOf.widthOf(String.valueOf(c));
+                x += pixelWidthOf.charWidth(c);
                 k++;
             }
             y += LINE_H;
@@ -2303,7 +2269,7 @@ public final class WorldLyricsState {
                     for (int i = 0; i < tLine.length(); i++) {
                         char c = tLine.charAt(i);
                         if (Character.isWhitespace(c)) {
-                            tx += pixelWidthOf.widthOf(String.valueOf(c));
+                            tx += pixelWidthOf.charWidth(c);
                             continue;
                         }
                         // k 用独立负相位键 —— 确定性抖动/出场级联的相位空间与主字隔离
@@ -2375,7 +2341,7 @@ public final class WorldLyricsState {
                                 if (huiguang) out.huiguangFlights.add(null);
                             }
                         }
-                        tx += pixelWidthOf.widthOf(String.valueOf(c));
+                        tx += pixelWidthOf.charWidth(c);
                         k++;
                     }
                     ty += LINE_H;
@@ -2416,7 +2382,7 @@ public final class WorldLyricsState {
      */
     /** 上一句排版（prevLayout）由调用方 hoist 出逐字循环 —— 本方法只做投影。 */
     private static float[] projectFromPrev(SpawnedLine f, int n, PixelWidthOf widthOf,
-                                           float[] pl) {
+                                           float[] pl, char[] prevChars) {
         WorldLyricsState.BillboardSnapshot prev = f.huiguangPrevGeo;
         WorldLyricsState.BillboardSnapshot own = f.huiguangOwnGeo;
         if (prev == null || own == null || f.huiguangPrev == null) return null;
@@ -2425,8 +2391,8 @@ public final class WorldLyricsState {
         float cx, cy;
         if (n < prevCount) {
             // 字心 = 字顶 + 半宽×倍率/半高（与构建侧飞行终点同一口径，词缩放同源）
-            char c = nonWsCharAt(f.huiguangPrev.lines, n);
-            cx = pl[n * 4] + widthOf.widthOf(String.valueOf(c)) * pl[n * 4 + 3] * 0.5f;
+            char c = prevChars[n];
+            cx = pl[n * 4] + widthOf.charWidth(c) * pl[n * 4 + 3] * 0.5f;
             cy = pl[n * 4 + 1] + LYRIC_SIZE * 0.5f;
         } else {
             // 上一句比本句短：取上一句整面的随机散点（字面中心 ± 行高），仍成「从上一句飞来」
@@ -2451,19 +2417,23 @@ public final class WorldLyricsState {
         return local;
     }
 
-    /** 句文本里第 n 个非空白字符（n 越界返回 0，调用方保证 n < 非空白总数）。 */
-    private static char nonWsCharAt(List<String> lines, int n) {
-        int idx = 0;
+    /** Flatten once per handoff instead of scanning the previous line for every glyph. */
+    private static char[] nonWsChars(List<String> lines) {
+        int count = 0;
+        for (String line : lines) {
+            for (int i = 0; i < line.length(); i++) {
+                if (!Character.isWhitespace(line.charAt(i))) count++;
+            }
+        }
+        char[] chars = new char[count];
+        int index = 0;
         for (String line : lines) {
             for (int i = 0; i < line.length(); i++) {
                 char c = line.charAt(i);
-                if (!Character.isWhitespace(c)) {
-                    if (idx == n) return c;
-                    idx++;
-                }
+                if (!Character.isWhitespace(c)) chars[index++] = c;
             }
         }
-        return '\0';
+        return chars;
     }
 
     /**
@@ -2499,9 +2469,64 @@ public final class WorldLyricsState {
         return 0;
     }
 
+    /** Per-line measurements are stable only when the caller supplies a font/resource epoch. */
+    private static final class TextMetrics implements PixelWidthOf {
+        final PixelWidthOf source;
+        final Map<String, Float> widths = new HashMap<>();
+        final float[][] advances = new float[256][];
+
+        TextMetrics(PixelWidthOf source) {
+            this.source = source;
+        }
+
+        @Override
+        public float charWidth(char c) {
+            int block = c >>> 8, index = c & 255;
+            float[] cached = advances[block];
+            if (cached == null) {
+                cached = new float[256];
+                java.util.Arrays.fill(cached, Float.NaN);
+                advances[block] = cached;
+            }
+            if (Float.isNaN(cached[index])) cached[index] = source.charWidth(c);
+            return cached[index];
+        }
+
+        @Override
+        public float widthOf(String text) {
+            if (text.length() == 1) return charWidth(text.charAt(0));
+            Float cached = widths.get(text);
+            if (cached != null) return cached;
+            float width = source.widthOf(text);
+            widths.put(text, width);
+            return width;
+        }
+    }
+
+    static PixelWidthOf cachedTextMetrics(SpawnedLine line, PixelWidthOf source,
+                                          Object owner, long generation) {
+        if (line.textMetrics == null || line.textMetricsOwner != owner
+                || line.textMetricsGeneration != generation) {
+            line.textMetrics = new TextMetrics(source);
+            line.textMetricsOwner = owner;
+            line.textMetricsGeneration = generation;
+            // Equal total widths do not imply identical advances after a font/resource change.
+            line.cadenzaTokens = null;
+            line.cadenzaStage = null;
+            line.huiguangLayoutCache = null;
+            line.huiguangLayoutScalesCache = null;
+            line.huiguangEntry = null;
+        }
+        return line.textMetrics;
+    }
+
     /** 宿主量像素宽的回调（MC 字体或纹理缓存的度量）。 */
     public interface PixelWidthOf {
         float widthOf(String s);
+
+        default float charWidth(char c) {
+            return widthOf(String.valueOf(c));
+        }
     }
 
     // ==================== seededJitter（入场动画相位用） ====================

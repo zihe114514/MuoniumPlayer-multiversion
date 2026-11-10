@@ -139,21 +139,27 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * {@code NO_LIGHTMAP}）：1.21.10 的 RenderPipeline 没有 RenderSetup 那一层，
      * snippet 只补 uniform / sampler 声明，纹理还是在 RenderType 的 state 里挂。</p>
      */
+    /**
+     * PipelineCache 按 RenderPipeline 对象身份缓存编译结果；管线本身不含页纹理，
+     * 必须在所有图集页之间共享，避免每个新页都在渲染线程触发一次阻塞编译。
+     */
+    private static final com.mojang.blaze3d.pipeline.RenderPipeline LYRIC_GLOW_PIPELINE =
+            com.mojang.blaze3d.pipeline.RenderPipeline.builder(
+                            net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
+                    .withLocation(net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("muonium", "lyric_glow"))
+                    .withBlend(com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING)
+                    .withDepthTestFunction(com.mojang.blaze3d.platform.DepthTestFunction.NO_DEPTH_TEST)
+                    .withDepthWrite(false)
+                    .withColorWrite(true, false)
+                    .withCull(false)
+                    .build();
+
     private static final java.util.concurrent.ConcurrentHashMap<ResourceLocation, net.minecraft.client.renderer.RenderType>
             GLOW_TYPES = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static net.minecraft.client.renderer.RenderType glowType(ResourceLocation rl) {
         return GLOW_TYPES.computeIfAbsent(rl, r -> com.muoniumplayer.mixin.RenderTypeCreateAccessor.muonium$create(
-                "muonium_lyrics_glow", 1536,
-                com.mojang.blaze3d.pipeline.RenderPipeline.builder(
-                                net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
-                        .withLocation(net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("muonium", "lyric_glow"))
-                        .withBlend(com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING)
-                        .withDepthTestFunction(com.mojang.blaze3d.platform.DepthTestFunction.NO_DEPTH_TEST)
-                        .withDepthWrite(false)
-                        .withColorWrite(true, false)
-                        .withCull(false)
-                        .build(),
+                "muonium_lyrics_glow", 1536, LYRIC_GLOW_PIPELINE,
                 RenderType.CompositeState.builder()
                         .setTextureState(new RenderStateShard.TextureStateShard(r, false))
                         .setLightmapState(RenderStateShard.NO_LIGHTMAP)

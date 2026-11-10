@@ -122,45 +122,30 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * .withTexture("Sampler0", rl).sortOnUpload() → RenderType.create（accessor）。
      * 光晕属瞬时发光体，不吃光照图、不进 OIT（与 beaconBeam translucent 同判）。</p>
      */
+    /**
+     * PipelineCache 按 RenderPipeline 对象身份缓存编译结果；管线本身不含页纹理，
+     * 必须在所有图集页之间共享，避免每个新页都在渲染线程触发一次阻塞编译。
+     */
+    private static final com.mojang.blaze3d.pipeline.RenderPipeline LYRIC_GLOW_PIPELINE =
+            com.mojang.blaze3d.pipeline.RenderPipeline.builder(
+                            net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
+                    .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
+                    .withColorTargetState(new com.mojang.blaze3d.pipeline.ColorTargetState(
+                            com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING))
+                    .withDepthStencilState(new com.mojang.blaze3d.pipeline.DepthStencilState(
+                            com.mojang.blaze3d.platform.CompareOp.GREATER_THAN_OR_EQUAL, false))
+                    .build();
+
     private static final java.util.concurrent.ConcurrentHashMap<Identifier, RenderType> GLOW_TYPES =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     private static RenderType glowType(Identifier rl) {
-        return GLOW_TYPES.computeIfAbsent(rl, r -> {
-            // 26.2/26.3 的管线构建走 bind-group 声明（withBindGroupLayout +
-            // withVertexBinding + withPrimitiveTopology，javap 核对 26.2 jar）；26.1.2
-            // 的 Builder 还是 1.21.x 形状——uniform 走 withUniform、顶点布局/拓扑合并成
-            // withVertexFormat(VertexFormat, VertexFormat.Mode)，没有 bind-group 这一概念
-            //（javap 核对 26.1.2 jar：无 BindGroupLayouts / PrimitiveTopology 类）。
-            //
-            // 【必须从 BEACON_BEAM_SNIPPET 起手】早先这里用空 builder 手搓，以为
-            // 「uniforms 由 RenderSetup 侧按 shader 需求自动供给」—— 这是错的。
-            // 26.1.2 的 GlProgram.setupUniforms 与 1.21.10/1.21.11 逐段相同：
-            // 只给管线声明过的 uniform/sampler 建槽，没声明的一律跳过，于是：
-            //   - DynamicTransforms 不在 BUILT_IN_UNIFORMS（只有 Projection/Lighting/
-            //     Fog/Globals）→ ModelViewMat 永不绑定 → 顶点塌到原点；
-            //   - Sampler0 同理不建 → texture() 采到 0 号空白纹理。
-            // 实机日志坐实：`Found unknown and unsupported uniform DynamicTransforms
-            // in muonium:lyric_glow`，同时 CPU 侧 `现代档字形 quad 已提交: '+glow'`
-            // 说明晕格纹理已取到 —— 断的就是 GPU 绑定这一环。
-            // snippet 自带 MATRICES_FOG_SNIPPET（DynamicTransforms/Projection/Fog）
-            // + withSampler("Sampler0") + BLOCK/QUADS，照原版 BEACON_BEAM_TRANSLUCENT
-            // 「以 snippet 为底只覆盖差异项」的正规做法。
-            com.mojang.blaze3d.pipeline.RenderPipeline pipeline =
-                    com.mojang.blaze3d.pipeline.RenderPipeline.builder(
-                                    net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
-                            .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
-                            .withColorTargetState(new com.mojang.blaze3d.pipeline.ColorTargetState(
-                                    com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING))
-                            .withDepthStencilState(new com.mojang.blaze3d.pipeline.DepthStencilState(
-                                    com.mojang.blaze3d.platform.CompareOp.GREATER_THAN_OR_EQUAL, false))
-                            .build();
-            return RenderTypeAccessors.muonium$create("muonium_lyric_glow",
-                    net.minecraft.client.renderer.rendertype.RenderSetup.builder(pipeline)
-                            .withTexture("Sampler0", r)
-                            .sortOnUpload()
-                            .createRenderSetup());
-        });
+        return GLOW_TYPES.computeIfAbsent(rl, r ->
+                RenderTypeAccessors.muonium$create("muonium_lyric_glow",
+                        net.minecraft.client.renderer.rendertype.RenderSetup.builder(LYRIC_GLOW_PIPELINE)
+                                .withTexture("Sampler0", r)
+                                .sortOnUpload()
+                                .createRenderSetup()));
     }
 
     /**

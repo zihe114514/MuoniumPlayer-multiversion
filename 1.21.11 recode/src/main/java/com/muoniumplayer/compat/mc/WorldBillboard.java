@@ -139,22 +139,28 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * <p>原版 {@code BEACON_BEAM_TRANSLUCENT} 的正规做法就是「以 snippet 为底，只覆盖
      * blend / depthWrite」。这里照做 —— snippet 已含顶点格式 BLOCK + QUADS，不必重复声明。</p>
      */
+    /**
+     * PipelineCache 按 RenderPipeline 对象身份缓存编译结果；管线本身不含页纹理，
+     * 必须在所有图集页之间共享，避免每个新页都在渲染线程触发一次阻塞编译。
+     */
+    private static final com.mojang.blaze3d.pipeline.RenderPipeline LYRIC_GLOW_PIPELINE =
+            com.mojang.blaze3d.pipeline.RenderPipeline.builder(
+                            net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
+                    .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
+                    .withBlend(com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING)
+                    .withDepthTestFunction(com.mojang.blaze3d.platform.DepthTestFunction.NO_DEPTH_TEST)
+                    .withDepthWrite(false)
+                    .withColorWrite(true, false)
+                    .withCull(false)
+                    .build();
+
     private static final java.util.concurrent.ConcurrentHashMap<Identifier, net.minecraft.client.renderer.rendertype.RenderType>
             GLOW_TYPES = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static net.minecraft.client.renderer.rendertype.RenderType glowType(Identifier rl) {
         return GLOW_TYPES.computeIfAbsent(rl, r -> com.muoniumplayer.mixin.RenderTypeAccessors.muonium$create(
                 "muonium_lyrics_glow",
-                net.minecraft.client.renderer.rendertype.RenderSetup.builder(
-                                com.mojang.blaze3d.pipeline.RenderPipeline.builder(
-                                                net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
-                                        .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
-                                        .withBlend(com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING)
-                                        .withDepthTestFunction(com.mojang.blaze3d.platform.DepthTestFunction.NO_DEPTH_TEST)
-                                        .withDepthWrite(false)
-                                        .withColorWrite(true, false)
-                                        .withCull(false)
-                                        .build())
+                net.minecraft.client.renderer.rendertype.RenderSetup.builder(LYRIC_GLOW_PIPELINE)
                         .withTexture("Sampler0", r)
                         .sortOnUpload()
                         .createRenderSetup()));

@@ -127,36 +127,30 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * .withTexture("Sampler0", rl).sortOnUpload() → RenderType.create（accessor）。
      * 光晕属瞬时发光体，不吃光照图、不进 OIT（与 beaconBeam translucent 同判）。</p>
      */
+    /**
+     * PipelineCache 按 RenderPipeline 对象身份缓存编译结果；管线本身不含页纹理，
+     * 必须在所有图集页之间共享，避免每个新页都在渲染线程触发一次阻塞编译。
+     */
+    private static final com.mojang.blaze3d.pipeline.RenderPipeline LYRIC_GLOW_PIPELINE =
+            com.mojang.blaze3d.pipeline.RenderPipeline.builder(
+                            net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
+                    .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
+                    .withColorTargetState(new com.mojang.blaze3d.pipeline.ColorTargetState(
+                            com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING))
+                    .withDepthStencilState(new com.mojang.blaze3d.pipeline.DepthStencilState(
+                            com.mojang.blaze3d.platform.CompareOp.GREATER_THAN_OR_EQUAL, false))
+                    .build();
+
     private static final java.util.concurrent.ConcurrentHashMap<Identifier, RenderType> GLOW_TYPES =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     private static RenderType glowType(Identifier rl) {
-        return GLOW_TYPES.computeIfAbsent(rl, r -> {
-            com.mojang.blaze3d.pipeline.RenderPipeline pipeline =
-                    com.mojang.blaze3d.pipeline.RenderPipeline.builder()
-                            .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
-                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.GLOBALS)
-                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.PROJECTION)
-                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.DYNAMIC_TRANSFORMS)
-                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.FOG)
-                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.SAMPLER0)
-                            .withVertexShader("core/rendertype_beacon_beam")
-                            .withFragmentShader("core/rendertype_beacon_beam")
-                            .withVertexBinding(0, com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK)
-                            // 26.2 的枚举类路径与 26.3 不同：PrimitiveTopology 在 blaze3d 根、
-                            // CompareOp 在 blaze3d.platform（javap 核对）
-                            .withPrimitiveTopology(com.mojang.blaze3d.PrimitiveTopology.QUADS)
-                            .withColorTargetState(new com.mojang.blaze3d.pipeline.ColorTargetState(
-                                    com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING))
-                            .withDepthStencilState(new com.mojang.blaze3d.pipeline.DepthStencilState(
-                                    com.mojang.blaze3d.platform.CompareOp.GREATER_THAN_OR_EQUAL, false))
-                            .build();
-            return RenderTypeAccessors.muonium$create("muonium_lyric_glow",
-                    net.minecraft.client.renderer.rendertype.RenderSetup.builder(pipeline)
-                            .withTexture("Sampler0", r)
-                            .sortOnUpload()
-                            .createRenderSetup());
-        });
+        return GLOW_TYPES.computeIfAbsent(rl, r ->
+                RenderTypeAccessors.muonium$create("muonium_lyric_glow",
+                        net.minecraft.client.renderer.rendertype.RenderSetup.builder(LYRIC_GLOW_PIPELINE)
+                                .withTexture("Sampler0", r)
+                                .sortOnUpload()
+                                .createRenderSetup()));
     }
 
     /**

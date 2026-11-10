@@ -146,38 +146,38 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 布尔参数 false 是 opaque 信标柱，我们恒走 translucent 形态（BEAM_TRANSLUCENT
      * 的 DepthStencilState.GREATER_THAN_OR_EQUAL、写色不写深）。</p>
      */
+    /**
+     * PipelineCache 按 RenderPipeline 对象身份缓存编译结果；管线本身不含页纹理，
+     * 必须在所有图集页之间共享，避免每个新页都在渲染线程触发一次阻塞编译。
+     */
+    private static final com.mojang.renderpearl.api.pipeline.RenderPipeline LYRIC_GLOW_PIPELINE =
+            com.mojang.renderpearl.api.pipeline.RenderPipeline.builder()
+                    .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
+                    .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.GLOBALS)
+                    .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.PROJECTION)
+                    .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.DYNAMIC_TRANSFORMS)
+                    .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.FOG)
+                    .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.SAMPLER0)
+                    .withVertexShader("core/rendertype_beacon_beam")
+                    .withFragmentShader("core/rendertype_beacon_beam")
+                    .withVertexBinding(0, com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK)
+                    .withPrimitiveTopology(com.mojang.renderpearl.api.pipeline.PrimitiveTopology.QUADS)
+                    .withColorTargetState(new com.mojang.renderpearl.api.pipeline.ColorTargetState(
+                            com.mojang.renderpearl.api.pipeline.BlendFunction.LIGHTNING))
+                    .withDepthStencilState(new com.mojang.renderpearl.api.pipeline.DepthStencilState(
+                            com.mojang.renderpearl.api.pipeline.CompareOp.GREATER_THAN_OR_EQUAL, false))
+                    .build();
+
     private static final java.util.concurrent.ConcurrentHashMap<Identifier, RenderType> GLOW_TYPES =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     private static RenderType glowType(Identifier rl) {
-        return GLOW_TYPES.computeIfAbsent(rl, r -> {
-            // MATRICES_FOG + beacon_beam 着色器 + SAMPLER0 + BLOCK 顶点 + QUADS
-            //（与 RenderPipelines.BEACON_BEAM_SNIPPET 逐项一致，snippet 私有故重抄；
-            //  RenderPipelines.register 是私有的 shader 重编译登记，编译走
-            //  PipelineCache 按 RenderType 携带的管线对象按需进行，无需登记）
-            com.mojang.renderpearl.api.pipeline.RenderPipeline pipeline =
-                    com.mojang.renderpearl.api.pipeline.RenderPipeline.builder()
-                            .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
-                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.GLOBALS)
-                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.PROJECTION)
-                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.DYNAMIC_TRANSFORMS)
-                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.FOG)
-                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.SAMPLER0)
-                            .withVertexShader("core/rendertype_beacon_beam")
-                            .withFragmentShader("core/rendertype_beacon_beam")
-                            .withVertexBinding(0, com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK)
-                            .withPrimitiveTopology(com.mojang.renderpearl.api.pipeline.PrimitiveTopology.QUADS)
-                            .withColorTargetState(new com.mojang.renderpearl.api.pipeline.ColorTargetState(
-                                    com.mojang.renderpearl.api.pipeline.BlendFunction.LIGHTNING))
-                            .withDepthStencilState(new com.mojang.renderpearl.api.pipeline.DepthStencilState(
-                                    com.mojang.renderpearl.api.pipeline.CompareOp.GREATER_THAN_OR_EQUAL, false))
-                            .build();
-            return RenderTypeAccessors.muonium$create("muonium_lyric_glow",
-                    net.minecraft.client.renderer.rendertype.RenderSetup.builder(pipeline)
-                            .withTexture("Sampler0", r)
-                            .sortOnUpload()
-                            .createRenderSetup());
-        });
+        return GLOW_TYPES.computeIfAbsent(rl, r ->
+                RenderTypeAccessors.muonium$create("muonium_lyric_glow",
+                        net.minecraft.client.renderer.rendertype.RenderSetup.builder(LYRIC_GLOW_PIPELINE)
+                                .withTexture("Sampler0", r)
+                                .sortOnUpload()
+                                .createRenderSetup()));
     }
 
     /**

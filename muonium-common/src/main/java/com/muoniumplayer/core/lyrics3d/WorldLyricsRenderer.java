@@ -340,6 +340,9 @@ public final class WorldLyricsRenderer {
                         return total;
                     }
                     : host::pixelWidth;
+            if (smooth && LyricGlyphAtlas.isFunctional()) {
+                widthOf = WorldLyricsState.cachedTextMetrics(f, widthOf, host, LyricGlyphAtlas.fontGeneration());
+            }
             // 心象动效仅在现代化引擎生效（原版像素风格不受影响）。
             // 两个动效都开时绘光优先（与设置界面的「此处优先」文案一致）——
             // 绘光是用户点名要的模式，心象作为兜底回退。
