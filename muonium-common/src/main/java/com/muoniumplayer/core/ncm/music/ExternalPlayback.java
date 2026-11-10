@@ -78,11 +78,15 @@ public final class ExternalPlayback {
         final String trackKey;
         final Music music;
         final ExternalSnapshot snapshot;
+        /** 曲库没匹配到时 LRCLIB 兜底拿到的词；null 表示没拿到或不需要。 */
+        final List<LyricLine> lrclibLyrics;
 
-        PendingResolution(String trackKey, Music music, ExternalSnapshot snapshot) {
+        PendingResolution(String trackKey, Music music, ExternalSnapshot snapshot,
+                          List<LyricLine> lrclibLyrics) {
             this.trackKey = trackKey;
             this.music = music;
             this.snapshot = snapshot;
+            this.lrclibLyrics = lrclibLyrics;
         }
     }
 
@@ -207,14 +211,22 @@ public final class ExternalPlayback {
         final ExternalSnapshot captured = snapshot;
         MultiThreadingUtil.runAsync(() -> {
             Music music = null;
+            List<LyricLine> lrclibFallback = null;
             try {
                 music = ExternalTrackMatcher.resolve(captured);
+                if (music == null) {
+                    // 曲库三平台都没有：退到 LRCLIB（免费无 key 的逐行 LRC 库）。
+                    // 命中的话落一条合成曲目 + 直接把词带上——玩家要的是词，不是哪来的词。
+                    lrclibFallback = LrclibLyricsSource.resolve(captured.title(),
+                            ExternalTrackMatcher.artistHint(captured),
+                            captured.album(), captured.durationMs());
+                }
             } catch (Throwable failure) {
                 System.err.println("[Music/SMTC] 解析外部曲目失败: " + failure);
             } finally {
                 RESOLVE_IN_FLIGHT.set(false);
             }
-            pending = new PendingResolution(captured.trackKey(), music, captured);
+            pending = new PendingResolution(captured.trackKey(), music, captured, lrclibFallback);
         });
     }
 
@@ -289,8 +301,15 @@ public final class ExternalPlayback {
             // 没匹配到曲库：显式提交一份空时间轴。不清的话 CloudMusic.lyrics 里
             // 还留着上一首的时间轴，而 lyricsMatchCurrentTrack() 会因为归属键没换而
             // 让它继续跟着外部进度滚 —— 表现就是「换了首歌，歌词还是上一首」。
-            CloudMusic.applyLyricTimeline(session, null, Collections.<LyricLine>emptyList());
-            notifyIsland("曲库里没匹配到这首歌 · 无词", false);
+            // LRCLIB 兜底有词的话把词带上（合成曲目的 stableKey 已在 smtc: 命名空间，
+            // 不会污染歌词缓存）；仍然没有才是真正的「无词」。
+            if (resolution.lrclibLyrics != null && !resolution.lrclibLyrics.isEmpty()) {
+                CloudMusic.applyLyricTimeline(session, null, resolution.lrclibLyrics);
+                notifyIsland("歌词来自 LRCLIB（曲库未收录）", false);
+            } else {
+                CloudMusic.applyLyricTimeline(session, null, Collections.<LyricLine>emptyList());
+                notifyIsland("曲库里没匹配到这首歌 · 无词", false);
+            }
         } else {
             CloudMusic.loadLyric(music, session);
         }

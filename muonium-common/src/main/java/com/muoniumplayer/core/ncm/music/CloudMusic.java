@@ -5566,7 +5566,11 @@ public class CloudMusic implements SharedConstants {
         long sid = s == null ? -1L : s.sessionId;
         boolean playing = external.isPlaying();
         long durationMs = external.durationMs() > 0L ? external.durationMs() : m.getDuration();
-        long positionMs = smoothPositionMs(m.getId(), external.positionMs(), durationMs, !playing);
+        // 读数过稳定器：Apple Music 的延迟补偿与逐播放器的外推窗口都在那一张表里。
+        long rawPosition = Math.max(0L,
+                external.positionMs() - SmtcTimelineStabilizer.delayCompensationMs(external.app()));
+        long positionMs = smoothPositionMs(m.getId(), rawPosition, durationMs, !playing,
+                SmtcTimelineStabilizer.maxExtrapolateMs(external.app()));
         return new PlaybackSnapshot(sid, m.getId(), positionMs, durationMs, playing, null, m);
     }
 
@@ -5810,6 +5814,17 @@ public class CloudMusic implements SharedConstants {
      * <p>换歌、seek、暂停这三种情况下没有可信的历史，直接跟随音频时钟并重新锚定。</p>
      */
     private static long smoothPositionMs(long songId, long rawMs, long durationMs, boolean paused) {
+        return smoothPositionMs(songId, rawMs, durationMs, paused, SMOOTH_CLOCK_MAX_EXTRAPOLATE_MS);
+    }
+
+    /**
+     * 带外推窗口的变体，镜像路径专用：SMTC 播放器的时间轴质量参差（Apple Music 抖、
+     * 网易云插件缺拍、Spotify Connect 接收端冻结在 0），窗口按播放器个性放宽，
+     * 判据都在 {@link SmtcTimelineStabilizer}。内部音频时钟仍然用默认 500ms——
+     * 解码回调最多冻那么久，宽窗口对它没有意义还掩盖真实停顿。
+     */
+    private static long smoothPositionMs(long songId, long rawMs, long durationMs, boolean paused,
+                                         double maxExtrapolateMs) {
         synchronized (SMOOTH_CLOCK_LOCK) {
             long nowNs = System.nanoTime();
 
@@ -5836,7 +5851,7 @@ public class CloudMusic implements SharedConstants {
             double elapsedMs = (nowNs - smoothClockAnchorNs) / 1_000_000.0;
             if (elapsedMs < 0.0) elapsedMs = 0.0;
             double extrapolated = smoothClockAnchorMs
-                    + Math.min(elapsedMs, SMOOTH_CLOCK_MAX_EXTRAPOLATE_MS);
+                    + Math.min(elapsedMs, maxExtrapolateMs);
             double out = Math.max(smoothClockOutMs, extrapolated);
             if (durationMs > 0L) out = Math.min(out, durationMs);
             smoothClockOutMs = out;

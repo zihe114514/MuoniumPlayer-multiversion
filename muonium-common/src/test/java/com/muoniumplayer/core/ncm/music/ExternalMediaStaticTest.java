@@ -444,6 +444,33 @@ public class ExternalMediaStaticTest {
         assertEquals("", ExternalTrackMatcher.artistHint(snapshotWith("", "", "")));
     }
 
+    // ── 时间轴稳定器：按播放器个性的判据 ─────────────────────────────────────
+
+    @Test
+    public void appleMusicGetsDelayCompensationAndWideWindow() {
+        // Lyricify 官方文档：Apple Music 时间轴精度低、上报不稳，建议 -500~-400ms 延迟补偿。
+        assertEquals(SmtcTimelineStabilizer.APPLE_MUSIC_DELAY_COMPENSATION_MS,
+                SmtcTimelineStabilizer.delayCompensationMs("AppleMusic!AppleMusic"));
+        assertEquals(SmtcTimelineStabilizer.APPLE_MUSIC_MAX_EXTRAPOLATE_MS,
+                SmtcTimelineStabilizer.maxExtrapolateMs("AppleMusic!AppleMusic"));
+    }
+
+    @Test
+    public void neteaseAndSpotifyGetWideWindowOthersStayDefault() {
+        // 网易云（InfLink-rs 缺拍）与 Spotify（Connect 接收端冻结 0:00）放宽外推窗口；
+        // QQ 音乐是 Perfect 评级，未知播放器宁可保守——全部维持引擎默认。
+        assertEquals(SmtcTimelineStabilizer.NETEASE_MAX_EXTRAPOLATE_MS,
+                SmtcTimelineStabilizer.maxExtrapolateMs(
+                        "{6D809377-6AF0-444B-8957-A311F677BC3E}\\Netease\\CloudMusic\\CloudMusic.exe"));
+        assertEquals(SmtcTimelineStabilizer.NETEASE_MAX_EXTRAPOLATE_MS,
+                SmtcTimelineStabilizer.maxExtrapolateMs("Spotify.exe"));
+        assertEquals(SmtcTimelineStabilizer.DEFAULT_MAX_EXTRAPOLATE_MS,
+                SmtcTimelineStabilizer.maxExtrapolateMs("Chrome!Chrome"));
+        assertEquals(0L, SmtcTimelineStabilizer.delayCompensationMs("Spotify.exe"),
+                "延迟补偿只有 Apple Music 需要");
+        assertEquals(0L, SmtcTimelineStabilizer.delayCompensationMs(""));
+    }
+
     // ── 辅助 ───────────────────────────────────────────────────────────────────
 
     private static final String V2_PLAYING_LINE = "{\"event\":\"state\",\"v\":2,\"session\":true,"
