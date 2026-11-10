@@ -126,21 +126,32 @@ public final class LyricGlyphAtlas {
     /** 字体世代：invalidateAll 自增，进缓存键防跨世代复用。 */
     private static int fontGeneration;
 
-    /** 帧内烘焙预算：同一帧最多烘焙多少格 + 多少毫秒（渲染线程帧内同步烘焙的掉帧闸）。
-     * 毫秒闸兜住 HDR bloom 晕格（单格 ~3ms）与普通格混跑时的最坏帧。 */
+    /**
+     * 帧内烘焙预算：同一帧最多烘焙多少格 + 多少毫秒（渲染线程帧内同步烘焙的
+     * 掉帧闸）。
+     *
+     * <p>这三个数字是<b>实测标定</b>的，不是拍的（本机 CJK 50px 墨格：
+     * 光栅化 + readPixels ≈ 0.58ms/格；Ultra 晕格 bloom 管线 ≈ 8ms/格）。</p>
+     */
     private static final int BAKES_PER_FRAME_BUDGET = 4;
     private static final long BAKE_NANOS_BUDGET = 8_000_000L;
     /**
-     * 墨格的独立预算（比晕格宽得多）。
+     * 墨格的独立预算（比晕格宽，但<b>受毫秒闸硬约束</b>）。
      *
      * <p>墨格是<b>不可缺</b>的字形本体：返回 null 时宿主会逐字回退像素字
      * （非绘光档）或静默跳过（绘光档），两种都是肉眼可见的闪烁/吞字 —— 比
-     * 掉一帧难看得多。晕格则可以安全丢弃（只丢光晕、不丢字）。所以墨格给
-     * 更宽的额度，只用来兜住「首次遇到大量生字」的极端帧（换句 + 换字体 +
-     * 清缓存叠加），正常帧远达不到。</p>
+     * 掉一帧难看得多。晕格则可以安全丢弃（只丢光晕、不丢字），所以晕格没有
+     * 独立加宽。</p>
+     *
+     * <p><b>为什么从 24 格 / 24ms 收到 8 格 / 5ms</b>：24 格的额度是按旧代码
+     * 「单格约 1ms」估的，实测 CJK 墨格 0.58ms 时 24 格仍是 14ms —— 换句首帧
+     * 一次性烘完一句生字，单帧直接掉到 ~20fps。这正是「外文歌 + 开翻译换句时
+     * 大幅掉帧」的主因：副行整句都是新字形。8 格 × 0.58ms ≈ 4.6ms 落在 5ms
+     * 闸内；30 字的一句摊到 4 帧补齐（~66ms），完全淹没在换句的逐字飞行动画
+     * （700ms）里，肉眼不可辨。毫秒闸兜住更慢的机器/更大的字号。</p>
      */
-    private static final int INK_BAKES_PER_FRAME_BUDGET = 24;
-    private static final long INK_BAKE_NANOS_BUDGET = 24_000_000L;
+    private static final int INK_BAKES_PER_FRAME_BUDGET = 8;
+    private static final long INK_BAKE_NANOS_BUDGET = 5_000_000L;
     /**
      * 预算记账。帧边界由 {@link #beginFrame()} 显式重置 —— <b>不能用 nanoTime
      * 当帧标记</b>：之前写的是「每次取格现读 nanoTime，与上次不相同就认为换了
@@ -484,8 +495,15 @@ public final class LyricGlyphAtlas {
 
     /**
      * 晕格键。spread 上限 3.0（16 档量化 → 每档 0.167）；strength 64 档。
-     * 颜色烘死进晕格像素 —— 跟随字色模式下渐变逐字变色会多烘几组晕格，
-     * 但晕格 LRU 与烘焙预算兜底，量化档让滑块抖动不触发重烘。
+     * 光色烘死进晕格像素。
+     *
+     * <p><b>墨色只进 Ultra 档的键</b>。Ultra 走 HDR bloom 管线
+     * （{@link #bakeBloomLocked}），它只用字形<b>覆盖掩码</b> + 光色，墨色根本不
+     * 参与像素生成 —— 键里带墨色会让「每个字墨色都不同」的场景（封面渐变！
+     * 每字一个 rgbOverride）把同一笔画烘成几十份逐像素相同的晕格。实测一句
+     * 30 字、单格烘焙 ~10ms，等于每次换句多烧 300ms 的同步烘焙。Standard/High
+     * 档走 {@link TextGlow#drawGlowOn} 的分层高斯，内层亮环会混墨色回收，
+     * 所以墨色必须留在那两个档的键里。</p>
      */
     static String glowKey(char ch, float glowStrength, float glowSpread, int glowColorRgb,
                           int inkRgb, int tier) {
@@ -493,7 +511,9 @@ public final class LyricGlyphAtlas {
                 + "|" + Math.round(clamp01(glowStrength) * 64f)
                 + "|" + Math.round(clamp01(glowSpread / 3.0f) * 16f)
                 + "|" + Integer.toHexString(glowColorRgb & 0xFFFFFF)
-                + "|" + Integer.toHexString(inkRgb & 0xFFFFFF)
+                // Ultra 走纯掩码 bloom，墨色不参与像素 —— 不进键（见方法注释）
+                + (tier == TextGlow.GLOW_TIER_ULTRA
+                        ? "" : "|" + Integer.toHexString(inkRgb & 0xFFFFFF))
                 + "|" + tier
                 + "|v" + TextGlow.BLOOM_PIPELINE_VERSION
                 + "|" + fontGeneration;
@@ -568,6 +588,12 @@ public final class LyricGlyphAtlas {
      * 烘焙一个<b>晕格</b>。Ultra 档走 HDR bloom 管线（独立 3× 低频域，见
      * {@link #bakeBloomLocked}）；其余档走 Skija 分层高斯（5× 域）。两条路径
      * 失败互相兜底 —— 新管线在任何环境下炸掉都只降级回旧观感，不丢晕。
+     *
+     * <p><b>Ultra 档的回退路径不吃墨色</b>（传 0 = 无回收，各层都用光色）：
+     * Ultra 的缓存键不含 {@code inkRgb}（见 {@link #glowKey}，bloom 管线只用
+     * 覆盖掩码 + 光色）。若回退时仍按墨色回收内层亮环，同一格就会被不同墨色
+     * 复用 → 屏幕上是错的色相。回退本身是「bloom 管线已失败」的兜底，观感降级
+     * 可接受，但缓存键必须与像素保持一致。</p>
      */
     private static GlyphCell bakeGlowLocked(Host h, CFontRenderer font, String key, char ch,
                                             float glowStrength, float glowSpread, int glowColorRgb,
@@ -577,7 +603,10 @@ public final class LyricGlyphAtlas {
             if (bloom != null) {
                 return bloom;
             }
-            // 新管线失败（掩码/内存/异常）：回退旧分层烘焙，同 key 落格
+            // 新管线失败（掩码/内存/异常）：回退旧分层烘焙。墨色传 0 —— 键里
+            // 没有墨色，像素就不能依赖墨色（见方法注释）。
+            return bakeGlowLegacyLocked(h, font, key, ch, glowStrength, glowSpread,
+                    glowColorRgb, 0, tier);
         }
         return bakeGlowLegacyLocked(h, font, key, ch, glowStrength, glowSpread,
                 glowColorRgb, inkRgb, tier);
