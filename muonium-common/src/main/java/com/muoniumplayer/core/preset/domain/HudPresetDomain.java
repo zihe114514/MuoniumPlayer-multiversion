@@ -54,6 +54,7 @@ public final class HudPresetDomain implements PresetDomain {
             .exclude("材质迁移标记由原配置维护", "glassMaterialVersion")
             .exclude("设备级实验 opt-in 不能被外来预设打开", "glassMobileExperimental")
             .exclude("播放态来源取决于本地播放器环境", "playbackFeed")
+            .exclude("SMTC 时间轴校准跟本机声源与输出链路绑定，外来预设的值对不上", "smtcTimelineDelayMs", "smtcTimelineWindowMs")
             .exclude("音量只进可信本地完整状态，不分享", "playerVolume")
             .exclude("配色来源由主题域调用原 transition 接缝", "themeColorSource")
             .enumMax("fullscreenLyricStyle", () -> HudConfig.FULLSCREEN_LYRIC_STYLE_MAX)
