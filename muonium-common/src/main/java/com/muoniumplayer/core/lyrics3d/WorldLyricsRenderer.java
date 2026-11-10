@@ -150,6 +150,18 @@ public final class WorldLyricsRenderer {
             return false;
         }
 
+        /** True only when GPU execution and same-frame CPU replay are available. */
+        default boolean supportsGpuTrailCanvas() {
+            return false;
+        }
+
+        /** Picture is consumed synchronously; the caller closes it after this method returns. */
+        default boolean drawGpuTrailCanvas(io.github.humbleui.skija.Picture picture, int w, int h,
+                                           float planeX, float planeY, float planeW, float planeH,
+                                           float alpha, int slot) {
+            return false;
+        }
+
         /**
          * 绘光逐字光晕（folia halos：每字一枚径向渐变柔光点垫在字下）。
          * (cx, cy) 是字心（文字像素坐标、公告牌平面系），sizePx 是光晕正方形
@@ -522,6 +534,7 @@ public final class WorldLyricsRenderer {
                 //      只在径迹存活窗口内分配/上传（folia drawTracks 的「彻底消失」
                 //      条款同样约束画布：窗口外整帧零成本，不画空气 quad）。
                 boolean trailCanvasActive = false;
+                boolean gpuTrailCanvas = false;
                 boolean trailWindow = glyphs.huiguangElapsedMs
                         <= HuiguangMotion.ENTRY_WINDOW_MS
                                 + HuiguangMotion.TRACK_TIME_S * 1000f;
@@ -566,9 +579,10 @@ public final class WorldLyricsRenderer {
                     // 1600 设计 px 是 3200² 设备 = 10.2M px ≈ 40MB 纹理 + 单帧
                     // 上百 MB 瞬时分配，必须拦；正常句 ≤600 设计 → 1200² 设备
                     if (bw * HuiguangTrailCanvas.superSample() <= 1600f
-                            && bh * HuiguangTrailCanvas.superSample() <= 1600f
-                            && HuiguangTrailCanvas.begin(bw, bh, bx0, by0)) {
-                        trailCanvasActive = true;
+                            && bh * HuiguangTrailCanvas.superSample() <= 1600f) {
+                        gpuTrailCanvas = host.supportsGpuTrailCanvas()
+                                && HuiguangTrailCanvas.beginRecording(bw, bh, bx0, by0);
+                        trailCanvasActive = gpuTrailCanvas || HuiguangTrailCanvas.begin(bw, bh, bx0, by0);
                     }
                 }
                 // ---- 绘光预通道：径迹 + 逐字光晕（folia 层序 spots<track<halos<glyphs：
@@ -662,17 +676,13 @@ public final class WorldLyricsRenderer {
                 //      宿主不吃下（未实现/熔断）→ 累计失败并停用画布通路：
                 //      之后整帧直接走 quad 带，不再每帧白做光栅化与像素拷贝。
                 if (trailCanvasActive) {
-                    // ABGR 直出（像素换位在 Skija 读出时一次完成）：宿主写入
-                    // 退化纯拷贝，拖尾活跃帧省一整遍逐像素位运算扫描
-                    int[] px = HuiguangTrailCanvas.readPixelsAbgr();
-                    boolean accepted = false;
-                    if (px != null) {
-                        accepted = host.drawTrailCanvas(px,
-                                HuiguangTrailCanvas.canvasWidth(),
-                                HuiguangTrailCanvas.canvasHeight(),
-                                HuiguangTrailCanvas.offX(), HuiguangTrailCanvas.offY(),
-                                HuiguangTrailCanvas.planeW(), HuiguangTrailCanvas.planeH(),
-                                1f, canvasSlot);
+                    boolean accepted;
+                    if (gpuTrailCanvas) {
+                        try (io.github.humbleui.skija.Picture picture = HuiguangTrailCanvas.finishRecording()) {
+                            accepted = presentTrailCanvas(host, picture, canvasSlot);
+                        }
+                    } else {
+                        accepted = presentTrailCanvas(host, null, canvasSlot);
                     }
                     if (accepted) {
                         trailCanvasFailStreak = 0;
@@ -866,6 +876,26 @@ public final class WorldLyricsRenderer {
         } finally {
             host.popBillboard();
         }
+    }
+
+    /** GPU consumes no pixels; a rejected Picture is replayed by CPU in this same frame. */
+    static boolean presentTrailCanvas(Host host, io.github.humbleui.skija.Picture picture, int slot) {
+        int width = HuiguangTrailCanvas.canvasWidth();
+        int height = HuiguangTrailCanvas.canvasHeight();
+        if (picture != null) {
+            try {
+                if (host.drawGpuTrailCanvas(picture, width, height,
+                        HuiguangTrailCanvas.offX(), HuiguangTrailCanvas.offY(),
+                        HuiguangTrailCanvas.planeW(), HuiguangTrailCanvas.planeH(), 1f, slot)) return true;
+            } catch (Throwable failure) {
+                // Failure is local to GPU acceleration; preserve this frame via the raster path.
+            }
+            if (!HuiguangTrailCanvas.rasterize(picture)) return false;
+        }
+        int[] pixels = HuiguangTrailCanvas.readPixelsAbgr();
+        return pixels != null && host.drawTrailCanvas(pixels, width, height,
+                HuiguangTrailCanvas.offX(), HuiguangTrailCanvas.offY(),
+                HuiguangTrailCanvas.planeW(), HuiguangTrailCanvas.planeH(), 1f, slot);
     }
 
     /** Split lines（拆句已由解析层实现，这里保留入口给渲染层开关用）。 */

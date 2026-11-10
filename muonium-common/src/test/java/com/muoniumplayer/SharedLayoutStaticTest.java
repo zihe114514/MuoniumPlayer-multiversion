@@ -165,6 +165,10 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/render/skija/Port121StaticTest.java",
             "com/muoniumplayer/render/skija/Port262StaticTest.java",
             "com/muoniumplayer/render/skija/Port263StaticTest.java",
+            // 26.x present/NativeImage 接口不同于旧树，仅主开发树运行真实版本探针。
+            "com/muoniumplayer/compat/mc/LyricPresentRendererUploadTest.java",
+            "com/muoniumplayer/compat/mc/WorldBillboardCanvasPixelsTest.java",
+            "com/muoniumplayer/render/skija/SkijaTrailGpuTest.java",
             "com/muoniumplayer/render/skija/RasterFrames.java"));
 
     // 仅铺设 Kotlin 源根，不迁移既有 Java 留守类；未来新增差异类需同步登记工具与本表。

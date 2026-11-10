@@ -11,6 +11,7 @@ import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.settings.TouchSettings;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -98,6 +99,8 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
             Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<AbstractWidget<?>> uniformNextVisibleChildren =
             Collections.newSetFromMap(new IdentityHashMap<>());
+    /** Ordered candidates include the same one-row overscan used by uniform layout. */
+    private List<AbstractWidget<?>> uniformRenderChildren = Collections.emptyList();
 
     @Getter
     private Alignment alignment = Alignment.VERTICAL;
@@ -160,11 +163,17 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
         return this.alignment == Alignment.VERTICAL && this.uniformVerticalItemHeight > 0.0;
     }
 
+    @Override
+    protected List<AbstractWidget<?>> getRenderChildren() {
+        return this.hasUniformVerticalLayout() ? this.uniformRenderChildren : super.getRenderChildren();
+    }
+
     private void resetUniformLayoutState() {
         this.uniformFirstVisible = -1;
         this.uniformLastVisible = -1;
         this.uniformVisibleChildren.clear();
         this.uniformNextVisibleChildren.clear();
+        this.uniformRenderChildren = Collections.emptyList();
     }
 
     private double uniformContentLength() {
@@ -179,6 +188,7 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
 
     private void placeUniformChildrenOutsideViewport(List<AbstractWidget<?>> children) {
         for (AbstractWidget<?> child : children) {
+            child.clearViewportHover();
             child.onViewportExit();
             child.setPosition(child.getRelativeX(), OUTSIDE_VIEWPORT_Y);
         }
@@ -186,6 +196,7 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
 
     private void placeUniformChildrenOutsideViewport(AbstractWidget<?>[] children) {
         for (AbstractWidget<?> child : children) {
+            child.clearViewportHover();
             child.onViewportExit();
             child.setPosition(child.getRelativeX(), OUTSIDE_VIEWPORT_Y);
         }
@@ -567,6 +578,10 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
         List<AbstractWidget<?>> children = this.getChildren();
         int count = children.size();
         if (count == 0) {
+            for (AbstractWidget<?> child : this.uniformVisibleChildren) {
+                child.clearViewportHover();
+                child.onViewportExit();
+            }
             this.resetUniformLayoutState();
             return;
         }
@@ -579,12 +594,22 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
         // Build the next visible identity set first. This handles fast jumps and arbitrary list
         // replacement without scanning every child or relying on stale integer indices.
         this.uniformNextVisibleChildren.clear();
+        boolean sameWindow = this.uniformRenderChildren.size() == Math.max(0, last - first + 1);
         for (int index = first; index <= last; index++) {
-            this.uniformNextVisibleChildren.add(children.get(index));
+            AbstractWidget<?> child = children.get(index);
+            this.uniformNextVisibleChildren.add(child);
+            if (sameWindow && this.uniformRenderChildren.get(index - first) != child) sameWindow = false;
+        }
+        // Keep the current render iteration stable if a child callback resets the panel.
+        if (!sameWindow) {
+            List<AbstractWidget<?>> next = new ArrayList<>(Math.max(0, last - first + 1));
+            for (int index = first; index <= last; index++) next.add(children.get(index));
+            this.uniformRenderChildren = next;
         }
 
         for (AbstractWidget<?> child : this.uniformVisibleChildren) {
             if (!this.uniformNextVisibleChildren.contains(child)) {
+                child.clearViewportHover();
                 child.onViewportExit();
                 child.setPosition(child.getRelativeX(), OUTSIDE_VIEWPORT_Y);
             }

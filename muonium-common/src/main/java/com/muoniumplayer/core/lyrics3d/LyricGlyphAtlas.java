@@ -124,7 +124,12 @@ public final class LyricGlyphAtlas {
     /** 缓存键 → 格子。 */
     private static final Map<String, GlyphCell> CELLS = new LinkedHashMap<>(256);
     /** 字体世代：invalidateAll 自增，进缓存键防跨世代复用。 */
-    private static int fontGeneration;
+    private static volatile int fontGeneration;
+
+    /** Font/quality epoch shared with dependent sprite and upload caches. */
+    public static int fontGeneration() {
+        return fontGeneration;
+    }
 
     /**
      * 帧内烘焙预算：同一帧最多烘焙多少格 + 多少毫秒（渲染线程帧内同步烘焙的

@@ -165,11 +165,10 @@ public final class TextGlow {
             // ---- 分层加色：宽晕场 / 外圈饱和 / 内圈字色 / 字色白核 ----
             float[] gR = new float[n], gG = new float[n], gB = new float[n];
             addLayerTinted(gR, gG, gB, u, BLOOM_GAIN_WIDE * clamped, lr, lg, lb, 0f, 1f);
-            // 外圈/内圈层：放大到全网格后立即累加，不再各自持有整幅(float[n])的
-            // 中间结果 —— 旧写法 upTo 返回一张全尺寸新数组，连丢两张 117KB。
-            addLayerTinted(gR, gG, gB, upTo(m3, w3, h3, w, h),
+            // 双线性采样与颜色累加合并，省掉两张全尺寸中间数组；算术次序不变。
+            addLayerTintedUpsampled(gR, gG, gB, m3, w3, h3, w, h,
                     BLOOM_GAIN_OUTER * clamped, lr, lg, lb, 0f, BLOOM_SAT_OUTER);
-            addLayerTinted(gR, gG, gB, upTo(m1, w1, h1, w, h),
+            addLayerTintedUpsampled(gR, gG, gB, m1, w1, h1, w, h,
                     BLOOM_GAIN_INNER * clamped, lr, lg, lb, BLOOM_WHITEN_INNER, 1f);
             float[] core = new float[n];
             System.arraycopy(mask, 0, core, 0, n);
@@ -369,6 +368,40 @@ public final class TextGlow {
     private static void addInto(float[] d, float[] s) {
         for (int i = 0; i < d.length; i++) {
             d[i] += s[i];
+        }
+    }
+
+    /** Same pixel-center interpolation and tint order as upTo followed by addLayerTinted. */
+    private static void addLayerTintedUpsampled(float[] gR, float[] gG, float[] gB,
+                                                float[] src, int w, int h, int uw, int uh,
+                                                float gain, float lr, float lg, float lb,
+                                                float whiten, float satK) {
+        if (gain <= 0) return;
+        float gray = 0.299f * lr + 0.587f * lg + 0.114f * lb;
+        float tr = gray + (lr - gray) * satK;
+        float tg = gray + (lg - gray) * satK;
+        float tb = gray + (lb - gray) * satK;
+        tr += (1f - tr) * whiten;
+        tg += (1f - tg) * whiten;
+        tb += (1f - tb) * whiten;
+        for (int y = 0; y < uh; y++) {
+            float fy = (y + 0.5f) * h / (float) uh - 0.5f;
+            int y0 = Math.max(0, Math.min(h - 1, (int) Math.floor(fy)));
+            int y1 = Math.min(h - 1, y0 + 1);
+            float ty = Math.max(0f, Math.min(1f, fy - y0));
+            for (int x = 0; x < uw; x++) {
+                float fx = (x + 0.5f) * w / (float) uw - 0.5f;
+                int x0 = Math.max(0, Math.min(w - 1, (int) Math.floor(fx)));
+                int x1 = Math.min(w - 1, x0 + 1);
+                float tx = Math.max(0f, Math.min(1f, fx - x0));
+                float sample = (src[y0 * w + x0] * (1 - tx) + src[y0 * w + x1] * tx) * (1 - ty)
+                        + (src[y1 * w + x0] * (1 - tx) + src[y1 * w + x1] * tx) * ty;
+                float v = sample * gain;
+                int i = y * uw + x;
+                gR[i] += v * tr;
+                gG[i] += v * tg;
+                gB[i] += v * tb;
+            }
         }
     }
 
