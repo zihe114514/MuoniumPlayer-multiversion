@@ -313,6 +313,34 @@ class TextGlowBloomGoldenTest {
     }
 
     @Test
+    @DisplayName("可复用光场：不同颜色/强度变体与旧算法逐像素一致，光场不被着色改写")
+    void reusableFieldKeepsTheOriginalPixelsForEveryVariant() {
+        int[][] sizes = {{61, 84}, {96, 112}, {154, 189}};
+        int[] colors = {0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF, 0x020304};
+        for (int[] size : sizes) {
+            int w = size[0], h = size[1];
+            float[] mask = makeMask(w, h, 901L + w);
+            TextGlow.BloomGlowField field = TextGlow.prepareBloomGlowField(mask, w, h, 40f, 1.3);
+            assertNotNull(field);
+            assertEquals(w, field.width);
+            assertEquals(h, field.height);
+            assertTrue(field.floatCount() >= w * h * 2L);
+            for (int color : colors) {
+                for (double strength : new double[] {.05, .45, 1.0}) {
+                    assertArrayEquals(oldBakeBloomGlowPixels(mask, w, h, 40f, 1.3, strength, color),
+                            TextGlow.shadeBloomGlowPixels(field, strength, color));
+                }
+            }
+            int[] before = TextGlow.shadeBloomGlowPixels(field, .45, 0xFFFFFF);
+            java.util.Arrays.fill(mask, 0f);
+            TextGlow.shadeBloomGlowPixels(field, 1.0, 0xFF0000);
+            assertArrayEquals(before, TextGlow.shadeBloomGlowPixels(field, .45, 0xFFFFFF));
+            assertEquals(null, TextGlow.shadeBloomGlowPixels(field, 0, 0xFFFFFF));
+            assertEquals(null, TextGlow.shadeBloomGlowPixels(field, 1, 0));
+        }
+    }
+
+    @Test
     @DisplayName("bloom 晕格必须有可见能量（防空回归）")
     void bloomBakeProducesVisibleGlow() {
         int w = 128, h = 140;

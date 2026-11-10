@@ -103,53 +103,103 @@ public final class TextGlow {
      * @param mask    字形覆盖度，长 w×h
      * @param fontPx  掩码所在域的字号（像素），σ 按 fontPx/50 等比缩放
      */
+    /** Immutable, color-independent convolution result; callers may share it between glow variants. */
+    public static final class BloomGlowField {
+        public final int width, height;
+        private final float[] wide, outer, inner, core;
+        private final BilinearGrid outerGrid, innerGrid;
+
+        private BloomGlowField(int width, int height, float[] wide, float[] outer,
+                               int outerWidth, int outerHeight, float[] inner,
+                               int innerWidth, int innerHeight, float[] core) {
+            this.width = width;
+            this.height = height;
+            this.wide = wide;
+            this.outer = outer;
+            this.outerGrid = new BilinearGrid(outerWidth, outerHeight, width, height);
+            this.inner = inner;
+            this.innerGrid = new BilinearGrid(innerWidth, innerHeight, width, height);
+            this.core = core;
+        }
+
+        /** Retained 32-bit elements, including the interpolation index/weight tables. */
+        public long floatCount() {
+            return (long) wide.length + outer.length + inner.length + core.length
+                    + outerGrid.elementCount() + innerGrid.elementCount();
+        }
+    }
+
+    /** Pixel-center sampling tables; exact arithmetic matches upTo and is reused across tints. */
+    private static final class BilinearGrid {
+        final int[] x0, x1, row0, row1;
+        final float[] tx, ty;
+
+        BilinearGrid(int width, int height, int targetWidth, int targetHeight) {
+            x0 = new int[targetWidth];
+            x1 = new int[targetWidth];
+            tx = new float[targetWidth];
+            row0 = new int[targetHeight];
+            row1 = new int[targetHeight];
+            ty = new float[targetHeight];
+            for (int x = 0; x < targetWidth; x++) {
+                float fx = (x + 0.5f) * width / (float) targetWidth - 0.5f;
+                x0[x] = Math.max(0, Math.min(width - 1, (int) Math.floor(fx)));
+                x1[x] = Math.min(width - 1, x0[x] + 1);
+                tx[x] = Math.max(0f, Math.min(1f, fx - x0[x]));
+            }
+            for (int y = 0; y < targetHeight; y++) {
+                float fy = (y + 0.5f) * height / (float) targetHeight - 0.5f;
+                int y0 = Math.max(0, Math.min(height - 1, (int) Math.floor(fy)));
+                row0[y] = y0 * width;
+                row1[y] = Math.min(height - 1, y0 + 1) * width;
+                ty[y] = Math.max(0f, Math.min(1f, fy - y0));
+            }
+        }
+
+        long elementCount() {
+            return 3L * (tx.length + ty.length);
+        }
+
+        float sample(float[] pixels, int x, int y) {
+            float wx = tx[x], wy = ty[y];
+            return (pixels[row0[y] + x0[x]] * (1 - wx) + pixels[row0[y] + x1[x]] * wx) * (1 - wy)
+                    + (pixels[row1[y] + x0[x]] * (1 - wx) + pixels[row1[y] + x1[x]] * wx) * wy;
+        }
+    }
+
     public static int[] bakeBloomGlowPixels(float[] mask, int w, int h, float fontPx,
                                             double spread, double strength, int lightRgb) {
-        try {
-            float clamped = (float) clamp01(strength);
-            if (mask == null || w <= 0 || h <= 0 || mask.length < w * h || clamped <= .004f) {
-                return null;
-            }
-            if ((lightRgb & 0xFFFFFF) == 0) {
-                return null;   // 黑光色 = 不发光（白核的提白会把黑变成灰，必须显式回退旧路径）
-            }
-            float k = (float) (fontPx / 50.0 * Math.max(.05, spread));
-            float lr = ((lightRgb >> 16) & 255) / 255f;
-            float lg = ((lightRgb >> 8) & 255) / 255f;
-            float lb = (lightRgb & 255) / 255f;
+        if ((float) clamp01(strength) <= .004f || (lightRgb & 0xFFFFFF) == 0) return null;
+        return shadeBloomGlowPixels(prepareBloomGlowField(mask, w, h, fontPx, spread), strength, lightRgb);
+    }
 
-            // 每格一次申请、全管线复用（下/上行链共 6 个 gaussBlur pass）：旧实现
-            // 每个 pass 自己 new 一张 w*h 的临时表，一格晕要连丢 6 张 + 2 张图层
-            // 全尺寸缓冲，155×189 的格上就是 8×117KB ≈ 940KB/格的瞬时垃圾。
+    /** Covers geometry, low-pass, mip chain and gamma only; no color, strength or quantization. */
+    public static BloomGlowField prepareBloomGlowField(float[] mask, int w, int h, float fontPx,
+                                                       double spread) {
+        try {
+            if (mask == null || w <= 0 || h <= 0 || (long) w * h > mask.length) return null;
+            float k = (float) (fontPx / 50.0 * Math.max(.05, spread));
+            int w1 = w / 2, h1 = h / 2, w2 = w1 / 2, h2 = h1 / 2, w3 = w2 / 2, h3 = h2 / 2;
+            if (w3 < 1 || h3 < 1) return null;
             int n = w * h;
             float[] blurTmp = new float[n];
             float[] blurAcc = new float[n];
-
-            // ---- bright-pass（soft-knee）→ 线性域 ----
             float[] b = new float[n];
             for (int i = 0; i < n; i++) {
                 float v = Math.max(0f, mask[i]);
-                if (v <= 1e-4f) {
-                    continue;   // 无光：膝部形状在 v=0 处仍有残值，必须显式归零
-                }
+                if (v <= 1e-4f) continue;
                 float hard = Math.max(v - BLOOM_THRESH, 0);
                 float soft = BLOOM_KNEE * Math.max(0f, Math.min(v - BLOOM_THRESH + BLOOM_KNEE, 2 * BLOOM_KNEE));
                 soft = soft * soft / (4 * BLOOM_KNEE + 1e-4f);
                 b[i] = (float) Math.pow(Math.max(hard, soft), 2.2);
             }
-            // ---- 下行链：每级先低通再降采样（防高频混叠成块）----
             gaussBlur(b, w, h, BLOOM_SIGMA_PRE * k, blurTmp, blurAcc);
-            int w1 = w / 2, h1 = h / 2, w2 = w1 / 2, h2 = h1 / 2, w3 = w2 / 2, h3 = h2 / 2;
-            if (w3 < 1 || h3 < 1) {
-                return null;
-            }
             float[] m1 = down2(b, w, h);
             gaussBlur(m1, w1, h1, BLOOM_SIGMA_M1 * k, blurTmp, blurAcc);
             float[] m2 = down2(m1, w1, h1);
             gaussBlur(m2, w2, h2, BLOOM_SIGMA_M2 * k, blurTmp, blurAcc);
             float[] m3 = down2(m2, w2, h2);
             gaussBlur(m3, w3, h3, BLOOM_SIGMA_M3 * k, blurTmp, blurAcc);
-            // ---- 上行链：每步只放大 ~2×，相加后轻高斯压台阶 ----
             float[] u = upTo(m3, w3, h3, w2, h2);
             addInto(u, m2);
             gaussBlur(u, w2, h2, BLOOM_SIGMA_UP1 * k, blurTmp, blurAcc);
@@ -158,36 +208,47 @@ public final class TextGlow {
             gaussBlur(u, w1, h1, BLOOM_SIGMA_UP2 * k, blurTmp, blurAcc);
             u = upTo(u, w1, h1, w, h);
             gammaBack(u);
-            // 外圈/内圈层在小域上 γ 返程后双线性放大到全网格（探针 addBilin 口径）
             gammaBack(m3);
             gammaBack(m1);
-
-            // ---- 分层加色：宽晕场 / 外圈饱和 / 内圈字色 / 字色白核 ----
-            float[] gR = new float[n], gG = new float[n], gB = new float[n];
-            addLayerTinted(gR, gG, gB, u, BLOOM_GAIN_WIDE * clamped, lr, lg, lb, 0f, 1f);
-            // 双线性采样与颜色累加合并，省掉两张全尺寸中间数组；算术次序不变。
-            addLayerTintedUpsampled(gR, gG, gB, m3, w3, h3, w, h,
-                    BLOOM_GAIN_OUTER * clamped, lr, lg, lb, 0f, BLOOM_SAT_OUTER);
-            addLayerTintedUpsampled(gR, gG, gB, m1, w1, h1, w, h,
-                    BLOOM_GAIN_INNER * clamped, lr, lg, lb, BLOOM_WHITEN_INNER, 1f);
             float[] core = new float[n];
             System.arraycopy(mask, 0, core, 0, n);
             gaussBlur(core, w, h, BLOOM_SIGMA_CORE * k, blurTmp, blurAcc);
-            addLayerTinted(gR, gG, gB, core, BLOOM_GAIN_CORE * clamped, lr, lg, lb, BLOOM_WHITEN_CORE, 1f);
+            return new BloomGlowField(w, h, u, m3, w3, h3, m1, w1, h1, core);
+        } catch (Throwable failure) {
+            return null;
+        }
+    }
 
-            // ---- 直通 alpha 输出：a = max 通道，rgb 除回满强度（GL 加色贡献 rgb×a 不变）----
-            // ING 有序抖动（Jimenez 2014，±0.5 LSB）：晕的暗端 alpha < 16 的尾部在
-            // 8bit 量化下出现同心台阶（游戏里叠在动态背景上显形为"割裂"），
-            // 抖动把台阶打散成空间噪声 —— 人眼读作连续渐变。
-            int[] out = new int[w * h];
+    /** Original tint, layer order, ING dither and ARGB quantization applied to a reusable field. */
+    public static int[] shadeBloomGlowPixels(BloomGlowField field, double strength, int lightRgb) {
+        try {
+            float clamped = (float) clamp01(strength);
+            if (field == null || clamped <= .004f || (lightRgb & 0xFFFFFF) == 0) return null;
+            int w = field.width, h = field.height, n = w * h;
+            float lr = ((lightRgb >> 16) & 255) / 255f;
+            float lg = ((lightRgb >> 8) & 255) / 255f;
+            float lb = (lightRgb & 255) / 255f;
+            float[][] tint = bloomTints(lr, lg, lb);
+            float wideGain = BLOOM_GAIN_WIDE * clamped, outerGain = BLOOM_GAIN_OUTER * clamped;
+            float innerGain = BLOOM_GAIN_INNER * clamped, coreGain = BLOOM_GAIN_CORE * clamped;
+            int[] out = new int[n];
             for (int y = 0; y < h; y++) {
                 int row = y * w;
                 for (int x = 0; x < w; x++) {
                     int i = row + x;
+                    float r = 0f, g = 0f, bl = 0f;
+                    float v = field.wide[i] * wideGain;
+                    r += v * tint[0][0]; g += v * tint[0][1]; bl += v * tint[0][2];
+                    v = field.outerGrid.sample(field.outer, x, y) * outerGain;
+                    r += v * tint[1][0]; g += v * tint[1][1]; bl += v * tint[1][2];
+                    v = field.innerGrid.sample(field.inner, x, y) * innerGain;
+                    r += v * tint[2][0]; g += v * tint[2][1]; bl += v * tint[2][2];
+                    v = field.core[i] * coreGain;
+                    r += v * tint[3][0]; g += v * tint[3][1]; bl += v * tint[3][2];
                     float dither = ing(x, y) / 255f;
-                    float r = Math.max(0f, gR[i] + dither);
-                    float g = Math.max(0f, gG[i] + dither);
-                    float bl = Math.max(0f, gB[i] + dither);
+                    r = Math.max(0f, r + dither);
+                    g = Math.max(0f, g + dither);
+                    bl = Math.max(0f, bl + dither);
                     float mx = Math.max(r, Math.max(g, bl));
                     if (mx <= 0.001f) {
                         out[i] = 0;
@@ -202,9 +263,28 @@ public final class TextGlow {
                 }
             }
             return out;
-        } catch (Throwable t) {
+        } catch (Throwable failure) {
             return null;
         }
+    }
+
+    private static float[][] bloomTints(float lr, float lg, float lb) {
+        float[][] tints = new float[4][3];
+        float gray = 0.299f * lr + 0.587f * lg + 0.114f * lb;
+        for (int layer = 0; layer < tints.length; layer++) {
+            float saturation = layer == 1 ? BLOOM_SAT_OUTER : 1f;
+            float whiten = layer == 2 ? BLOOM_WHITEN_INNER : layer == 3 ? BLOOM_WHITEN_CORE : 0f;
+            float r = gray + (lr - gray) * saturation;
+            float g = gray + (lg - gray) * saturation;
+            float b = gray + (lb - gray) * saturation;
+            r += (1f - r) * whiten;
+            g += (1f - g) * whiten;
+            b += (1f - b) * whiten;
+            tints[layer][0] = r;
+            tints[layer][1] = g;
+            tints[layer][2] = b;
+        }
+        return tints;
     }
 
     /** 灰度场 γ 返程（负值钳零 —— 滑窗浮点误差的微负值经 pow 会成 NaN，碎屏根源）。 */
@@ -212,28 +292,6 @@ public final class TextGlow {
         for (int i = 0; i < a.length; i++) {
             float v = a[i];
             a[i] = (float) Math.pow(v < 0 ? 0 : v, 1f / 2.2f);
-        }
-    }
-
-    /** 颜色场累加：src × gain × tint（tint = 光色按 satK 调饱和后再向白提 whiten）。 */
-    private static void addLayerTinted(float[] gR, float[] gG, float[] gB, float[] src,
-                                       float gain, float lr, float lg, float lb,
-                                       float whiten, float satK) {
-        if (gain <= 0) {
-            return;
-        }
-        float gray = 0.299f * lr + 0.587f * lg + 0.114f * lb;
-        float tr = gray + (lr - gray) * satK;
-        float tg = gray + (lg - gray) * satK;
-        float tb = gray + (lb - gray) * satK;
-        tr += (1f - tr) * whiten;
-        tg += (1f - tg) * whiten;
-        tb += (1f - tb) * whiten;
-        for (int i = 0; i < gR.length; i++) {
-            float v = src[i] * gain;
-            gR[i] += v * tr;
-            gG[i] += v * tg;
-            gB[i] += v * tb;
         }
     }
 
@@ -368,40 +426,6 @@ public final class TextGlow {
     private static void addInto(float[] d, float[] s) {
         for (int i = 0; i < d.length; i++) {
             d[i] += s[i];
-        }
-    }
-
-    /** Same pixel-center interpolation and tint order as upTo followed by addLayerTinted. */
-    private static void addLayerTintedUpsampled(float[] gR, float[] gG, float[] gB,
-                                                float[] src, int w, int h, int uw, int uh,
-                                                float gain, float lr, float lg, float lb,
-                                                float whiten, float satK) {
-        if (gain <= 0) return;
-        float gray = 0.299f * lr + 0.587f * lg + 0.114f * lb;
-        float tr = gray + (lr - gray) * satK;
-        float tg = gray + (lg - gray) * satK;
-        float tb = gray + (lb - gray) * satK;
-        tr += (1f - tr) * whiten;
-        tg += (1f - tg) * whiten;
-        tb += (1f - tb) * whiten;
-        for (int y = 0; y < uh; y++) {
-            float fy = (y + 0.5f) * h / (float) uh - 0.5f;
-            int y0 = Math.max(0, Math.min(h - 1, (int) Math.floor(fy)));
-            int y1 = Math.min(h - 1, y0 + 1);
-            float ty = Math.max(0f, Math.min(1f, fy - y0));
-            for (int x = 0; x < uw; x++) {
-                float fx = (x + 0.5f) * w / (float) uw - 0.5f;
-                int x0 = Math.max(0, Math.min(w - 1, (int) Math.floor(fx)));
-                int x1 = Math.min(w - 1, x0 + 1);
-                float tx = Math.max(0f, Math.min(1f, fx - x0));
-                float sample = (src[y0 * w + x0] * (1 - tx) + src[y0 * w + x1] * tx) * (1 - ty)
-                        + (src[y1 * w + x0] * (1 - tx) + src[y1 * w + x1] * tx) * ty;
-                float v = sample * gain;
-                int i = y * uw + x;
-                gR[i] += v * tr;
-                gG[i] += v * tg;
-                gB[i] += v * tb;
-            }
         }
     }
 

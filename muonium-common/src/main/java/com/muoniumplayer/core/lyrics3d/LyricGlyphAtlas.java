@@ -123,6 +123,25 @@ public final class LyricGlyphAtlas {
     private static final List<Page> PAGES = new ArrayList<>();
     /** 缓存键 → 格子。 */
     private static final Map<String, GlyphCell> CELLS = new LinkedHashMap<>(256);
+    /** Ultra 的形状只依赖字形与真实扩散值，颜色/强度变体不重复光栅化和卷积。 */
+    private static final Map<String, BloomGlyph> BLOOM_FIELDS = new LinkedHashMap<>(128, .75f, true);
+    private static final int BLOOM_FIELD_ENTRIES = 64;
+    private static final long BLOOM_FIELD_FLOAT_BUDGET = 4L * 1024 * 1024;
+    private static long bloomFieldFloats;
+
+    private static final class BloomGlyph {
+        final TextGlow.BloomGlowField field;
+        final int pad, inkHeight;
+        final float advance;
+
+        BloomGlyph(TextGlow.BloomGlowField field, int pad, int inkHeight, float advance) {
+            this.field = field;
+            this.pad = pad;
+            this.inkHeight = inkHeight;
+            this.advance = advance;
+        }
+    }
+
     /** 字体世代：invalidateAll 自增，进缓存键防跨世代复用。 */
     private static volatile int fontGeneration;
 
@@ -437,6 +456,8 @@ public final class LyricGlyphAtlas {
             dead = new ArrayList<>(PAGES);
             PAGES.clear();
             CELLS.clear();
+            BLOOM_FIELDS.clear();
+            bloomFieldFloats = 0;
             ADVANCE_CACHE.clear();
             bakeFont = null;
             glowFont = null;
@@ -617,13 +638,56 @@ public final class LyricGlyphAtlas {
                 glowColorRgb, inkRgb, tier);
     }
 
-    /**
-     * Ultra 档晕格：HDR bloom 管线（{@link TextGlow#bakeBloomGlowPixels}）。
-     * 独立 3× 烘焙域（晕是低频光形，3× 足够且 mip 链可运行、格小烘焙快）——
-     * 与墨格 5× 域不同，世界侧按 {@code cell.scale} 各自折算。
-     */
+    /** Shape cache uses exact spread bits; quantized glow keys must not merge distinct convolutions. */
+    static String bloomFieldKey(char ch, float glowSpread) {
+        return ch + "|" + Integer.toHexString(Float.floatToIntBits(glowSpread))
+                + "|" + fontGeneration + "|v" + TextGlow.BLOOM_PIPELINE_VERSION;
+    }
+
+    private static void rememberBloomFieldLocked(String key, BloomGlyph glyph) {
+        long weight = glyph.field.floatCount();
+        if (weight > BLOOM_FIELD_FLOAT_BUDGET) return;
+        BloomGlyph old = BLOOM_FIELDS.put(key, glyph);
+        if (old != null) bloomFieldFloats -= old.field.floatCount();
+        bloomFieldFloats += weight;
+        Iterator<BloomGlyph> it = BLOOM_FIELDS.values().iterator();
+        while (BLOOM_FIELDS.size() > BLOOM_FIELD_ENTRIES || bloomFieldFloats > BLOOM_FIELD_FLOAT_BUDGET) {
+            bloomFieldFloats -= it.next().field.floatCount();
+            it.remove();
+        }
+    }
+
+    /** Ultra convolution is cached before tinting; final cells retain the original color/strength keys. */
     private static GlyphCell bakeBloomLocked(Host h, char ch,
                                              float glowStrength, float glowSpread, int glowColorRgb) {
+        if ((glowColorRgb & 0xFFFFFF) == 0) return null;
+        String key = bloomFieldKey(ch, glowSpread);
+        BloomGlyph glyph = BLOOM_FIELDS.get(key);
+        if (glyph == null) {
+            glyph = prepareBloomGlyphLocked(ch, glowSpread);
+            if (glyph == null) return null;
+            rememberBloomFieldLocked(key, glyph);
+        }
+        int cellW = glyph.field.width, cellH = glyph.field.height;
+        int[] pixelsArgb = TextGlow.shadeBloomGlowPixels(glyph.field, glowStrength, glowColorRgb & 0xFFFFFF);
+        if (pixelsArgb == null) return null;
+        dilateTransparentRgb(pixelsArgb, cellW, cellH);
+        int[] at = probeOrMakePageLocked(h, cellW, cellH);
+        if (at == null) return null;
+        Page page = PAGES.get(at[2]);
+        try {
+            h.uploadCell(page.handle, at[0], at[1], cellW, cellH, pixelsArgb);
+        } catch (Throwable failure) {
+            return null;
+        }
+        page.commit(at[0], at[1], cellW, cellH);
+        page.lastUseNanos = System.nanoTime();
+        return new GlyphCell(page.handle, at[0], at[1], cellW, cellH,
+                glyph.pad, glyph.pad, glyph.advance, glyph.inkHeight, TextGlow.GLOW_BAKE_SCALE);
+    }
+
+    /** Glyph mask and convolution stay at the original 4× domain and padding. */
+    private static BloomGlyph prepareBloomGlyphLocked(char ch, float glowSpread) {
         if (!SkijaNatives.ensureLoaded()) return null;
         ensureGlowFontLocked();
         CFontRenderer font = glowFont;
@@ -632,14 +696,11 @@ public final class LyricGlyphAtlas {
         if (advanceBake <= 0.01f) return null;
         int inkH = Math.max(1, font.lineBox());
         if (inkH <= 0) return null;
-
         int glowPad = TextGlow.glowPadding(font, glowSpread, TextGlow.GLOW_TIER_ULTRA);
         int pad = Math.max(2 * TextGlow.GLOW_BAKE_SCALE, glowPad);
         int cellW = (int) Math.ceil(advanceBake) + pad * 2;
         int cellH = inkH + pad * 2;
         if (cellW > PAGE_SIZE || cellH > PAGE_SIZE) return null;
-
-        // ---- 字形覆盖掩码（白字 premul 的 alpha 通道即覆盖度）----
         float[] mask;
         try (Bitmap bitmap = new Bitmap()) {
             if (!bitmap.allocPixels(ImageInfo.makeN32Premul(cellW, cellH))) return null;
@@ -653,30 +714,12 @@ public final class LyricGlyphAtlas {
             byte[] src = bitmap.readPixels();
             if (src == null || src.length < cellW * cellH * 4) return null;
             mask = new float[cellW * cellH];
-            for (int i = 0; i < mask.length; i++) {
-                mask[i] = (src[i * 4 + 3] & 0xFF) / 255f;
-            }
-        } catch (Throwable t) {
+            for (int i = 0; i < mask.length; i++) mask[i] = (src[i * 4 + 3] & 0xFF) / 255f;
+        } catch (Throwable failure) {
             return null;
         }
-
-        int[] pixelsArgb = TextGlow.bakeBloomGlowPixels(mask, cellW, cellH, font.sizePx,
-                glowSpread, glowStrength, glowColorRgb & 0xFFFFFF);
-        if (pixelsArgb == null) return null;
-        dilateTransparentRgb(pixelsArgb, cellW, cellH);
-
-        int[] at = probeOrMakePageLocked(h, cellW, cellH);
-        if (at == null) return null;
-        Page page = PAGES.get(at[2]);
-        try {
-            h.uploadCell(page.handle, at[0], at[1], cellW, cellH, pixelsArgb);
-        } catch (Throwable t) {
-            return null;
-        }
-        page.commit(at[0], at[1], cellW, cellH);
-        page.lastUseNanos = System.nanoTime();
-        return new GlyphCell(page.handle, at[0], at[1], cellW, cellH,
-                pad, pad, advanceBake, inkH, TextGlow.GLOW_BAKE_SCALE);
+        TextGlow.BloomGlowField field = TextGlow.prepareBloomGlowField(mask, cellW, cellH, font.sizePx, glowSpread);
+        return field == null ? null : new BloomGlyph(field, pad, inkH, advanceBake);
     }
 
     /**
