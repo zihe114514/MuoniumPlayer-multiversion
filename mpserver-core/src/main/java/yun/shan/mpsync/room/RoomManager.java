@@ -86,8 +86,22 @@ public final class RoomManager {
      */
     private final Map<UUID, Long> playlistImportAt = new HashMap<>();
 
+    /** 频道空闲歌单（{@code mpsync-idle.json}）。构造时就建好，没 bootstrap 的单元测试里它只是不落盘。 */
+    private final IdlePlaylist idle;
+
+    /**
+     * 用 {@code /mp autojoin off} 关掉了「进服自动加入频道」的玩家（{@code mpsync-autojoin-optout.json}）。
+     *
+     * <p>这是一个<b>独立的个人设置</b>，和进出频道无关：{@code /mp leave} 只是这一次离开，下次进服
+     * 照样自动加入；手动 {@code /mp channel} 也不改变它。落盘是因为「别自动拉我」是持久意愿，
+     * 重启一次就失效等于没设。</p>
+     */
+    private final Set<UUID> autoJoinOptOut = new HashSet<>();
+    private Path optOutFile;
+
     public RoomManager(MpConfig cfg) {
         this.cfg = cfg;
+        this.idle = new IdlePlaylist(cfg);
     }
 
     /**
@@ -98,6 +112,10 @@ public final class RoomManager {
      */
     public void bootstrap(Path banFile, MpPlatform platform) {
         bans.load(banFile);
+        if (banFile != null) {
+            idle.load(banFile.resolveSibling("mpsync-idle.json"));
+            loadOptOuts(banFile.resolveSibling("mpsync-autojoin-optout.json"));
+        }
         resolver = new ServerResolver(cfg);
         resolver.bind(this::onServerResolved,
                 platform == null ? Runnable::run : platform::execute);
@@ -136,7 +154,15 @@ public final class RoomManager {
     }
 
     public boolean isServerAdmin(UUID uuid) {
-        return uuid != null && operators.contains(uuid);
+        if (uuid == null) return false;
+        if (operators.contains(uuid)) return true;
+        // 平台能直接回答的话（Paper），不必等他先敲一次 /mp：握手时下发的 serverAdmin 就是对的。
+        MpPlatform p = Net.platform();
+        try {
+            return p != null && p.isOperator(uuid);
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     // ── 封禁 ─────────────────────────────────────────────────────────────────
@@ -198,10 +224,172 @@ public final class RoomManager {
         return ch;
     }
 
+    // ── 频道自动加入 ────────────────────────────────────────────────────────────
+
+    /**
+     * 握手时把玩家自动放进频道（{@link MpConfig#channelAutoJoin}）。
+     *
+     * <p>与 {@link #joinChannel} 不同：不向全频道广播「XX 加入了频道」（百人服上线高峰会刷屏）。
+     * 任何一条不满足就静默放弃 —— 自动行为不该给玩家报错。</p>
+     *
+     * @return 是否真的加入了（加入时快照已经随 broadcastState 发给他）
+     */
+    private boolean autoJoinChannel(UUID uuid) {
+        if (!cfg.channelAutoJoin || !cfg.channelEnabled) return false;
+        if (roomOf(uuid) != null || autoJoinOptOut.contains(uuid)) return false;
+        if (bans.find(uuid, Net.nameOf(uuid)) != null) return false;
+        Room ch = channel();
+        if (ch == null || (ch.full() && !ch.has(uuid))) return false;
+        ch.join(uuid, Net.nameOf(uuid));
+        playerRoom.put(uuid, ch.id);
+        ch.broadcastState();
+        Net.notice(uuid, "已自动加入" + ch.name + "。/mp leave 离开；不想每次进服都自动加入可以 /mp autojoin off");
+        return true;
+    }
+
+    /**
+     * {@code /mp autojoin on|off}：玩家自己的自动加入开关。
+     *
+     * <p>打开时如果全服开关开着、他又不在任何房间里，就顺手现在放进频道 —— 不然「打开了却没反应」，
+     * 要等下次进服才知道生没生效。关掉时不把他踢出当前频道：关的是「以后」，现在想走用 leave。</p>
+     *
+     * @return 打开时是否当场加入了频道
+     */
+    public boolean setPersonalAutoJoin(UUID uuid, boolean on) {
+        if (uuid == null) return false;
+        boolean changed = on ? autoJoinOptOut.remove(uuid) : autoJoinOptOut.add(uuid);
+        if (changed) saveOptOuts();
+        return on && autoJoinChannel(uuid);
+    }
+
+    /**
+     * 管理员刚打开自动加入时，把已经在线、握过手的玩家也放进频道 —— 否则要等他们下次进服才生效。
+     *
+     * @return 放进去的人数
+     */
+    public int autoJoinOnlineNow() {
+        MpPlatform p = Net.platform();
+        if (p == null) return 0;
+        int n = 0;
+        for (UUID uuid : new ArrayList<>(p.onlinePlayers())) {
+            // 只有握过手的（装了 mod 的）才有档案。
+            if (presence.get(uuid) == null) continue;
+            if (autoJoinChannel(uuid)) n++;
+        }
+        return n;
+    }
+
+    public boolean optedOutOfAutoJoin(UUID uuid) { return autoJoinOptOut.contains(uuid); }
+
+    private void loadOptOuts(Path path) {
+        optOutFile = path;
+        autoJoinOptOut.clear();
+        try {
+            if (path != null && java.nio.file.Files.exists(path)) {
+                com.google.gson.JsonArray arr = com.google.gson.JsonParser.parseString(
+                        java.nio.file.Files.readString(path, java.nio.charset.StandardCharsets.UTF_8))
+                        .getAsJsonArray();
+                for (com.google.gson.JsonElement e : arr) {
+                    try { autoJoinOptOut.add(UUID.fromString(e.getAsString())); } catch (Throwable ignored) { }
+                }
+            }
+        } catch (Throwable t) {
+            Net.warn("[mpsync] 自动加入退出名单读取失败，按空名单处理：" + path, t);
+        }
+    }
+
+    private void saveOptOuts() {
+        Path path = optOutFile;
+        if (path == null) return;
+        try {
+            JsonArray arr = new JsonArray();
+            for (UUID u : autoJoinOptOut) arr.add(u.toString());
+            if (path.getParent() != null) java.nio.file.Files.createDirectories(path.getParent());
+            java.nio.file.Files.writeString(path, arr.toString(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Throwable t) {
+            Net.warn("[mpsync] 自动加入退出名单写盘失败：" + path, t);
+        }
+    }
+
+    /**
+     * 回收频道里长期离线的座位（只在自动加入打开时）。
+     *
+     * <p>掉线保留座位是为了短暂断线 / 切子服能原位接上；可开了自动加入后每个装 mod 的人都会进频道，
+     * 不回收的话成员表会累积成「自开服以来所有来过的人」，每帧房间快照都拖着他们。
+     * 离线超过 {@link MpConfig#emptyRoomGraceMs} 就清掉；他下次握手会被重新自动加入。</p>
+     */
+    private void sweepChannelSeats() {
+        Room ch = rooms.get(CHANNEL_ID);
+        if (ch == null) return;
+        long cutoff = System.currentTimeMillis() - cfg.emptyRoomGraceMs;
+        List<UUID> gone = new ArrayList<>();
+        for (Member m : ch.members()) {
+            if (!m.online && m.offlineSince > 0L && m.offlineSince < cutoff) gone.add(m.uuid);
+        }
+        if (gone.isEmpty()) return;
+        for (UUID u : gone) {
+            ch.remove(u);
+            if (CHANNEL_ID.equals(playerRoom.get(u))) playerRoom.remove(u);
+        }
+        ch.broadcastState();
+    }
+
+    // ── 频道空闲歌单 ───────────────────────────────────────────────────────────
+
+    public IdlePlaylist idle() { return idle; }
+
+    /** 拿不到歌时给管理员的步骤说明。 */
+    private static final String IDLE_HOWTO = "做法：/mp create 建一个自己的房间 → 用播放器的「播放歌单」把整张单灌进去"
+            + " → /mp idle save [名字] → /mp disband 解散（服务器频道本身不支持灌整张歌单）";
+
+    /**
+     * {@code /mp idle save|add}：把管理员<b>当前所在房间</b>里正在放的和队列里的歌存成空闲歌单。
+     *
+     * <p>为什么从「所在房间」而不是只从频道取：频道不允许灌整张歌单（服务端与客户端都拦，客户端在频道里
+     * 连那颗按钮都不显示），而私人房间可以。管理员开一间自己的房灌好单子再存，整个过程不打扰频道里的人。
+     * 不在任何房间里时退回频道（频道里一首一首点的歌也能存）。</p>
+     *
+     * <p>只收玩家点进来的（不含空闲单自己补的），否则「换一张单」会把旧单的几首混进来。</p>
+     *
+     * @param append true = 追加到现有歌单；false = 整张替换（频道里旧单补的待播歌一并撤掉）
+     * @return 实际存下 / 追加的首数
+     * @throws IllegalStateException 带一句面向管理员的原因
+     */
+    public int saveIdleFrom(UUID actor, String name, boolean append) {
+        Room src = actor == null ? null : roomOf(actor);
+        if (src == null) src = rooms.get(CHANNEL_ID);
+        if (src == null) throw new IllegalStateException("你不在任何房间里。" + IDLE_HOWTO);
+        List<Track> list = new ArrayList<>();
+        QueueEntry cur = src.current();
+        if (cur != null && cur.tier != QueueEntry.TIER_IDLE) list.add(cur.track);
+        for (QueueEntry e : src.queue()) if (e.tier != QueueEntry.TIER_IDLE) list.add(e.track);
+        if (list.isEmpty()) {
+            throw new IllegalStateException("「" + src.name + "」里没有玩家点的歌。" + IDLE_HOWTO);
+        }
+        int n = append ? idle.append(list) : idle.replace(name, list);
+        Room ch = rooms.get(CHANNEL_ID);
+        if (!append && ch != null) ch.dropIdleEntries();
+        return n;
+    }
+
+    public void setIdleEnabled(boolean on) {
+        idle.setEnabled(on);
+        // 关掉时把队里待播的空闲歌撤掉；正在放的那首照常放完，不突兀断歌。
+        Room ch = rooms.get(CHANNEL_ID);
+        if (!on && ch != null) ch.dropIdleEntries();
+    }
+
+    public void clearIdle() {
+        idle.clear();
+        Room ch = rooms.get(CHANNEL_ID);
+        if (ch != null) ch.dropIdleEntries();
+    }
+
     /** 每个新房间共同的装配：档案表、管理员判据、代解析钩子。 */
     private void wire(Room room) {
         room.setPresence(presence);
         room.setServerAdmin(this::isServerAdmin);
+        if (room.channel()) room.setIdleSource(idle);
         ServerResolver r = resolver;
         if (r != null) room.setServerResolve(r::request);
     }
@@ -432,8 +620,14 @@ public final class RoomManager {
     }
 
     private int purgeCounter;
+    private int seatSweepCounter;
 
     public void tick() {
+        // 频道离线座位回收：20 秒一次足够（宽限本身是分钟级的）。
+        if (cfg.channelAutoJoin && ++seatSweepCounter >= 400) {
+            seatSweepCounter = 0;
+            sweepChannelSeats();
+        }
         // 每 5 分钟清一次过期封禁（20 tps × 300 s）。这件事跟房间无关，所以放在最前面，
         // 一个房间都没有的服务器也要清。
         if (++purgeCounter >= 6000) {
@@ -507,6 +701,8 @@ public final class RoomManager {
                     hello.addProperty("channelName", cfg.channelName);
                     hello.addProperty("channelCode", CHANNEL_CODE);
                     hello.addProperty("channelMaxPerMember", cfg.channelMaxPerMember);
+                    // 服务端会不会自动把人放进频道。老客户端读不到，行为不变 —— 它们照样收得到频道快照。
+                    hello.addProperty("channelAutoJoin", cfg.channelAutoJoin && cfg.channelEnabled);
                     hello.addProperty("publicRoomsEnabled", cfg.publicRoomsEnabled);
                     // 「播放歌单」这一档能力。客户端靠 playlistBatchLimit>0 判断这台服务端认不认识
                     // enqueue_batch —— 老服务端不发这个字段，客户端取到 0，那颗按钮就不出现，
@@ -526,9 +722,12 @@ public final class RoomManager {
                     presence.update(uuid, msg);
                     Net.send(uuid, hello);
                     // 被封禁的人也要收到 hello（否则客户端以为服务端没装），但要立刻告诉他为什么用不了。
-                    banReason(uuid);
+                    boolean banned = banReason(uuid) != null;
+                    // 自动加入频道放在 hello 之后：客户端先知道服务端的能力位，再收到频道快照。
+                    boolean autoJoined = !banned && autoJoinChannel(uuid);
                     Room room = roomOf(uuid);
-                    if (room != null) room.sendSnapshot(uuid);
+                    // 刚自动加入的人已经随 broadcastState 收到快照，不重复发。
+                    if (room != null && !autoJoined) room.sendSnapshot(uuid);
                     // 一进来就把「待处理邀请」和「公开房间」补齐，GUI 不用再等一轮请求。
                     Net.send(uuid, invitesFrame(uuid));
                     Net.send(uuid, publicRoomsFrame());
@@ -553,6 +752,8 @@ public final class RoomManager {
                     // 很可能就是在这第一次 profile 里才到齐的，而换歌时的指派发生在它之前 ——
                     // 不补这一下，房间里明明有能算的机器也会被判成「没人能算」。
                     if (room != null) {
+                        // 档案里的共享会员 / LX / 换源能力可能变了：之前「没人能放」的判定作废。
+                        room.onProfileChanged();
                         room.refreshAnalyst();
                         room.broadcastState();
                     }

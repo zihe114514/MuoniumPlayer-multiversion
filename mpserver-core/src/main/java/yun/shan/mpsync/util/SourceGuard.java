@@ -99,9 +99,11 @@ public final class SourceGuard {
     /**
      * 歌曲 id 是否可用作键。
      *
-     * <p>不再限定纯数字：酷狗按文件 hash 定位，GD 用「平台+id」，都不是数字。禁掉空白字符和
-     * 冒号，因为 {@code source + ":" + songId} 是曲目的身份键，分隔符出现在 id 里会让两首歌
-     * 撞成同一个键。</p>
+     * <p>不再限定纯数字：酷狗按文件 hash 定位，GD 用「平台+id」，B 站分P是 {@code BV…_p2}
+     * 这样带页码后缀的令牌，都不是数字。禁掉空白字符和冒号，因为 {@code source + ":" + songId}
+     * 是曲目的身份键，分隔符出现在 id 里会让两首歌撞成同一个键 —— B 站分P曲目 id 从 2.5.0 的
+     * {@code BV…:2} 改成 {@code BV…_p2}（客户端仓库 issue #21）正是为了让页码后缀避开这个
+     * 分隔符；下划线从来都在放行之列，所以老版本服务端不用升级就能收下新格式。</p>
      */
     public static boolean isValidSongId(String songId) {
         if (songId == null || songId.isBlank() || songId.length() > 64) return false;

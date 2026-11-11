@@ -16,6 +16,11 @@ public final class QueueEntry {
     public static final int TIER_REQUEST = 1;
     /** 整张歌单灌进来的待播歌 —— 谁都能插到它前面。 */
     public static final int TIER_PLAYLIST = 2;
+    /**
+     * 频道空闲歌单自动补进来的——最末档，任何人点的歌（包括整张歌单）都排在它前面。
+     * 只在服务端内部使用，不下发给客户端（{@link #toJson} 不带 tier）。
+     */
+    public static final int TIER_IDLE = 3;
 
     private static final AtomicLong SEQ = new AtomicLong(1L);
 
@@ -112,6 +117,22 @@ public final class QueueEntry {
     public volatile UUID rescueTarget;
     /** 派出去的时刻，{@link Room} 据此判超时改派。 */
     public volatile long rescueSince;
+    // ── 「房间里没人能放」的判定（见 Room#markUnresolvable） ──────────────────────────────
+
+    /**
+     * 分层问完、换源也没人能接的那一刻，房间的成员版本号；-1 = 没判过。
+     *
+     * <p>和版本号绑定而不是一个布尔值：「没人能放」只对当时在场的那批人成立。有人进来、或有人
+     * 改了共享会员 / LX 开关，版本号一变这个判定就自动作废，前瞻窗会重新去问。</p>
+     */
+    public volatile int unresolvableAt = -1;
+    /** 「正在问某人换别的平台版本」已经在聊天栏说过 —— 每首最多说一次。 */
+    public volatile boolean rescueAnnounced;
+    /** 「房间里没人能放」已经在聊天栏说过 —— 每首最多说一次。 */
+    public volatile boolean failureAnnounced;
+    /** 这一轮开始要链接的时刻：服主 Token 那一路是异步的，下结论前要给它留够时间。 */
+    public volatile long resolveStartedAt;
+
     /** 派过哪些机器，一台一次（反复骚扰同一台既烧额度也未必第二次就成）。 */
     private final Set<UUID> rescueTried = new LinkedHashSet<>();
 
