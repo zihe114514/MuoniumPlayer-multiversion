@@ -133,4 +133,23 @@ class WorldLyricsStaticTest {
         assertTrue(!method.contains("RenderPipeline.builder"),
                 "glowType 的按页工厂不得重新 builder；否则 PipelineCache 会按页阻塞编译");
     }
+
+    @Test
+    @DisplayName("现代字形暂缺时不因烘焙预算回退原版字体")
+    void modernGlyphBakeMissDoesNotFallbackToVanillaFont() throws IOException {
+        Path billboard = ProjectPaths.versionJava().resolve(
+                "com/muoniumplayer/compat/mc/WorldBillboard.java");
+        if (!Files.exists(billboard)) return;
+        String src = read(billboard);
+        int drawMethod = src.indexOf("drawSmoothGlyph(");
+        int cellMiss = src.indexOf("if (cell == null)", drawMethod);
+        int pixelFallback = src.indexOf("drawPixelText(String.valueOf(c)", cellMiss);
+        assertTrue(drawMethod >= 0 && cellMiss > drawMethod && pixelFallback > cellMiss,
+                "现代字形必须有明确的图集未命中处理和原版兜底顺序");
+        String missPath = src.substring(cellMiss, pixelFallback);
+        assertTrue(missPath.contains("if (LyricGlyphAtlas.isFunctional())"),
+                "图集功能正常但当前帧预算暂缺字形时，应跳过本帧而非闪回原版字体");
+        assertTrue(!missPath.contains("settings.huiguang"),
+                "避免把防闪回保护限定在绘光特效；所有现代字形模式都要一致");
+    }
 }
