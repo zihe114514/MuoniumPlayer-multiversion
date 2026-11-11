@@ -798,6 +798,8 @@ public final class MuoniumPlayerClient {
         boolean editorOrOtherUi = screen instanceof GuiHudEditorPro
                 || (screen != null && !(screen instanceof NCMScreen));
         if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()) return;
+        if (screen instanceof NCMScreen && !DownloadDynamicIsland.needsScreenOverlay()
+                && !AutomixTransitionAnimation.hasStandaloneOverlay()) return;
         Runnable islandOverlay = () -> {
             if (DownloadDynamicIsland.isDownloadActive() || !editorOrOtherUi) {
                 DownloadDynamicIsland.render();

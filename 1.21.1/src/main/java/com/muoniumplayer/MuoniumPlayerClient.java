@@ -766,6 +766,8 @@ public final class MuoniumPlayerClient {
                 || (screen != null && !(screen instanceof NCMScreen));
         if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()) return;
         try {
+            if (screen instanceof NCMScreen && !DownloadDynamicIsland.needsScreenOverlay()
+                    && !AutomixTransitionAnimation.hasStandaloneOverlay()) return;
             inSkijaFrame(() -> onScreenRenderedUnguarded(screen));
         } catch (Throwable t) {
             screenRenderDisabled = true;
