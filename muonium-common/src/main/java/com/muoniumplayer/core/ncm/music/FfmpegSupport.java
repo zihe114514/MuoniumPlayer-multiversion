@@ -27,8 +27,8 @@ final class FfmpegSupport {
     private static final long VERSION_TIMEOUT_MILLIS = 4_000L;
 
     private static final Object LOCK = new Object();
-    private static String executable;
-    private static long nextProbeAtMillis;
+    private static volatile String executable;
+    private static volatile long nextProbeAtMillis;
     private static boolean warned;
 
     private FfmpegSupport() {
@@ -81,10 +81,8 @@ final class FfmpegSupport {
      * @return 1 已找到,-1 探测过但没找到,0 尚未探测
      */
     static int cachedState() {
-        synchronized (LOCK) {
-            if (executable != null) return 1;
-            return nextProbeAtMillis > 0L ? -1 : 0;
-        }
+        if (executable != null) return 1;
+        return nextProbeAtMillis > 0L ? -1 : 0;
     }
 
     /** 只在整个会话里提示一次,免得每首歌都刷一行。 */

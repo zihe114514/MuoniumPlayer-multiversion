@@ -118,6 +118,24 @@ class ManualAutomixSelectionStaticTest {
         assertTrue(attach.contains("!this.manualTransitionProcessing"));
     }
 
+    @Test
+    void ordinaryPlaybackPreparesOutsideTheStateLockAndNeverJoinsTheOldThread() throws Exception {
+        String cloud = source();
+        String stop = region(cloud, "private static void stopExistingPlayThread()", "static void stopExistingPlayThreadForLiveStream()");
+        assertFalse(stop.contains(".join("));
+        String init = region(cloud, "private boolean initializeAndPlaySong(", "private void waitForPlaybackCompletion()");
+        assertTrue(init.indexOf("preparedPlayer = initializePlayer(") < init.indexOf("synchronized (PLAYER_STATE_LOCK)"));
+        assertTrue(init.contains("accepted = isSessionUsable(targetSession)"));
+        assertTrue(init.contains("AudioPlayer.releaseLater(() -> closeQuietly(preparedPlayer))"));
+        String decoder = region(cloud, "private AudioPlayer initializePlayer(", "private void notifyWaitLock()");
+        assertTrue(decoder.contains("new AudioPlayer(musicFile)"));
+        assertFalse(decoder.contains("CloudMusic.player ="));
+        assertFalse(decoder.contains(".setAudio("));
+        String previous = region(cloud, "private void stopPreviousPlayer()", "private void handleUnplayableSong(");
+        assertFalse(previous.contains("sleep("));
+        assertTrue(previous.contains("AudioPlayer.releaseLater("));
+    }
+
     private static String region(String source, String from, String to) {
         int start = source.indexOf(from);
         assertTrue(start >= 0, from);

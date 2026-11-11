@@ -13,11 +13,24 @@ import com.muoniumplayer.core.viper.ViperRuntime;
 import com.muoniumplayer.render.skija.SkijaNatives;
 
 import java.io.File;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * 播放视频里面的音频
  */
 public class AudioPlayer {
+    private static final ExecutorService RELEASE_WORKER = Executors.newSingleThreadExecutor(task -> {
+        Thread thread = new Thread(task, "muonium-audio-release");
+        thread.setDaemon(true);
+        thread.setPriority(Thread.MIN_PRIORITY);
+        return thread;
+    });
+
+    static void releaseLater(Runnable release) {
+        RELEASE_WORKER.execute(release);
+    }
+
     public SoundFile player;
     public Runnable afterPlayed;
 
@@ -78,6 +91,7 @@ public class AudioPlayer {
      * 同样按跨线程字段处理用 volatile。</p>
      */
     private volatile boolean closed;
+    private volatile boolean replacementStopped;
 
     /** 由 {@link #prepareStart(float)} 设置：读头已定位、搁架已接入、窗口已预热。 */
     private volatile boolean prepared;
@@ -128,6 +142,7 @@ public class AudioPlayer {
         this.player = next;
         finished = false;
         this.closed = false;
+        this.replacementStopped = false;
         this.prepared = false;
         // 新曲目还没有被要求播放。此刻 deck 上挂的是上一首的播放意图，
         // 留着它会让界面在新曲真正起播之前就报告「正在播放」——正是本次要修的那个错。
@@ -758,6 +773,19 @@ public class AudioPlayer {
         }
     }
 
+    /** 切歌入口只停止信号图，不碰解码器文件句柄；清理交给后台的 close。 */
+    void stopForReplacement() {
+        this.replacementStopped = true;
+        this.playRequested = false;
+        SoundFile current = this.player;
+        if (current == null) return;
+        try {
+            current.amp(0.0f);
+            current.stop();
+        } catch (RuntimeException ignored) {
+        }
+    }
+
     /**
      * 刻意做成幂等。现在一路 deck 可能从好几个地方被释放（播放循环、被取消的切歌、交叉淡化结束），
      * 对已经清理过的采样再 dispose 一次，会把一个 null 缓冲塞给 JSyn 排队。
@@ -881,7 +909,7 @@ public class AudioPlayer {
      * 返回解码器是否暴露了一个非空、可度量的采样。
      */
     public boolean isUsable() {
-        if (closed || player == null)
+        if (closed || replacementStopped || player == null)
             return false;
         return isUsable(player);
     }
