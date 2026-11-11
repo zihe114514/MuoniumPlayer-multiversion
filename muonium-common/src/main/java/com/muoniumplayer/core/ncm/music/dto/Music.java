@@ -538,8 +538,11 @@ public class Music {
         if (track == null) return null;
         String bvid = nonNull(track.bvid);
         int page = Math.max(1, track.page);
+        // 房间 id 与缓存键在这里分叉：sourceId 用 _pN 格式（冒号会被一起听的曲目校验挡掉，
+        // 见 issue #21），stableId / Album id 继续从旧冒号格式派生 —— 封面缓存、播放历史、
+        // 红心都按 getStableKey() 落盘，派生式换了用户收藏过的分P会一夜全部失配。
         String sourceKey = BilibiliMusicService.sourceKey(bvid, page);
-        long stableId = stableLong("bilibili:" + sourceKey);
+        long stableId = stableLong("bilibili:" + BilibiliMusicService.localCacheKey(bvid, page));
 
         List<Artist> artistList = new ArrayList<>();
         String artist = nonNull(track.artist);
@@ -551,7 +554,8 @@ public class Music {
         }
 
         String cover = nonNull(track.coverUrl);
-        Album album = new Album(stableLong("bilibili:album:" + sourceKey), "", cover,
+        Album album = new Album(stableLong("bilibili:album:"
+                + BilibiliMusicService.localCacheKey(bvid, page)), "", cover,
                 Collections.emptyList());
         Music music = new Music(nonNull(track.title), nonNull(track.title), "", stableId,
                 artistList, Collections.emptyList(), album, track.durationMillis, 0L, 0L,

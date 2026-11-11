@@ -284,13 +284,39 @@ public final class BilibiliMusicService {
         return urlValue.isEmpty() ? null : new ResolveResult(urlValue, "mp4", 0L);
     }
 
+    /**
+     * 曲目 id：P1 是纯 BVID，P2 起追加 {@code _pN}（{@code BV1xx411c7mD_p2}）。
+     *
+     * <p>历史上这里用的是 {@code BV…:2}。冒号是房间协议身份键 {@code source:songId} 的分隔符，
+     * 一起听的客户端与服务端闸门都会把含冒号的 id 当无效曲目挡掉 —— 只有 P1 能进房间，就是
+     * issue #21 的根因。下划线在 BVID 的字符集（{@code BV[0-9A-Za-z]{10}}）之外，页码后缀
+     * 因此不会有歧义；它也是服务端校验一直放行的字符，老服务端不用升级就能收下新格式。</p>
+     */
     public static String sourceKey(String bvid, int page) {
+        String id = nonBlank(bvid);
+        return page > 1 ? id + PAGE_SUFFIX_SEPARATOR + PAGE_TAG + page : id;
+    }
+
+    /** 页码后缀分隔符。房间协议禁冒号（身份键分隔符），下划线是安全替身。 */
+    public static final char PAGE_SUFFIX_SEPARATOR = '_';
+
+    /** 页码后缀里的固定前缀：{@code BV…_p2} 的 {@code p}，与 B 站网址 {@code ?p=2} 的口径一致。 */
+    public static final String PAGE_TAG = "p";
+
+    /**
+     * 缓存身份用的键：刻意保持 {@code BV…:N} 旧格式不变。
+     *
+     * <p>封面缓存 / 播放历史 / 红心都按 {@link Music#getStableKey()}（由 stableId 派生）落盘，
+     * 而 stableId 由这里派生。页码后缀换成 {@code _pN} 时若连这里一起换，用户收藏过的分P会在
+     * 升级当天全部失配。缓存键与房间 id 是两条独立诉求：房间 id 要过闸门，缓存键只要稳定。</p>
+     */
+    public static String localCacheKey(String bvid, int page) {
         String id = nonBlank(bvid);
         return page > 1 ? id + ":" + page : id;
     }
 
     /**
-     * 把一首曲目的 source id 解析成带 aid/cid 的 {@link Track}。
+     * 把一个曲目 id 解析成带 aid/cid 的 {@link Track}。
      *
      * <p>字幕歌词、收藏写入这些链路都需要 cid，而 {@link Music} 里只存 bvid+page
      * （往 source id 里塞 cid 会改掉 {@code getStableKey()}，让全部磁盘缓存失效）。
@@ -445,17 +471,34 @@ public final class BilibiliMusicService {
         }
     }
 
-    private static DirectVideo parseSourceId(String sourceId) {
+    /**
+     * 拆出曲目 id 里的页码。认两种写法：现行格式 {@code BV…_p2}，以及 2.5.0 之前落进
+     * 本地歌单 / 播放历史的旧格式 {@code BV…:2}（见 {@link #localCacheKey}）。
+     * 页码段是「分隔符后的纯数字」才当页码，BVID 本体与页码段都原样交给
+     * BVID_PATTERN / av 规则解析。
+     */
+    static DirectVideo parseSourceId(String sourceId) {
         String value = nonBlank(sourceId);
         if (value.isEmpty()) return null;
-        int separator = value.lastIndexOf(':');
         int page = 1;
-        if (separator > 0) {
-            try {
-                page = Math.max(1, Integer.parseInt(value.substring(separator + 1)));
-                value = value.substring(0, separator);
-            } catch (NumberFormatException ignored) {
-                page = 1;
+        // 现行格式的页码段是 "_pN"（B 站网址 ?p=N 的口径）。位数管住再转数字：
+        // 超长尾巴是垃圾输入，按无后缀处理，别抛异常。
+        int mark = value.lastIndexOf(PAGE_SUFFIX_SEPARATOR);
+        if (mark > 0 && value.regionMatches(mark + 1, PAGE_TAG, 0, PAGE_TAG.length())) {
+            String tail = value.substring(mark + 1 + PAGE_TAG.length());
+            if (!tail.isEmpty() && tail.length() <= 9 && tail.matches("[0-9]+")) {
+                page = Math.max(1, Integer.parseInt(tail));
+                value = value.substring(0, mark);
+            }
+        } else {
+            int separator = value.lastIndexOf(':');
+            if (separator > 0) {
+                try {
+                    page = Math.max(1, Integer.parseInt(value.substring(separator + 1)));
+                    value = value.substring(0, separator);
+                } catch (NumberFormatException ignored) {
+                    page = 1;
+                }
             }
         }
         Matcher matcher = BVID_PATTERN.matcher(value);
@@ -826,11 +869,11 @@ public final class BilibiliMusicService {
                 ? String.valueOf(throwable) : throwable.getMessage();
     }
 
-    private static final class DirectVideo {
-        private final String bvid;
-        private final int page;
+    static final class DirectVideo {
+        final String bvid;
+        final int page;
 
-        private DirectVideo(String bvid, int page) {
+        DirectVideo(String bvid, int page) {
             this.bvid = bvid;
             this.page = page;
         }

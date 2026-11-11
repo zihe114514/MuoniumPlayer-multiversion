@@ -15,6 +15,7 @@ import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.utils.Tuple;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
+import yun.shan.mpsync.util.SourceGuard;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -1257,19 +1258,18 @@ public final class MpPartyClient {
      * 挡住的只有拿不出可用平台主键的条目。</p>
      */
     public static boolean canQueue(Music song) {
-        return song != null && isUsableSongId(song.getSourceId());
+        return song != null && isUsableSongId(MpTrack.roomSongId(song));
     }
 
-    /** 与服务端 {@code SourceGuard.isValidSongId} 同款：非空、≤64、不含分隔符与空白。 */
+    /**
+     * 与服务端 {@code SourceGuard.isValidSongId} 同款：非空、≤64、不含分隔符与空白。
+     *
+     * <p>校验逻辑直接委托给内嵌的服务端 core（每个加载器构建都把 {@code mpserver-core}
+     * 挂进源码集）—— 客户端预检与服务端终检从此不可能漂移。2.5.0 之前这里是手抄的副本，
+     * 分P 格式改造（issue #21）之后抄写一份校验的维护成本只剩风险。</p>
+     */
     private static boolean isUsableSongId(String id) {
-        if (id == null) return false;
-        String s = id.trim();
-        if (s.isEmpty() || s.length() > 64 || s.equals("0")) return false;
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c <= ' ' || c == ':' || c == '"' || c == '\\') return false;
-        }
-        return true;
+        return SourceGuard.isValidSongId(id);
     }
 
     private static void fromLink(final String link, final String op) {
@@ -1303,7 +1303,7 @@ public final class MpPartyClient {
      */
     private static void upload(final Music song, final String op, final boolean playNext) {
         if (song == null || !requireChannel()) return;
-        if (!isUsableSongId(song.getSourceId())) {
+        if (!isUsableSongId(MpTrack.roomSongId(song))) {
             note("这首歌没有可用的曲目 ID，无法点歌", true);
             return;
         }

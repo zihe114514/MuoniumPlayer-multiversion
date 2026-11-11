@@ -129,7 +129,7 @@ public final class MpTrack {
                                     long servedDurationMs, boolean estimated) {
         JsonObject o = new JsonObject();
         o.addProperty("source", token(song.getSource()));
-        o.addProperty("songId", song.getSourceId());
+        o.addProperty("songId", roomSongId(song));
         o.addProperty("name", song.getName() == null ? "未知歌曲" : song.getName());
         o.addProperty("artist", song.getArtistsName());
         o.addProperty("album", song.getAlbum() == null || song.getAlbum().getName() == null
@@ -146,6 +146,30 @@ public final class MpTrack {
             }
         }
         return o;
+    }
+
+    /**
+     * 发给服务端的曲目 id：把 B 站分P存量旧格式 {@code BV…:2} 归一成 {@code BV…_p2}。
+     *
+     * <p>2.5.0 之前构造的分P id 用冒号带页码，而冒号是房间协议身份键的分隔符，服务端闸门
+     * 一律挡掉（issue #21）。本地歌单 / 播放历史里存着旧格式的条目，点进房间时在这一处统一
+     * 换成现行格式 —— 其他平台的 id 形态（数字 / hash / 聚合 id）不含 {@code :数字} 尾巴，
+     * 原样通过。客户端预检（{@code MpPartyClient#canQueue} / {@code upload}）与上行负载
+     * （{@link #toJson}）共用这一条归一，保证「预检放行的 id」与「实际发出的 id」同一个值。</p>
+     */
+    public static String roomSongId(Music song) {
+        String id = song.getSourceId();
+        if (id == null) return "";
+        // 只有 B 站条目需要归一；页码段是纯数字才动它，别碰酷狗 hash 这类自由形态。
+        if (song.getSource() != MusicPlatform.BILIBILI) return id;
+        int colon = id.lastIndexOf(':');
+        if (colon > 0 && colon + 1 < id.length()) {
+            String tail = id.substring(colon + 1);
+            if (tail.matches("[0-9]+")) {
+                return id.substring(0, colon) + "_p" + tail;
+            }
+        }
+        return id;
     }
 
     public long numericId() {
