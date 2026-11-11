@@ -464,30 +464,44 @@ public class CrossSourceSwitcherStaticTest {
     // ── 候选录取的 VIP 淘汰 ────────────────────────────────────────────────
 
     @Test
-    public void vipFlaggedCandidatesAreRejectedBeforeScoring() {
-        // 搜索侧自带「会员/付费受限」的候选，在本机拿不到该平台完整流时淘汰：
-        // 非会员换过去只能拿到试听片段，而这首歌唯一一次自动换源机会已经被烧掉，
-        // 等起播的试听判定再兜底就晚了。无头环境未登录 → 网易云的 hasVipAccess 为 false。
-        Music vipCandidate = toTestMusic(200_000L);
-        vipCandidate.setVipRestricted(true);
-        CrossSourceSwitcher.Candidate rejected = new CrossSourceSwitcher.Candidate(
-                vipCandidate, MusicPlatform.NETEASE, 1.0, 0L);
-        assertEquals(0.0, CrossSourceSwitcher.candidateAcceptance(
-                "测试曲名", "测试艺人", 200_000L, rejected), EPS);
+    public void vipFlaggedCandidatesAreRejectedBeforeScoring() throws Exception {
+        // 该测试需要无账号、无脚本覆盖，不能依赖机器上的存档或内置源默认值。
+        Class<?> store = Class.forName("com.muoniumplayer.core.ncm.lxsource.LxSourceStore");
+        java.lang.reflect.Field loaded = store.getDeclaredField("loaded");
+        java.lang.reflect.Field activeId = store.getDeclaredField("activeId");
+        loaded.setAccessible(true);
+        activeId.setAccessible(true);
+        Object previousLoaded = loaded.get(null);
+        Object previousActiveId = activeId.get(null);
+        com.muoniumplayer.core.ncm.music.dto.User previousProfile = CloudMusic.profile;
+        loaded.set(null, true);
+        activeId.set(null, "");
+        CloudMusic.profile = null;
+        try {
+            // 没有账号或脚本覆盖的会员候选在评分前淘汰，普通候选仍然可以录取。
+            Music vipCandidate = toTestMusic(200_000L);
+            vipCandidate.setVipRestricted(true);
+            CrossSourceSwitcher.Candidate rejected = new CrossSourceSwitcher.Candidate(
+                    vipCandidate, MusicPlatform.NETEASE, 1.0, 0L);
+            assertEquals(0.0, CrossSourceSwitcher.candidateAcceptance(
+                    "测试曲名", "测试艺人", 200_000L, rejected), EPS);
 
-        // 无标记的同一首照常录取。
-        Music cleanCandidate = toTestMusic(200_000L);
-        CrossSourceSwitcher.Candidate accepted = new CrossSourceSwitcher.Candidate(
-                cleanCandidate, MusicPlatform.NETEASE, 1.0, 0L);
-        assertTrue(CrossSourceSwitcher.candidateAcceptance(
-                "测试曲名", "测试艺人", 200_000L, accepted) > 0.0);
+            Music cleanCandidate = toTestMusic(200_000L);
+            CrossSourceSwitcher.Candidate accepted = new CrossSourceSwitcher.Candidate(
+                    cleanCandidate, MusicPlatform.NETEASE, 1.0, 0L);
+            assertTrue(CrossSourceSwitcher.candidateAcceptance(
+                    "测试曲名", "测试艺人", 200_000L, accepted) > 0.0);
 
-        // GD/B 站恒有权限（hasVipAccess 恒 true）：VIP 标记不淘汰这两家的候选。
-        CrossSourceSwitcher.Candidate gdCandidate = new CrossSourceSwitcher.Candidate(
-                vipCandidate, MusicPlatform.GD, 1.0, 0L);
-        assertTrue(CrossSourceSwitcher.candidateAcceptance(
-                "测试曲名", "测试艺人", 200_000L, gdCandidate) > 0.0,
-                "免费聚合池的候选不该被 VIP 标记一票否决");
+            CrossSourceSwitcher.Candidate gdCandidate = new CrossSourceSwitcher.Candidate(
+                    vipCandidate, MusicPlatform.GD, 1.0, 0L);
+            assertTrue(CrossSourceSwitcher.candidateAcceptance(
+                    "测试曲名", "测试艺人", 200_000L, gdCandidate) > 0.0,
+                    "免费聚合池的候选不该被 VIP 标记一票否决");
+        } finally {
+            CloudMusic.profile = previousProfile;
+            activeId.set(null, previousActiveId);
+            loaded.set(null, previousLoaded);
+        }
     }
 
     private static CrossSourceSwitcher.Candidate newTestCandidate(double score, long durationDeltaMillis) {
