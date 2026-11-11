@@ -39,6 +39,7 @@ class PlaybackResumeStoreTest {
 
     @AfterEach
     void resetCaches() throws Exception {
+        PlaybackResumeStore.flushPending();
         // 本类与 ConfigPaths 都按真实文件路径工作；测试用反射把 PLAYBACK_RESUME 指到临时目录，
         // 用完复位，别把临时路径漏进同 JVM 里后跑的其它测试。
         setFinalFile(ConfigPaths.class, "PLAYBACK_RESUME",
@@ -204,6 +205,44 @@ class PlaybackResumeStoreTest {
         PlaybackResumeStore.Snapshot snapshot = PlaybackResumeStore.read();
         assertNotNull(snapshot);
         assertEquals(PlaybackResumeStore.MAX_QUEUE, snapshot.queue.size(), "读回侧按上限截断");
+    }
+
+    @Test
+    void queuedWritesKeepTheLatestIntentAndClearWinsOverEarlierSaves() throws Exception {
+        java.io.File file = temp.resolve("queued.json").toFile();
+        pointStoreAt(file);
+        List<Music> queue = new ArrayList<>();
+        queue.add(makeMusic("NETEASE", 42L, "latest"));
+        PlaybackResumeStore.requestSave(queue, 0, 1_000L, CloudMusic.PlayMode.Sequential, null, 0L);
+        PlaybackResumeStore.requestSave(queue, 0, 9_000L, CloudMusic.PlayMode.Random, null, 0L);
+        queue.clear();
+        PlaybackResumeStore.flushPending();
+        PlaybackResumeStore.Snapshot snapshot = PlaybackResumeStore.read();
+        assertNotNull(snapshot);
+        assertEquals(1, snapshot.queue.size(), "提交后修改源列表不能改变已捕获队列");
+        assertEquals(9_000L, snapshot.positionMillis);
+        assertEquals(CloudMusic.PlayMode.Random, snapshot.playMode);
+
+        PlaybackResumeStore.requestSave(snapshot.queue, 0, 12_000L, snapshot.playMode, null, 0L);
+        PlaybackResumeStore.requestClear();
+        PlaybackResumeStore.flushPending();
+        assertFalse(file.exists(), "清空不能被更早的排队保存复活");
+
+        PlaybackResumeStore.requestSave(snapshot.queue, 0, 25_000L, snapshot.playMode, null, 0L);
+        PlaybackResumeStore.flushPending();
+        assertEquals(25_000L, PlaybackResumeStore.read().positionMillis,
+                "清空之后的新播放必须能重新保存");
+    }
+
+    @Test
+    void throttledQueuedSaveDoesNotOverwriteTheLatestTrackEvent() throws Exception {
+        pointStoreAt(temp.resolve("throttled.json").toFile());
+        List<Music> queue = List.of(makeMusic("NETEASE", 7L, "track"));
+        PlaybackResumeStore.requestSave(queue, 0, 3_000L, CloudMusic.PlayMode.Sequential, null, 0L);
+        PlaybackResumeStore.requestSave(queue, 0, 1_000L, CloudMusic.PlayMode.Sequential,
+                null, PlaybackResumeStore.MIN_INTERVAL_MILLIS);
+        PlaybackResumeStore.flushPending();
+        assertEquals(3_000L, PlaybackResumeStore.read().positionMillis);
     }
 
     // ─────────────────────────── 工具 ───────────────────────────

@@ -61,7 +61,7 @@ class PlaybackResumeWiringStaticTest {
         int saveInHook = cloud.indexOf("currentPlaybackPositionMillis()", shutdown);
         assertTrue(shutdown >= 0 && saveInHook > shutdown,
                 "关闭钩子里要在收尾播放器之前补最后一次位置快照");
-        assertTrue(cloud.contains("PlaybackResumeStore.clear();"),
+        assertTrue(cloud.contains("PlaybackResumeStore.requestClear();"),
                 "stopPlaybackAndClear 必须联动清快照——不复活用户亲手清掉的队列");
     }
 
