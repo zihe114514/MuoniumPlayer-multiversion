@@ -176,6 +176,88 @@ class ScrollPanelTraversalTest {
         assertSame(candidates, panel.renderChildren());
     }
 
+    @Test
+    void indexedGridScrollingTouchesOnlyTheViewportAndReusesContentGeometry() throws Exception {
+        List<Integer> rendered = new ArrayList<>();
+        ProbePanel panel = new ProbePanel();
+        panel.setBounds(330, 90);
+        panel.setSpacing(10).setAlignment(ScrollPanel.Alignment.VERTICAL_WITH_HORIZONTAL_FILL)
+                .setIndexedVerticalLayout();
+        List<AbstractWidget<?>> cards = new ArrayList<>();
+        for (int i = 0; i < 10_000; i++) cards.add(new ProbeRow(i, rendered));
+        panel.addChild(cards);
+        panel.invalidateLayout();
+        panel.actualScrollOffset = panel.targetScrollOffset = 4_000;
+        panel.renderWidget(-100, -100, 0);
+        assertEquals(9, panel.candidates);
+        assertEquals(List.of(300, 301, 302, 303, 304, 305, 306, 307, 308), rendered);
+        Object geometry = indexedGeometry(panel);
+        List<AbstractWidget<?>> candidates = panel.renderChildren();
+
+        panel.alignChildren();
+        assertSame(candidates, panel.renderChildren());
+        panel.actualScrollOffset = panel.targetScrollOffset = 4_040;
+        panel.alignChildren();
+        assertSame(geometry, indexedGeometry(panel));
+        assertEquals(9, panel.renderChildren().size());
+        assertTrue(cards.get(300).getRelativeY() < -100_000);
+        assertEquals(0.0, cards.get(303).getRelativeY());
+    }
+
+    @Test
+    void indexedMixedHeightRowsKeepTheirTallSiblingsVisibleAndRefreshAfterInvalidation() {
+        List<Integer> rendered = new ArrayList<>();
+        ProbePanel panel = new ProbePanel();
+        panel.setBounds(220, 20);
+        panel.setSpacing(10).setAlignment(ScrollPanel.Alignment.VERTICAL_WITH_HORIZONTAL_FILL)
+                .setIndexedVerticalLayout();
+        ProbeRow shortCard = new ProbeRow(0, rendered);
+        ProbeRow tallCard = new ProbeRow(1, rendered);
+        tallCard.setBounds(100, 100);
+        ProbeRow nextRow = new ProbeRow(2, rendered);
+        panel.addChild(shortCard, tallCard, nextRow);
+        panel.invalidateLayout();
+        panel.actualScrollOffset = panel.targetScrollOffset = 70;
+        panel.renderWidget(-100, -100, 0);
+        assertEquals(List.of(1), rendered);
+        assertEquals(-70.0, tallCard.getRelativeY());
+
+        rendered.clear();
+        tallCard.setHidden(true);
+        panel.invalidateLayout();
+        panel.actualScrollOffset = panel.targetScrollOffset = 0;
+        panel.renderWidget(-100, -100, 0);
+        assertEquals(List.of(0, 2), rendered);
+        assertEquals(110.0, nextRow.getRelativeX());
+        assertEquals(0.0, nextRow.getRelativeY());
+    }
+
+    @Test
+    void indexedViewportExitClearsNestedHoverAndEmptyContentReleasesCandidates() throws Exception {
+        ProbePanel panel = new ProbePanel();
+        panel.setBounds(100, 30);
+        panel.addChild(new ProbeRow(0, new ArrayList<>()), new ProbeRow(1, new ArrayList<>()));
+        panel.setIndexedVerticalLayout();
+        panel.alignChildren();
+        ProbeRow first = (ProbeRow) panel.getChildren().get(0);
+        setField(first, "hovering", true);
+        setField(first, "tooltipHoverSince", 123L);
+        panel.actualScrollOffset = panel.targetScrollOffset = 60;
+        panel.alignChildren();
+        assertFalse(first.isHovering());
+        assertEquals(0L, getField(first, "tooltipHoverSince"));
+        assertEquals(1, first.exits);
+        panel.getChildren().clear();
+        panel.alignChildren();
+        assertTrue(panel.renderChildren().isEmpty());
+    }
+
+    private static Object indexedGeometry(ScrollPanel panel) throws Exception {
+        Field field = ScrollPanel.class.getDeclaredField("indexedLayout");
+        field.setAccessible(true);
+        return field.get(panel);
+    }
+
     private static void setField(AbstractWidget<?> widget, String name, Object value) throws Exception {
         Field field = AbstractWidget.class.getDeclaredField(name);
         field.setAccessible(true);

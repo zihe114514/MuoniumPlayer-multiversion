@@ -7,6 +7,7 @@ import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.rendering.texture.ITextureObject;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
+import com.muoniumplayer.core.screens.ncm.PlayerIconAssets;
 import com.muoniumplayer.core.utils.Location;
 
 import java.awt.Color;
@@ -73,12 +74,15 @@ public class ThemedTextureIconWidget extends AbstractWidget<ThemedTextureIconWid
         ITextureObject texture = null;
         if (iconLocation != null) {
             try {
-                TextureManager.getInstance().bindTexture(iconLocation);
-                // 这些图标是 96×96 的画布，要缩进 ~20 逻辑像素的按钮里（约 4.8 倍缩小）。
-                // DynamicTexture 默认走 GL_NEAREST，那样 3 像素粗的描边会被整段抽掉，
-                // 图标看上去缺边少角、也比相邻的图标字体小一圈。改成线性采样后描边还在。
-                RenderSystem.linearFilter();
-                texture = TextureManager.getInstance().getTexture(iconLocation);
+                TextureManager manager = TextureManager.getInstance();
+                texture = manager.getTexture(iconLocation);
+                if (texture == null) {
+                    PlayerIconAssets.requestLoad(iconLocation);
+                } else {
+                    manager.bindTexture(iconLocation);
+                    // 控件保持原来的线性采样；未到达的图片用已有字体字形兜底。
+                    RenderSystem.linearFilter();
+                }
             } catch (Throwable ignored) {
                 // 资源包或过时的开发 jar 可能缺少某个
                 // 可选纹理。保持已有的字体图标回退机制，

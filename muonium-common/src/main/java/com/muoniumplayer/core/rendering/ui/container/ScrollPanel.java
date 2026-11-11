@@ -102,6 +102,24 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
     /** Ordered candidates include the same one-row overscan used by uniform layout. */
     private List<AbstractWidget<?>> uniformRenderChildren = Collections.emptyList();
 
+    /** 显式失效的纵向/网格布局保存内容坐标；滚动只更新可见窗口，不重排整张列表。 */
+    private boolean indexedVerticalLayout;
+    private List<LayoutSlot> indexedLayout = Collections.emptyList();
+    private double indexedContentLength;
+
+    private static final class LayoutSlot {
+        final AbstractWidget<?> child;
+        final double x, y;
+        double end;
+
+        LayoutSlot(AbstractWidget<?> child, double x, double y, double end) {
+            this.child = child;
+            this.x = x;
+            this.y = y;
+            this.end = end;
+        }
+    }
+
     @Getter
     private Alignment alignment = Alignment.VERTICAL;
 
@@ -163,12 +181,26 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
         return this.alignment == Alignment.VERTICAL && this.uniformVerticalItemHeight > 0.0;
     }
 
+    public ScrollPanel setIndexedVerticalLayout() {
+        this.indexedVerticalLayout = true;
+        this.invalidateLayout();
+        return this;
+    }
+
+    private boolean hasIndexedVerticalLayout() {
+        return this.indexedVerticalLayout && !this.hasUniformVerticalLayout()
+                && this.alignment != Alignment.HORIZONTAL;
+    }
+
     @Override
     protected List<AbstractWidget<?>> getRenderChildren() {
-        return this.hasUniformVerticalLayout() ? this.uniformRenderChildren : super.getRenderChildren();
+        return this.hasUniformVerticalLayout() || this.hasIndexedVerticalLayout()
+                ? this.uniformRenderChildren : super.getRenderChildren();
     }
 
     private void resetUniformLayoutState() {
+        this.layoutSignature = Long.MIN_VALUE;
+        this.indexedLayout = Collections.emptyList();
         this.uniformFirstVisible = -1;
         this.uniformLastVisible = -1;
         this.uniformVisibleChildren.clear();
@@ -237,10 +269,18 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
             return;
         }
 
-        // 非固定高度容器每帧只计算一次内容高度，再复用结果完成偏移修正与排版。
-        // 但「每帧」并不等于「每帧都要重算」：只有显式声明过「尺寸变化由我负责通知」的容器
-        // （主页网格）才走签名快路径 —— 其它容器的子项宽度常常在渲染回调里依赖父级宽度自行变化，
-        // 容器无从感知，必须保持每帧重排。主页网格有 240 张卡，这段是两次全量遍历。
+        if (this.hasIndexedVerticalLayout()) {
+            this.ensureIndexedLayout();
+            double maximumScrollOffset = Math.max(0.0, this.indexedContentLength - this.getHeight());
+            this.clampScrollOffset(maximumScrollOffset);
+            this.actualScrollOffset = this.advanceScrollOffset(this.actualScrollOffset, this.targetScrollOffset);
+            this.actualScrollOffset = Math.max(0, Math.min(this.actualScrollOffset, maximumScrollOffset));
+            this.updateScrollIndicator(maximumScrollOffset, mouseX, mouseY);
+            this.alignIndexedChildren();
+            return;
+        }
+
+        // 未声明显式失效的容器保留通用排版，子项仍可在渲染回调里动态改变尺寸。
         if (this.layoutSignatureEnabled) {
             final long signature = layoutSignature(this.getWidth(), this.getHeight(),
                     this.getChildren().size(), this.contentFingerprint, this.actualScrollOffset,
@@ -452,6 +492,10 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
         if (this.hasUniformVerticalLayout()) {
             return Math.max(0.0, this.uniformContentLength() - this.getHeight());
         }
+        if (this.hasIndexedVerticalLayout()) {
+            this.ensureIndexedLayout();
+            return Math.max(0.0, this.indexedContentLength - this.getHeight());
+        }
 
         double contentLength;
         switch (this.alignment) {
@@ -571,6 +615,11 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
             this.alignUniformChildren();
             return;
         }
+        if (this.hasIndexedVerticalLayout()) {
+            this.ensureIndexedLayout();
+            this.alignIndexedChildren();
+            return;
+        }
         this.alignChildren(this.getMaximumScrollOffset());
     }
 
@@ -625,6 +674,92 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
         this.uniformNextVisibleChildren.clear();
         this.uniformFirstVisible = first;
         this.uniformLastVisible = last;
+    }
+
+    private void ensureIndexedLayout() {
+        long signature = layoutSignature(this.getWidth(), 0.0, this.getChildren().size(),
+                this.contentFingerprint, this.spacing, this.alignment.ordinal());
+        if (signature == this.layoutSignature) return;
+
+        List<LayoutSlot> slots = new ArrayList<>(this.getChildren().size());
+        double x = 0.0, y = 0.0, rowHeight = 0.0;
+        int rowStart = 0;
+        for (AbstractWidget<?> child : this.getChildren()) {
+            child.setPosition(child.getRelativeX(), OUTSIDE_VIEWPORT_Y);
+            if (child.isHidden()) continue;
+            double width = child.getWidth();
+            double height = child.getHeight();
+            if (this.alignment == Alignment.VERTICAL) {
+                slots.add(new LayoutSlot(child, child.getRelativeX(), y, y + height));
+                y += height + this.spacing;
+            } else {
+                if (x > 0.0 && x + width > this.getWidth()) {
+                    for (int i = rowStart; i < slots.size(); i++) slots.get(i).end = y + rowHeight;
+                    rowStart = slots.size();
+                    x = 0.0;
+                    y += rowHeight + this.spacing;
+                    rowHeight = 0.0;
+                }
+                slots.add(new LayoutSlot(child, x, y, y + height));
+                x += width + this.spacing;
+                rowHeight = Math.max(rowHeight, height);
+            }
+        }
+        if (this.alignment == Alignment.VERTICAL_WITH_HORIZONTAL_FILL) {
+            for (int i = rowStart; i < slots.size(); i++) slots.get(i).end = y + rowHeight;
+            this.indexedContentLength = slots.isEmpty() ? 0.0 : y + rowHeight;
+        } else {
+            this.indexedContentLength = slots.isEmpty() ? 0.0 : Math.max(0.0, y - this.spacing);
+        }
+        this.indexedLayout = slots;
+        this.layoutSignature = signature;
+    }
+
+    private void alignIndexedChildren() {
+        List<LayoutSlot> slots = this.indexedLayout;
+        double top = this.actualScrollOffset;
+        double bottom = top + Math.max(0.0, this.getHeight());
+        int low = 0, high = slots.size();
+        while (low < high) {
+            int mid = (low + high) >>> 1;
+            if (slots.get(mid).end < top) low = mid + 1;
+            else high = mid;
+        }
+        int first = low;
+        high = slots.size();
+        while (low < high) {
+            int mid = (low + high) >>> 1;
+            if (slots.get(mid).y <= bottom) low = mid + 1;
+            else high = mid;
+        }
+        int end = low;
+
+        this.uniformNextVisibleChildren.clear();
+        boolean sameWindow = this.uniformRenderChildren.size() == end - first;
+        for (int i = first; i < end; i++) {
+            AbstractWidget<?> child = slots.get(i).child;
+            this.uniformNextVisibleChildren.add(child);
+            if (sameWindow && this.uniformRenderChildren.get(i - first) != child) sameWindow = false;
+        }
+        if (!sameWindow) {
+            List<AbstractWidget<?>> next = new ArrayList<>(end - first);
+            for (int i = first; i < end; i++) next.add(slots.get(i).child);
+            this.uniformRenderChildren = next;
+        }
+        for (AbstractWidget<?> child : this.uniformVisibleChildren) {
+            if (!this.uniformNextVisibleChildren.contains(child)) {
+                child.clearViewportHover();
+                child.onViewportExit();
+                child.setPosition(child.getRelativeX(), OUTSIDE_VIEWPORT_Y);
+            }
+        }
+        for (int i = first; i < end; i++) {
+            LayoutSlot slot = slots.get(i);
+            slot.child.setPosition(slot.x, slot.y - top);
+        }
+        this.uniformVisibleChildren.clear();
+        this.uniformVisibleChildren.addAll(this.uniformNextVisibleChildren);
+        this.uniformNextVisibleChildren.clear();
     }
 
     private void alignChildren(double maximumScrollOffset) {

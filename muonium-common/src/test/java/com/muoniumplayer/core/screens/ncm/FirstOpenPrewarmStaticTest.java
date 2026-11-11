@@ -108,6 +108,18 @@ class FirstOpenPrewarmStaticTest {
         }
     }
 
+    @Test
+    @DisplayName("首开早于预热时图标按需异步加载，渲染不触发同步 PNG 兜底")
+    void coldIconRenderRequestsBackgroundLoadBeforeBinding() throws IOException {
+        String widget = read(ProjectPaths.sourceFile(Paths.get(
+                "com", "muoniumplayer", "core", "rendering", "ui", "widgets", "ThemedTextureIconWidget.java")));
+        String render = between(widget, "public void onRender(", "private void renderInteractionFeedback()");
+        assertTrue(render.indexOf("manager.getTexture(iconLocation)") < render.indexOf("manager.bindTexture(iconLocation)"));
+        assertTrue(render.contains("if (texture == null)") && render.contains("PlayerIconAssets.requestLoad(iconLocation)"));
+        assertTrue(render.contains("drawFallbackIcon()"));
+        assertTrue(read(ICONS).contains("RETRY_AFTER"), "缺失资源必须节流，不能每帧重排后台任务");
+    }
+
     private static int indexOfAny(String source, String... needles) {
         int best = -1;
         for (String needle : needles) {
