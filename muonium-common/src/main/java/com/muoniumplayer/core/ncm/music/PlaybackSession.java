@@ -12,8 +12,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * cancellation）。异步歌词任务捕获 {@link #sessionId} + {@link #songId}，提交前必须通过
  * {@link #isActive()} 双重校验，任何不匹配的旧结果直接丢弃，不污染新歌状态。
  *
- * 注意：{@code player} 是单例复用的 AudioPlayer（切歌时 {@code setAudio()} 已彻底 stop/cleanUp
- * 旧 SoundFile），本字段仅用于把"当前会话"与"当前播放器实例"显式绑定，方便歌词同步读取真实时钟。
+ * 本字段绑定本会话实际使用的 AudioPlayer；普通切歌与 automix 都先准备独立 deck，
+ * 校验会话有效后再发布，歌词同步始终读取该会话自己的时钟。
  */
 public class PlaybackSession {
 
@@ -28,7 +28,7 @@ public class PlaybackSession {
     /** 两阶段提交：后台只 fetch+parse，结果暂存于此，由主线程 applyLyricTimeline() 提交。 */
     public volatile List<LyricLine> pendingLyrics = null;
 
-    /** 本 Session 绑定的 AudioPlayer（单例复用）。 */
+    /** 本 Session 绑定的 AudioPlayer。 */
     public volatile AudioPlayer player = null;
 
     public PlaybackSession(long sessionId, String trackKey, long songId) {
