@@ -23,6 +23,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class GlassBlurLevelsProbeTest {
 
+    @Test
+    @DisplayName("主界面与顶层背景交替绘制时各自保留档位、代数和预算")
+    void independentCaptureCachesSurviveAlternatingPasses() {
+        GlassBackdrop.BlurCache base = new GlassBackdrop.BlurCache();
+        GlassBackdrop.BlurCache topmost = new GlassBackdrop.BlurCache();
+        base.levels.beginCapture(12L);
+        int baseSlot = base.levels.allocate(KEY_PANEL, 12L);
+        base.levels.markBuilt(baseSlot, KEY_PANEL, 12L);
+        for (long capture = 1; capture <= 40; capture++) {
+            topmost.levels.beginCapture(capture);
+            int slot = topmost.levels.allocate(KEY_ISLAND, capture);
+            topmost.levels.markBuilt(slot, KEY_ISLAND, capture);
+            assertEquals(baseSlot, base.levels.find(KEY_PANEL, 12L));
+            assertEquals(1, base.levels.rebuildsThisCapture());
+            assertFalse(base.slots[baseSlot] == topmost.slots[slot]);
+        }
+        topmost.levels.reset();
+        assertEquals(baseSlot, base.levels.find(KEY_PANEL, 12L));
+    }
+
     private static final float KEY_PANEL = 24f;    // sigma 12 → round(12*2)
     private static final float KEY_ISLAND = 16f;   // sigma 8
     private static final float KEY_LYRIC = 28f;    // sigma 14

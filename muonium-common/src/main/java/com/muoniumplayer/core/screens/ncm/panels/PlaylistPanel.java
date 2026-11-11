@@ -751,7 +751,9 @@ public class PlaylistPanel extends NCMPanel {
         if (this.musicsPanel == null || this.pendingMusicBuild == null) return;
 
         int total = this.pendingMusicBuild.size();
-        int end = Math.min(total, this.pendingMusicIndex + MUSIC_WIDGET_BUILD_BATCH);
+        int batchSize = com.muoniumplayer.core.screens.ncm.PlayerIslandTransition.needsFrameBudget()
+                ? 2 : MUSIC_WIDGET_BUILD_BATCH;
+        int end = Math.min(total, this.pendingMusicIndex + batchSize);
         if (this.pendingMusicIndex < end) {
             long startedAt = System.nanoTime();
             List<AbstractWidget<?>> batch = new ArrayList<>(end - this.pendingMusicIndex);

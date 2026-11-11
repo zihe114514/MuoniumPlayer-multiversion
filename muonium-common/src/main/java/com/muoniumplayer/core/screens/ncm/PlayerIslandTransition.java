@@ -62,28 +62,24 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
      */
     private static double surfaceHandoff = 1.0;
 
-    /** 上一次推进 {@link #surfaceHandoff} 的时刻；0 = 窗口已走完或尚未开始。 */
-    private static long handoffLastNanos;
-    /**
-     * 过渡专用的单调时钟。共享的帧增量助手对长帧设上限，且也
-     * 被 HUD/音乐渲染共享；当播放把帧率降到 25fps 以下时，旧的 40ms
-     * 上限使该形变在墙上时钟上更久，即使其配置速度未变。
-     */
-    private static long lastTickNanos;
+    private static final FrameClock CLOCK = new FrameClock();
 
-    /**
-     * 单帧最多推进的动画时间，毫秒。
-     *
-     * <p>这条转场是用户盯着看的开场动画，{@code t} 一次跳太多读起来就是「跳过了动画」：
-     * 旧上限 250ms 下，一次 200ms 的卡顿一帧吃掉 880ms 展开的 23%，连续几帧重活整个动画
-     * 4 帧放完。50ms ≈ 20fps 的帧间距，正常掉帧（含一次 GC、一次区块加载）完全不触顶、
-     * 保持实时步调；只有真正的长冻结（切标签页、调试器暂停）才会被按住，代价只是动画
-     * 尾巴在墙上时钟上多走几十毫秒 —— 拉长永远好过跳过。持续低于 20fps 的机器动画会
-     * 按比例慢放（15fps 约 1.32 倍、10fps 约 2 倍墙钟时长），这是刻意的：连续性比时长
-     * 更重要，动画期间真正的降载是几何上的（内容 alpha 门槛、交接窗跳过整树），不是
-     * 档位上的。</p>
-     */
-    private static final double MAX_STEP_MS = 50.0;
+    /** 首次实际绘制才开始计时；长帧最多走十二分之一条曲线。 */
+    static final class FrameClock {
+        private long previousNanos;
+
+        void reset() {
+            previousNanos = 0L;
+        }
+
+        double step(long now, double durationMillis) {
+            long previous = previousNanos;
+            previousNanos = now;
+            if (previous == 0L) return 0.0;
+            double elapsed = Math.max(0.0, (now - previous) / 1_000_000.0);
+            return Math.min(elapsed, Math.min(1000.0 / 30.0, durationMillis / 12.0));
+        }
+    }
 
     private static float speed = 1.0f;
 
@@ -146,9 +142,8 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
             captureSurfacePalette();
             capsuleHandoffMix = 0.0;
             surfaceHandoff = 0.0;
-            handoffLastNanos = 0L;
         }
-        lastTickNanos = System.nanoTime();
+        CLOCK.reset();
         if (state == OPEN) {
             DownloadDynamicIsland.finishPlayerSurfaceTransition();
         } else {
@@ -172,7 +167,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
             // 现在捕获该目标；tick() 淡入它而不改变当前帧。
             captureCapsule();
             captureSurfacePalette();
-            lastTickNanos = System.nanoTime();
+            CLOCK.reset();
             DownloadDynamicIsland.preparePlayerAbsorb();
             state = CLOSING;
         }
@@ -192,8 +187,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         t = 0.0;
         capsuleHandoffMix = 0.0;
         surfaceHandoff = 0.0;
-        handoffLastNanos = 0L;
-        lastTickNanos = 0L;
+        CLOCK.reset();
         refreshFrameCache();
     }
 
@@ -201,13 +195,9 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     public static void tick() {
         captureTarget();
 
-        long now = System.nanoTime();
-        double deltaMs = lastTickNanos == 0L ? 0.0 : (now - lastTickNanos) / 1_000_000.0;
-        lastTickNanos = now;
-        // 在掉帧期间保持实时步调。上限压到 50ms：这条转场是用户盯着看的动画，
-        // t 一帧跳 23% 就是「跳过了动画」；真冻结（切标签页）宁可尾巴拉长也不跳。
-        // 音乐引起的正常卡顿（一次 GC、一次区块加载）远触不到这条线。
-        deltaMs = Math.min(MAX_STEP_MS, Math.max(0.0, deltaMs));
+        double duration = state == CLOSING ? closeDuration()
+                : state == OPENING ? openDuration() : Double.POSITIVE_INFINITY;
+        double deltaMs = CLOCK.step(System.nanoTime(), duration);
 
         // 完全打开后，普通面板拥有渲染权。仅刷新四个缓存输出；
         // 这样可避免在每个空闲的玩家帧上重新求解两条贝塞尔曲线并重建脉冲。
@@ -229,7 +219,9 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
             return;
         }
 
+        double handoffDeltaMs = deltaMs;
         if (state == OPENING) {
+            handoffDeltaMs = Math.max(0.0, deltaMs - (1.0 - t) * openDuration());
             t = Math.min(1.0, t + deltaMs / openDuration());
             if (t >= 1.0) {
                 t = 1.0;
@@ -248,7 +240,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
 
         // 材质交接窗：表面落定（展开到 1）后开始走，转场动画期间反向回卷到 0 ——
         // 正在形变的表面必须按贴图路径画，透镜只在停稳后逐帧淡入。
-        advanceSurfaceHandoff(deltaMs);
+        advanceSurfaceHandoff(t >= 1.0 ? handoffDeltaMs : deltaMs);
 
         // 保持锚点变化基于时间。中途逆转关闭绝不能在一帧内把原点
         //从胶囊猛地拉回更大的常驻岛。
@@ -269,22 +261,10 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
      * 表面都在移动，必须整体回到贴图路径，不允许带着半透明透镜叠画。</p>
      */
     private static void advanceSurfaceHandoff(double deltaMs) {
-        boolean settled = t >= 1.0;
-        if (settled) {
-            if (surfaceHandoff < 1.0) {
-                if (handoffLastNanos == 0L) {
-                    handoffLastNanos = System.nanoTime();
-                }
-                double step = (System.nanoTime() - handoffLastNanos) / 1_000_000.0;
-                handoffLastNanos = System.nanoTime();
-                surfaceHandoff = Math.min(1.0,
-                        surfaceHandoff + Math.min(step, MAX_STEP_MS) / SURFACE_HANDOFF_MS);
-            } else {
-                handoffLastNanos = 0L;
-            }
+        if (t >= 1.0) {
+            surfaceHandoff = Math.min(1.0, surfaceHandoff + deltaMs / SURFACE_HANDOFF_MS);
         } else if (surfaceHandoff > 0.0) {
             surfaceHandoff = Math.max(0.0, surfaceHandoff - deltaMs / SURFACE_HANDOFF_MS);
-            handoffLastNanos = 0L;
         }
     }
 
@@ -298,6 +278,11 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
      */
     public static double surfaceHandoff() {
         return surfaceHandoff;
+    }
+
+    /** 展开、收起和材质交接期间给协作任务更小的主线程预算。 */
+    public static boolean needsFrameBudget() {
+        return isRunning() || (state == OPEN && surfaceHandoff < 0.999);
     }
 
     public static boolean isRunning() {

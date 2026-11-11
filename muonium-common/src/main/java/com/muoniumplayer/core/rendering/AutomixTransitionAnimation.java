@@ -97,6 +97,13 @@ public final class AutomixTransitionAnimation {
         }
     }
 
+    /** 宿主在开绘制帧之前判断圆环是否真的占用顶层通道；同时回收已结束的视觉时钟。 */
+    public static boolean hasStandaloneOverlay() {
+        Snapshot current = snapshot();
+        return current != null && AutomixSettings.getTransitionAnimationStyle()
+                != AutomixSettings.TransitionAnimationStyle.CURVE;
+    }
+
     /** 圆环仍是独立覆盖层；曲线只由灵动岛画布绘制，绝不再在屏幕中央弹面板。 */
     public static void render() {
         Snapshot snapshot = snapshot();

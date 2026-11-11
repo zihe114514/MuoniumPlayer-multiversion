@@ -46,7 +46,7 @@ class GlassBloomStaticTest {
         String source = read("GlassBackdrop.java");
         int at = source.indexOf("public static Image bloom() {");
         assertTrue(at > 0, "bloom() 入口没了");
-        String head = source.substring(at, at + 400);
+        String head = source.substring(at, source.indexOf("public static Image bloomCached()", at));
         int guard = head.indexOf("bloomStrength() <= 0f");
         int build = head.indexOf("rebuildBloom(");
         assertTrue(guard >= 0 && build > guard,

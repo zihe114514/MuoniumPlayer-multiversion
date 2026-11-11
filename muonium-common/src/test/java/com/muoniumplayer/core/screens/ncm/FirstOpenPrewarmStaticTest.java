@@ -120,6 +120,46 @@ class FirstOpenPrewarmStaticTest {
         assertTrue(read(ICONS).contains("RETRY_AFTER"), "缺失资源必须节流，不能每帧重排后台任务");
     }
 
+    @Test
+    void firstVisibleFrameDoesNotConsumeInitializationTime() {
+        PlayerIslandTransition.FrameClock clock = new PlayerIslandTransition.FrameClock();
+        org.junit.jupiter.api.Assertions.assertEquals(0.0, clock.step(5_000_000_000L, 880.0 / 3.0));
+        org.junit.jupiter.api.Assertions.assertEquals(8.0, clock.step(5_008_000_000L, 880.0 / 3.0));
+        clock.reset();
+        org.junit.jupiter.api.Assertions.assertEquals(0.0, clock.step(9_000_000_000L, 650.0 / 3.0));
+    }
+
+    @Test
+    void longFramesCannotConsumeMoreThanOneTwelfthAtAnyConfiguredSpeed() {
+        for (double duration : new double[]{880.0 / .3, 880.0, 880.0 / 3.0, 650.0 / 3.0, 88.0}) {
+            PlayerIslandTransition.FrameClock clock = new PlayerIslandTransition.FrameClock();
+            long now = 1_000_000_000L;
+            clock.step(now, duration);
+            double progress = 0.0;
+            for (int frame = 0; frame < 6; frame++) {
+                now += 300_000_000L;
+                double step = clock.step(now, duration);
+                assertTrue(step <= 1000.0 / 30.0 && step / duration <= 1.0 / 12.0 + 1e-10);
+                progress += step / duration;
+            }
+            assertTrue(progress <= .5 + 1e-10, "六个长帧不能把整段展开吃完");
+        }
+    }
+
+    @Test
+    void settleGraceObservesEveryFrameAndWaitsForMaterialHandoff() throws IOException {
+        String screen = read(SCREEN);
+        String check = between(screen, "public void checkDirty()", "private static boolean settleGraceElapsed()");
+        assertTrue(check.indexOf("boolean settled = settleGraceElapsed();")
+                < check.indexOf("if (this.dirty &&"), "没有 dirty 的动画帧也必须复位落定时间");
+        String grace = between(screen, "private static boolean settleGraceElapsed()", "public void onGuiClosed()");
+        assertTrue(grace.contains("settledAtNanos = 0L") && grace.contains("System.nanoTime()"));
+        assertTrue(grace.contains("surfaceHandoff() >= 0.999"));
+        String transition = read(SCREEN.resolveSibling("PlayerIslandTransition.java"));
+        String handoff = between(transition, "private static void advanceSurfaceHandoff(", "public static double surfaceHandoff()");
+        assertTrue(!handoff.contains("System.nanoTime()"), "材质交接必须复用同帧 delta");
+    }
+
     private static int indexOfAny(String source, String... needles) {
         int best = -1;
         for (String needle : needles) {

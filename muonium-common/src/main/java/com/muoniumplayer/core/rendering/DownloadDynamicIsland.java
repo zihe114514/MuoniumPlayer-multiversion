@@ -364,9 +364,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     // 括号由本方法自己进出（owned 守卫防嵌套），调用方零改动；HUD 编辑器的预览路径
     // （renderEditorPreview）不走这里 —— 编辑器已提供同一层外层矩阵，再包就是双乘。
     public static void render() {
-        // 完整字体下载的渲染线程钩子挂在这里（本方法每帧、且只在渲染线程上跑）：
-        // 就绪则热启用，未就绪则节流重评。五棵版本树都只调 render()，接线零改动。
-        com.muoniumplayer.core.management.FontAssetDownload.pollFromRenderThread();
+        // 完整字体就绪后在渲染线程热接入；转场期间延后，播放器稳定帧也维护同一钩子。
+        if (!com.muoniumplayer.core.screens.ncm.PlayerIslandTransition.needsFrameBudget()) {
+            com.muoniumplayer.core.management.FontAssetDownload.pollFromRenderThread();
+        }
         prewarmPlayerLayoutOnce();
         boolean ownedLayout = !RenderSystem.FIXED_SCALE;
         if (ownedLayout) WindowAdaptiveScale.beginForced();
@@ -395,6 +396,18 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             // 预热永远不允许影响 HUD；真正打开播放器时 initGui 仍会走完整布局。
             System.err.println("[MuoniumPlayer] 播放器布局预热失败: " + t);
         }
+    }
+
+    /** 播放器屏幕不显示常驻岛，只为通知、下载、退场尾帧与混音内容打开顶层通道。 */
+    public static boolean needsScreenOverlay() {
+        advanceQueuedNotice(System.currentTimeMillis());
+        if (playerSurfaceTransition) {
+            pauseNoticeClock();
+            INSTANCE.completionVisibleClock.pause();
+            return false;
+        }
+        return INSTANCE.visibility > .001f || playerAbsorbImpact || isDownloadActive()
+                || noticeType != IslandNoticeType.NONE || AutomixTransitionAnimation.islandFrame() != null;
     }
 
     /** 紧凑岛屿的基础颜色，在 t=0 时被播放器形变使用。 */

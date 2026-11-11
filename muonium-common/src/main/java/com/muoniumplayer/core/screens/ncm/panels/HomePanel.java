@@ -1030,7 +1030,9 @@ public class HomePanel extends NCMPanel {
         if (this.cardsPanel == null || this.pendingCards == null) return;
 
         int total = this.pendingCards.size();
-        int end = Math.min(total, this.pendingCardIndex + CARD_BUILD_BATCH);
+        int batchSize = com.muoniumplayer.core.screens.ncm.PlayerIslandTransition.needsFrameBudget()
+                ? 1 : CARD_BUILD_BATCH;
+        int end = Math.min(total, this.pendingCardIndex + batchSize);
         if (this.pendingCardIndex < end) {
             long startedAt = System.nanoTime();
             List<AbstractWidget<?>> batch = new ArrayList<>(end - this.pendingCardIndex);

@@ -103,6 +103,8 @@ public final class GlassBackdrop {
         int width;
         int height;
         Image image;
+        long captures;
+        final BlurCache blur = new BlurCache();
     }
 
     private static final CaptureTarget baseTarget = new CaptureTarget();
@@ -113,29 +115,28 @@ public final class GlassBackdrop {
     /** Set only after a topmost capture was completed for the current render pass. */
     private static boolean topmostAvailable;
 
-    /** Raw image the blur/bloom slots currently belong to; base and topmost must never share them. */
-    private static Image blurSource;
+    /** 每个采集目标持有自己的预糊与 bloom，切换绘制层不释放另一层的 GPU 资源。 */
+    static final class BlurCache {
+        Image source;
+        final BlurSlot[] slots = new BlurSlot[GlassBlurLevels.SLOTS];
+        final GlassBlurLevels levels = new GlassBlurLevels();
+        final BlurSlot bloomSlot = new BlurSlot();
+        long bloomBuiltAtCapture = -1L;
+        Shader bloomChild;
+        Image bloomChildImage;
 
-    /**
-     * 预糊那一层：最多 {@link GlassBlurLevels#SLOTS} 个槽，每个槽是「一张自己的纹理 + FBO +
-     * 包出来的画布 + 借给 Skia 的视图」，按半径分档（一处一档模糊强度）。尺寸永远跟
-     * {@link #backdropWidth()} 一致，所以映射与源矩形两头通用。
-     *
-     * <p>为什么不用 {@code makeImageSnapshot}：快照是<b>带生命周期的副本</b>，下一次绘制会触发
-     * copy-on-write，而 {@code GlassRefraction} 把背景当子 shader 缓存着跨帧用——快照一旦被回收，
-     * 缓存里的 shader 就指向一个死对象。借来的外部纹理没有这个问题：内容原地换，视图不动。
-     * 同一句话对多槽版成立，只是「原地换」的范围从一张变成每档一张。</p>
-     *
-     * <p>哪一格命中、往哪一格重建、预算花完借谁，全在 {@link GlassBlurLevels} 里算，
-     * 这里只负责持有 GL 对象。</p>
-     */
-    private static final BlurSlot[] blurSlots = new BlurSlot[GlassBlurLevels.SLOTS];
-    private static final GlassBlurLevels blurLevels = new GlassBlurLevels();
-
-    static {
-        for (int i = 0; i < blurSlots.length; i++) {
-            blurSlots[i] = new BlurSlot();
+        BlurCache() {
+            for (int i = 0; i < slots.length; i++) slots[i] = new BlurSlot();
         }
+    }
+
+    private static BlurCache blurCache(Image raw) {
+        BlurCache cache = activeTarget().blur;
+        if (cache.source != raw) {
+            releaseBlurCache(cache);
+            cache.source = raw;
+        }
+        return cache;
     }
 
     /** 一个预糊槽位的裸资源。字段留成包内可见，好让策略与探针直接读，不做封装。 */
@@ -426,6 +427,11 @@ public final class GlassBackdrop {
         }
 
         captures++;
+        destination.captures++;
+        if (sceneChanged) {
+            destination.blur.levels.reset();
+            destination.blur.bloomBuiltAtCapture = -1L;
+        }
         if (topmost) {
             topmostAvailable = true;
         } else {
@@ -520,9 +526,10 @@ public final class GlassBackdrop {
      */
     public static Image blurred(float sigma) {
         Image raw = image();
-        if (raw != blurSource) {
-            resetBlurSource(raw);
-        }
+        BlurCache cache = blurCache(raw);
+        GlassBlurLevels blurLevels = cache.levels;
+        BlurSlot[] blurSlots = cache.slots;
+        long captures = activeTarget().captures;
         if (raw == null || blurBroken || sigma <= 0.004f) {
             return null;
         }
@@ -545,7 +552,7 @@ public final class GlassBackdrop {
             // 一档都没建过（第一次请求就撞上预算为 0 的边界）→ 往下照常建，绝不能返回 null，
             // 那等于让玻璃整层消失。
         }
-        return rebuildBlur(raw, sigma, key, blurLevels.allocate(key, captures));
+        return rebuildBlur(cache, raw, sigma, key, blurLevels.allocate(key, captures));
     }
 
     /**
@@ -568,9 +575,10 @@ public final class GlassBackdrop {
      */
     public static Image blurredCached(float sigma) {
         Image raw = image();
-        if (raw != blurSource) {
-            resetBlurSource(raw);
-        }
+        BlurCache cache = blurCache(raw);
+        GlassBlurLevels blurLevels = cache.levels;
+        BlurSlot[] blurSlots = cache.slots;
+        long captures = activeTarget().captures;
         if (raw == null || blurBroken) {
             return null;
         }
@@ -607,7 +615,7 @@ public final class GlassBackdrop {
             // 连一档旧档都没有（本代第一次请求就撞上预算为 0 的边界）→ 往下照常建，
             // 绝不能返回 null，那等于让玻璃整层消失。
         }
-        return rebuildBlur(raw, sigma, key, blurLevels.allocate(key, captures));
+        return rebuildBlur(cache, raw, sigma, key, blurLevels.allocate(key, captures));
     }
 
     /**
@@ -624,16 +632,11 @@ public final class GlassBackdrop {
      * 且转场结束透镜接管后立刻恢复逐代刷新。30Hz 之外的采集频率按比例自然伸缩。</p>
      */
     private static final long STALE_BORROW_CAPTURES = 8L;
-    private static void resetBlurSource(Image raw) {
-        if (blurSource == raw) {
-            return;
-        }
-        releaseAllBlurTargets();
-        blurSource = raw;
-    }
-
-    /** 建（或重建）第 {@code slot} 档预糊。任何一步不对都只置 {@link #blurBroken}，不影响没预糊时的旧画法。 */
-    private static Image rebuildBlur(Image raw, float sigma, float key, int slot) {
+    /** 建（或重建）第 {@code slot} 档预糊。失败仍保留逐面板模糊兜底。 */
+    private static Image rebuildBlur(BlurCache cache, Image raw, float sigma, float key, int slot) {
+        GlassBlurLevels blurLevels = cache.levels;
+        BlurSlot[] blurSlots = cache.slots;
+        long captures = activeTarget().captures;
         DirectContext context = SkijaHost.context();
         if (context == null || backdropWidth() <= 0 || backdropHeight() <= 0 || slot < 0) {
             return null;
@@ -761,40 +764,42 @@ public final class GlassBackdrop {
         target.height = 0;
     }
 
-    /** 所有会占一张纹理的层：四档预糊 + bloom 那一层。回收与作废都走这一份清单。 */
-    private static BlurSlot[] blurTargets() {
-        BlurSlot[] all = new BlurSlot[blurSlots.length + 1];
-        System.arraycopy(blurSlots, 0, all, 0, blurSlots.length);
-        all[blurSlots.length] = bloomSlot;
-        return all;
+    /** 上下文丢失后的引用清理，不再调用 GL。 */
+    private static void clearBlurTarget(BlurSlot slot) {
+        slot.image = null;
+        slot.surface = null;
+        slot.backend = null;
+        slot.textureId = 0;
+        slot.framebufferId = 0;
+        slot.width = 0;
+        slot.height = 0;
     }
 
-    /** 全丢：预糊这一层整体作废时（停用、上下文没了、建不起来）没有理由留任何一档。 */
+    private static void releaseBlurCache(BlurCache cache) {
+        if (cache.bloomChild != null) cache.bloomChild.close();
+        cache.bloomChild = null;
+        cache.bloomChildImage = null;
+        for (BlurSlot slot : cache.slots) releaseBlurTarget(slot);
+        releaseBlurTarget(cache.bloomSlot);
+        cache.bloomBuiltAtCapture = -1L;
+        cache.source = null;
+        cache.levels.reset();
+    }
+
+    /** 上下文失效或整层失败时才回收两组缓存，正常换层只选取各自的资源。 */
     private static void releaseAllBlurTargets() {
-        for (BlurSlot slot : blurTargets()) {
-            releaseBlurTarget(slot);
-        }
-        bloomBuiltAtCapture = -1L;
-        blurLevels.reset();
+        releaseBlurCache(baseTarget.blur);
+        releaseBlurCache(topmostTarget.blur);
     }
 
     // ------------------------------------------------------------------
     // bloom：亮部溢出
     // ------------------------------------------------------------------
 
-    /**
-     * bloom 那张图（亮部提取 + 糊过），与采集目标同尺寸，所以 {@code frostedBackdrop} 那边
-     * 算好的源矩形原样可用。
-     */
-    private static final BlurSlot bloomSlot = new BlurSlot();
-    private static long bloomBuiltAtCapture = -1L;
     /** bloom 这一层建不起来：只少一股亮晕，玻璃本身一点不变。 */
     private static boolean bloomBroken;
     private static RuntimeEffect bloomEffect;
     private static boolean bloomEffectUnavailable;
-    /** 采下来的原图当子 shader 用：与 {@code GlassRefraction} 同一套「认对象不认句柄」的缓存。 */
-    private static Shader bloomChild;
-    private static Image bloomChildImage;
 
     /** 亮度阈值（sRGB 相对亮度 0..1）：低于这条的一律不参与 bloom。 */
     static final float BLOOM_THRESHOLD = 0.55f;
@@ -856,10 +861,11 @@ public final class GlassBackdrop {
         if (raw == null || SkijaHost.isDisabled()) {
             return null;
         }
-        if (bloomSlot.image != null && bloomBuiltAtCapture == captures) {
-            return bloomSlot.image;
+        BlurCache cache = blurCache(raw);
+        if (cache.bloomSlot.image != null && cache.bloomBuiltAtCapture == activeTarget().captures) {
+            return cache.bloomSlot.image;
         }
-        return rebuildBloom(raw);
+        return rebuildBloom(cache, raw);
     }
 
     /** 只借用当前采集代数已经建好的亮部溢出纹理，不在灵动岛转场中现场重建。 */
@@ -871,18 +877,20 @@ public final class GlassBackdrop {
         if (raw == null || SkijaHost.isDisabled()) {
             return null;
         }
-        if (bloomSlot.image != null && bloomBuiltAtCapture == captures) {
-            return bloomSlot.image;
+        BlurCache cache = blurCache(raw);
+        if (cache.bloomSlot.image != null && cache.bloomBuiltAtCapture == activeTarget().captures) {
+            return cache.bloomSlot.image;
         }
         return null;
     }
-    private static Image rebuildBloom(Image raw) {
+    private static Image rebuildBloom(BlurCache cache, Image raw) {
+        BlurSlot bloomSlot = cache.bloomSlot;
         DirectContext context = SkijaHost.context();
         if (context == null || backdropWidth() <= 0 || backdropHeight() <= 0) {
             return null;
         }
         RuntimeEffect effect = bloomEffect();
-        Shader child = bloomChild(raw);
+        Shader child = bloomChild(cache, raw);
         if (effect == null || child == null) {
             return null;
         }
@@ -905,7 +913,7 @@ public final class GlassBackdrop {
                         (float) backdropWidth(), (float) backdropHeight()), paint);
             }
             context.flush(bloomSlot.surface);
-            bloomBuiltAtCapture = captures;
+            cache.bloomBuiltAtCapture = activeTarget().captures;
             return borrowBlur(context, bloomSlot);
         } catch (Throwable failure) {
             bloomBroken = true;
@@ -936,21 +944,19 @@ public final class GlassBackdrop {
         return Data.makeFromBytes(buf.array());
     }
 
-    private static Shader bloomChild(Image raw) {
-        if (bloomChild != null && bloomChildImage == raw) {
-            return bloomChild;
+    private static Shader bloomChild(BlurCache cache, Image raw) {
+        if (cache.bloomChild != null && cache.bloomChildImage == raw) {
+            return cache.bloomChild;
         }
-        if (bloomChild != null) {
-            bloomChild.close();
-            bloomChild = null;
-            bloomChildImage = null;
+        if (cache.bloomChild != null) {
+            cache.bloomChild.close();
+            cache.bloomChild = null;
+            cache.bloomChildImage = null;
         }
         try {
-            // 1:1 画到同一张尺寸的 FBO 上，所以不需要局部矩阵；朝向与预糊那一层同一套约定
-            // （两头都是 BOTTOM_LEFT，见 borrowBlur）。
-            bloomChild = raw.makeShader(FilterTileMode.CLAMP, FilterTileMode.CLAMP);
-            bloomChildImage = raw;
-            return bloomChild;
+            cache.bloomChild = raw.makeShader(FilterTileMode.CLAMP, FilterTileMode.CLAMP);
+            cache.bloomChildImage = raw;
+            return cache.bloomChild;
         } catch (Throwable failure) {
             bloomBroken = true;
             System.out.println(TAG + "背景图包不成 shader，亮部溢出停用: " + failure);
@@ -1132,22 +1138,17 @@ public final class GlassBackdrop {
         } catch (Throwable ignored) {
             clearTarget(baseTarget);
             clearTarget(topmostTarget);
-            for (BlurSlot slot : blurTargets()) {
-                // 上下文可能已经没了：这里只丢引用，不再发 GL 删除调用（发出去是崩在原生层）。
-                slot.image = null;
-                slot.surface = null;
-                slot.backend = null;
-                slot.textureId = 0;
-                slot.framebufferId = 0;
-                slot.width = 0;
-                slot.height = 0;
+            for (CaptureTarget target : new CaptureTarget[]{baseTarget, topmostTarget}) {
+                BlurCache cache = target.blur;
+                for (BlurSlot slot : cache.slots) clearBlurTarget(slot);
+                clearBlurTarget(cache.bloomSlot);
+                cache.levels.reset();
+                cache.bloomBuiltAtCapture = -1L;
+                cache.bloomChild = null;
+                cache.bloomChildImage = null;
+                cache.source = null;
             }
-            blurLevels.reset();
-            bloomBuiltAtCapture = -1L;
-            bloomChild = null;
-            bloomChildImage = null;
         }
-        blurSource = null;
         topmostRequested = false;
         topmostAvailable = false;
         lastCaptureIncludedScreen = false;
@@ -1213,6 +1214,7 @@ public final class GlassBackdrop {
     }
 
     private static void releaseTarget(CaptureTarget target) {
+        releaseBlurCache(target.blur);
         if (target.image != null) {
             target.image.close();
             target.image = null;
