@@ -98,11 +98,11 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      */
     static final float SHADOW_STRENGTH = 0.22f;
 
-    /**
-     * 全亮度光值（1.21.1 的 {@code LightTexture.FULL_BRIGHT}）。26.3 该常量类已删除，
+    /** 全亮度光值（1.21.1 的 {@code LightTexture.FULL_BRIGHT}）。26.3 该常量类已删除，
      * 值 15728880（0xF000F0）在原版实体渲染器中照旧裸写。
      */
     private static final int FULL_BRIGHT = 15728880;
+    private static final java.util.ArrayList<Identifier> retiredTextures = new java.util.ArrayList<>();
 
     /** 每帧共享实例。 */
     public static final WorldBillboard INSTANCE = new WorldBillboard();
@@ -190,6 +190,15 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 : RenderTypes.textSeeThrough(rl);
     }
 
+    private static void releaseRetiredTextures() {
+        if (retiredTextures.isEmpty()) return;
+        Minecraft mc = Minecraft.getInstance();
+        for (Identifier rl : retiredTextures) {
+            mc.getTextureManager().release(rl);
+        }
+        retiredTextures.clear();
+    }
+
     /** 事件入口（worldRenderEnd 的矩阵在 Bridge 里已设好）。 */
     public void begin(PoseStack poseStack, SubmitNodeCollector collector,
                       double camX, double camY, double camZ) {
@@ -198,6 +207,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         this.camX = camX;
         this.camY = camY;
         this.camZ = camZ;
+        releaseRetiredTextures();
         // 「更激进的适配」采集模式：光影激活 + 开关开 → 本帧不 submit，
         // 平滑字形/特效改记进 present 兜底缓冲（WorldLyricsHudDraw 类注释）。
         // 像素字路径不进采集（原版名牌同路径，光影下本就正常）。
@@ -297,7 +307,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             TrailTexture tex = glowTex[s];
             if (tex == null || glowW[s] < w || glowH[s] < h) {
                 if (glowRl[s] != null) {
-                    Minecraft.getInstance().getTextureManager().release(glowRl[s]);
+                    retiredTextures.add(glowRl[s]);
+                    glowRl[s] = null;
                     glowTex[s] = null;
                 }
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
@@ -857,7 +868,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             int capW = nextPow2(w), capH = nextPow2(h);
             if (tex == null || trailCanvasW[slot] < w || trailCanvasH[slot] < h) {
                 if (rl != null) {
-                    Minecraft.getInstance().getTextureManager().release(rl);
+                    retiredTextures.add(rl);
+                    trailCanvasRl[slot] = null;
                     trailCanvasTex[slot] = null;
                 }
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);

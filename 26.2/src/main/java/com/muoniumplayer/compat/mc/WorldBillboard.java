@@ -86,6 +86,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 融进背景，任何背景下都只是「一点点」。
      */
     static final float SHADOW_STRENGTH = 0.22f;
+    private static final java.util.ArrayList<Identifier> retiredTextures = new java.util.ArrayList<>();
 
     /** 每帧共享实例。 */
     public static final WorldBillboard INSTANCE = new WorldBillboard();
@@ -163,6 +164,15 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 : RenderTypes.textSeeThrough(rl);
     }
 
+    private static void releaseRetiredTextures() {
+        if (retiredTextures.isEmpty()) return;
+        Minecraft mc = Minecraft.getInstance();
+        for (Identifier rl : retiredTextures) {
+            mc.getTextureManager().release(rl);
+        }
+        retiredTextures.clear();
+    }
+
     /** 事件入口（worldRenderEnd 的矩阵在 Bridge 里已设好）。 */
     public void begin(PoseStack poseStack, Minecraft mc,
                       double camX, double camY, double camZ) {
@@ -171,6 +181,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         this.camX = camX;
         this.camY = camY;
         this.camZ = camZ;
+        releaseRetiredTextures();
         // 「更激进的适配」采集模式：光影激活 + 开关开 → 本帧不 submit，
         // 平滑字形/特效改记进 present 兜底缓冲（WorldLyricsHudDraw 类注释）。
         // 像素字路径不进采集（原版名牌同路径，光影下本就正常）。
@@ -836,7 +847,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             int capW = nextPow2(w), capH = nextPow2(h);
             if (tex == null || trailCanvasW[slot] < w || trailCanvasH[slot] < h) {
                 if (rl != null) {
-                    Minecraft.getInstance().getTextureManager().release(rl);
+                    retiredTextures.add(rl);
+                    trailCanvasRl[slot] = null;
                     trailCanvasTex[slot] = null;
                 }
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
@@ -917,6 +929,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * size = fontPx × (2.2+0.8illum)；渲染层已按 lit 算好 size/alpha。
      * 与字形同一 alwaysOnTop 相位：渲染层先逐字调 drawHalo 再逐字调
      * drawSmoothGlyph，submit 顺序即绘制顺序 —— 晕垫在字下。
+     */
     // ==================== 行级光晕垫底 ====================
 
     /**
@@ -966,7 +979,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             TrailTexture tex = glowTex[s];
             if (tex == null || glowW[s] < w || glowH[s] < h) {
                 if (glowRl[s] != null) {
-                    Minecraft.getInstance().getTextureManager().release(glowRl[s]);
+                    retiredTextures.add(glowRl[s]);
+                    glowRl[s] = null;
                     glowTex[s] = null;
                 }
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
