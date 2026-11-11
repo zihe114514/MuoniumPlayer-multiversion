@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -128,6 +129,39 @@ class HuiguangMotionTest {
         assertEquals(0f, a, 0.01f);
         float b = HuiguangMotion.litAt(new long[0], 0, false, 500f + HuiguangMotion.LIGHT_UP_MS, 500f);
         assertEquals(1f, b, 0.01f);
+    }
+
+    @Test
+    void combinedTrailSamplingMatchesSeparateGeometryAndStrengthExactly() {
+        HuiguangMotion.Flight flight = HuiguangMotion.flight(
+                17, 991, -42.25f, 18.5f, 26.75f, -9.125f, 10f, false);
+        float[] expectedX = new float[HuiguangMotion.TRACK_SAMPLES + 1];
+        float[] expectedY = new float[HuiguangMotion.TRACK_SAMPLES + 1];
+        float[] actualX = new float[HuiguangMotion.TRACK_SAMPLES + 1];
+        float[] actualY = new float[HuiguangMotion.TRACK_SAMPLES + 1];
+
+        int count = HuiguangMotion.trailPoints(flight, 384f,
+                HuiguangMotion.ENTRY_WINDOW_MS, 10f, expectedX, expectedY);
+        float expectedStrength = HuiguangMotion.trailPoseStrength(flight, 384f,
+                HuiguangMotion.ENTRY_WINDOW_MS, 10f);
+        float actualStrength = HuiguangMotion.trailPointsAndStrength(flight, 384f,
+                HuiguangMotion.ENTRY_WINDOW_MS, 10f, actualX, actualY);
+
+        assertEquals(HuiguangMotion.TRACK_SAMPLES + 1, count);
+        assertArrayEquals(expectedX, actualX, 0f);
+        assertArrayEquals(expectedY, actualY, 0f);
+        assertEquals(expectedStrength, actualStrength, 0f);
+    }
+
+    @Test
+    void combinedTrailSamplingPreservesStationaryZeroStrength() {
+        HuiguangMotion.Flight flight = HuiguangMotion.flight(
+                3, 77, 4f, -2f, 4f, -2f, 10f, false);
+        float[] xs = new float[HuiguangMotion.TRACK_SAMPLES + 1];
+        float[] ys = new float[HuiguangMotion.TRACK_SAMPLES + 1];
+
+        assertEquals(0f, HuiguangMotion.trailPointsAndStrength(flight, 1400f,
+                HuiguangMotion.ENTRY_WINDOW_MS, 10f, xs, ys), 0f);
     }
 
     @Test

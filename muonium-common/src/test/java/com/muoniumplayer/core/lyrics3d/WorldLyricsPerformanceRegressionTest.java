@@ -18,6 +18,60 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class WorldLyricsPerformanceRegressionTest {
 
     @Test
+    @DisplayName("渲染逐字 scratch 复用对象但逐帧裁尾并重置颜色与姿态")
+    void renderGlyphScratchReusesObjectsWithoutLeakingPreviousFrameState() {
+        WorldLyricsState.SpawnedLine longLine = new WorldLyricsState.SpawnedLine(
+                List.of("Hello world"), List.of("你好世界"), timesFor("你好世界"), false,
+                0L, 1000L, -1, 0, 0, 0, 0, 0, timesFor("Hello world"));
+        WorldLyricsState.PixelWidthOf width = WorldLyricsPerformanceRegressionTest::rawWidth;
+        int[] firstGradient = {0xAA3311};
+        WorldLyricsState.LyricGlyphs first = WorldLyricsState.buildGlyphsForRender(
+                longLine, 5000L, 1f, false, false, width,
+                false, false, null, firstGradient);
+        WorldLyricsState.LyricGlyph firstGlyph = first.glyphs.get(0);
+        assertEquals(0xAA3311, firstGlyph.rgbOverride);
+        assertEquals(first.glyphs.size(), first.appearAtSize());
+
+        WorldLyricsState.SpawnedLine shortLine = new WorldLyricsState.SpawnedLine(
+                List.of("Go"), 0L, 1000L, 0, 0, 0, 0, 0, timesFor("Go"));
+        WorldLyricsState.LyricGlyphs second = WorldLyricsState.buildGlyphsForRender(
+                shortLine, 5000L, 1f, false, false, width,
+                false, false, null, null);
+        assertSame(first, second, "渲染 scratch 应跨行复用");
+        assertSame(firstGlyph, second.glyphs.get(0), "可见字形对象应复用");
+        assertEquals("Go".length(), second.glyphs.size(), "长句翻译的尾部不得残留");
+        assertEquals(0, second.glyphs.get(0).rgbOverride, "上一帧渐变颜色不得残留");
+        assertEquals(0f, second.glyphs.get(0).rot, 0f, "上一帧姿态不得残留");
+        assertEquals(second.glyphs.size(), second.appearAtSize(), "时刻数组与字形必须一一对应");
+    }
+
+    @Test
+    @DisplayName("绘光翻译微飞复用 Flight 并更新当前字形坐标")
+    void renderTranslationFlightsReuseObjectsAndRefreshCoordinates() {
+        WorldLyricsState.PixelWidthOf width = WorldLyricsPerformanceRegressionTest::rawWidth;
+        WorldLyricsState.SpawnedLine firstLine = new WorldLyricsState.SpawnedLine(
+                List.of("Hello"), List.of("A"), timesFor("A"), true,
+                0L, 1000L, -1, 0, 0, 0, 0, 0, timesFor("Hello"));
+        WorldLyricsState.LyricGlyphs first = WorldLyricsState.buildGlyphsForRender(
+                firstLine, 5000L, 1f, false, false, width,
+                false, true, null, null);
+        HuiguangMotion.Flight firstFlight = first.huiguangFlights.get(5);
+        assertEquals(-2.5f, firstFlight.fromX, 0f);
+
+        WorldLyricsState.SpawnedLine secondLine = new WorldLyricsState.SpawnedLine(
+                List.of("Go"), List.of("AB"), timesFor("AB"), true,
+                0L, 1000L, -1, 0, 0, 0, 0, 0, timesFor("Go"));
+        WorldLyricsState.LyricGlyphs second = WorldLyricsState.buildGlyphsForRender(
+                secondLine, 5000L, 1f, false, false, width,
+                false, true, null, null);
+        HuiguangMotion.Flight secondFlight = second.huiguangFlights.get(2);
+        assertSame(firstFlight, secondFlight, "翻译微飞应复用 scratch Flight");
+        assertEquals(-5f, secondFlight.fromX, 0f, "复用 Flight 必须重写当前字形坐标");
+        assertEquals(second.glyphs.size(), second.huiguangFlights.size(),
+                "每个可见字形仍须与 Flight/null 占位一一对齐");
+    }
+
+    @Test
     @DisplayName("多语言字符宽度按字体世代复用，owner 或 generation 变化时完整失效")
     void textMetricsCacheSeparatesLanguagesAndInvalidates() {
         AtomicInteger calls = new AtomicInteger();

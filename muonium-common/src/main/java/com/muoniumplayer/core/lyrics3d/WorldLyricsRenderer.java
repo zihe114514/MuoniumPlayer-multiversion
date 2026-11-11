@@ -356,7 +356,7 @@ public final class WorldLyricsRenderer {
             // 走原配色。快照空（封面未就绪/提取为空）回落原配置色。
             int[] coverLut = coverGradientLut(settings);
             int coverMain = coverMainColor(settings);
-            WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphs(
+            WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphsForRender(
                     f, songNowMs, row.alpha, settings.wordPop, !row.active, widthOf,
                     cadenza, huiguang, keywordMatch, coverLut);
             // 心象模式的分块配色基准色：取色器自定义过的色原样用，没动过时纯白
@@ -405,15 +405,15 @@ public final class WorldLyricsRenderer {
                             && glyphs.glyphs.get(spotCount).k >= 0) spotCount++;
                 }
                 if (row.active && spotCount > 0 && glyphs.huiguangLayout != null) {
-                    float firstA = glyphs.appearAts.get(0);
-                    float lastA = glyphs.appearAts.get(spotCount - 1);
+                    float firstA = glyphs.appearAt(0);
+                    float lastA = glyphs.appearAt(spotCount - 1);
                     if (spotElapsed >= firstA - 250L && spotElapsed <= lastA + 600L) {
                         int gi = 0;
-                        while (gi + 1 < spotCount && glyphs.appearAts.get(gi + 1) <= spotElapsed) gi++;
+                        while (gi + 1 < spotCount && glyphs.appearAt(gi + 1) <= spotElapsed) gi++;
                         WorldLyricsState.LyricGlyph a = glyphs.glyphs.get(gi);
                         WorldLyricsState.LyricGlyph b = glyphs.glyphs.get(Math.min(gi + 1, spotCount - 1));
-                        float aAt = glyphs.appearAts.get(gi);
-                        float bAt = glyphs.appearAts.get(Math.min(gi + 1, spotCount - 1));
+                        float aAt = glyphs.appearAt(gi);
+                        float bAt = glyphs.appearAt(Math.min(gi + 1, spotCount - 1));
                         float t = bAt > aAt ? (spotElapsed - aAt) / (bAt - aAt) : 0f;
                         t = Math.max(0f, Math.min(1f, t));
                         // 排版路径坐标（layout 中心 + 整句绕行；不含逐字微动）
@@ -601,9 +601,13 @@ public final class WorldLyricsRenderer {
                             <= HuiguangMotion.ENTRY_WINDOW_MS
                                     + HuiguangMotion.TRACK_TIME_S * 1000f;
                         if (fl != null && fl.valid && trailAlive) {
-                            int n = HuiguangMotion.trailPoints(fl, glyphs.huiguangElapsedMs,
-                                    HuiguangMotion.ENTRY_WINDOW_MS, WorldLyricsState.LYRIC_SIZE,
-                                    TRAIL_XS, TRAIL_YS);
+                            int n = HuiguangMotion.TRACK_SAMPLES + 1;
+                            // 一次采样同时得到绘制点和无抖动路径强度：原先这里先
+                            // 求 21 点拖尾，再用同一时刻完整回溯 21 点算强度，换句时
+                            // 每个飞行字重复做一遍贝塞尔求值。
+                            float strength = HuiguangMotion.trailPointsAndStrength(fl,
+                                    glyphs.huiguangElapsedMs, HuiguangMotion.ENTRY_WINDOW_MS,
+                                    WorldLyricsState.LYRIC_SIZE, TRAIL_XS, TRAIL_YS);
                             // 径迹点补上本句恒定绕行 + 本字呼吸（与字形同一套微动）——
                             // 拖尾才能一直连着正在漂移的字
                             float[] br = TRAIL_BREATH;
@@ -616,9 +620,6 @@ public final class WorldLyricsRenderer {
                             if (n > 1) {
                             // 强度按无 wobble 的 pose 折线判定（静止字恒 0、收尾自然
                             // 衰减归零）；带 wobble 的 TRAIL_XS/YS 只用于绘制顶点。
-                            float strength = HuiguangMotion.trailPoseStrength(fl,
-                                    glyphs.huiguangElapsedMs, HuiguangMotion.ENTRY_WINDOW_MS,
-                                    WorldLyricsState.LYRIC_SIZE);
                             if (strength > HuiguangMotion.TRAIL_MIN_STRENGTH) {
                                 // Skija 光栅化：折线进共享画布（多层辉光 + 沿程渐变 +
                                 // 圆头圆接，Skija AA 无锯齿），帧尾整块上屏

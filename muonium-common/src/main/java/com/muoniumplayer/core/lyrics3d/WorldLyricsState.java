@@ -424,11 +424,11 @@ public final class WorldLyricsState {
      * {@code cadenzaGlow} 是块的发光脉冲（0..1，渲染层据此选发光烘焙档）。</p>
      */
     public static final class LyricGlyph {
-        public final char c;
-        public final float x, y;   // 字的顶部（与 MC 字体一致；入场落位已含在内）
+        public char c;
+        public float x, y;   // 字的顶部（与 MC 字体一致；入场落位已含在内）
         /** 0..1。入场淡入给出初值；整行出场时由出场级联就地缩（非 final）。 */
         public float alpha;
-        public final int k;        // 非空白字符序号（确定性随机/出场级联的相位键）
+        public int k;        // 非空白字符序号（确定性随机/出场级联的相位键）
         /** 恒生效的弹性缩放（入场飞入回弹 / word pop 回弹 / 出场收拢），1 = 无。 */
         public float pop;
         /** 字符在整句中的水平排版位置 0..1（含空白、按原始排版计）—— 封面渐变按它
@@ -455,13 +455,26 @@ public final class WorldLyricsState {
         /** 绘光模式：关键字色（0xRRGGBB；0 = 无关键字，走全局墨色）。 */
         public int keywordRgb;
 
-        LyricGlyph(char c, float x, float y, float alpha, int k, float pop) {
+        private LyricGlyph(char c, float x, float y, float alpha, int k, float pop) {
+            reset(c, x, y, alpha, k, pop);
+        }
+
+        private void reset(char c, float x, float y, float alpha, int k, float pop) {
             this.c = c;
             this.x = x;
             this.y = y;
             this.alpha = alpha;
             this.k = k;
             this.pop = pop;
+            position = -1f;
+            rgbOverride = 0;
+            rot = dx = dy = scale = 0f;
+            tokenRgb = 0;
+            cadenzaGlow = 0f;
+            tokenActive = false;
+            huiguangLit = huiguangFlash = 0f;
+            flyingWhite = false;
+            keywordRgb = 0;
         }
     }
 
@@ -470,8 +483,15 @@ public final class WorldLyricsState {
         public final List<LyricGlyph> glyphs = new ArrayList<>();
         /** 与 glyphs 一一对应的入场相位（歌曲内 ms）——出场级联按它排「先唱先走」。 */
         public final List<Float> appearAts = new ArrayList<>();
-        public final int seed;
-        public final float totalHeight;
+        private final List<LyricGlyph> glyphPool = new ArrayList<>();
+        private final List<HuiguangMotion.Flight> translationFlightPool = new ArrayList<>();
+        private float[] appearAtValues = new float[0];
+        private int glyphCount;
+        private int appearAtCount;
+        private int translationFlightCount;
+        private final boolean reusable;
+        public int seed;
+        public float totalHeight;
         /** 绘光模式：与 glyphs 一一对应的入场飞行定义（null 元素 = 该字无飞行）。 */
         public final List<HuiguangMotion.Flight> huiguangFlights = new ArrayList<>();
         /** 绘光模式：本句 elapsed（songNowMs − startMs），径迹回溯求值用。 */
@@ -490,9 +510,106 @@ public final class WorldLyricsState {
         public int[] huiguangKeywordRgbs;
 
         LyricGlyphs(int seed, float totalHeight) {
+            this(seed, totalHeight, false);
+        }
+
+        LyricGlyphs(int seed, float totalHeight, boolean reusable) {
+            this.reusable = reusable;
+            begin(seed, totalHeight);
+        }
+
+        private void begin(int seed, float totalHeight) {
+            glyphCount = 0;
+            appearAtCount = 0;
+            translationFlightCount = 0;
+            glyphs.clear();
+            appearAts.clear();
+            huiguangFlights.clear();
             this.seed = seed;
             this.totalHeight = totalHeight;
+            huiguangElapsedMs = 0L;
+            huiguangDriftX = huiguangDriftY = 0f;
+            huiguangLineScale = 1f;
+            huiguangLineSwayDeg = 0f;
+            huiguangLayout = null;
+            huiguangLayoutScales = null;
+            huiguangBursts = null;
+            huiguangKeywordRgbs = null;
         }
+
+        private LyricGlyph addGlyph(char c, float x, float y, float alpha, int k, float pop) {
+            LyricGlyph glyph;
+            if (reusable) {
+                if (glyphCount < glyphPool.size()) {
+                    glyph = glyphPool.get(glyphCount);
+                    glyph.reset(c, x, y, alpha, k, pop);
+                } else {
+                    glyph = new LyricGlyph(c, x, y, alpha, k, pop);
+                    glyphPool.add(glyph);
+                }
+            } else {
+                glyph = new LyricGlyph(c, x, y, alpha, k, pop);
+            }
+            glyphs.add(glyph);
+            glyphCount++;
+            return glyph;
+        }
+
+        private void addAppearAt(float value) {
+            if (!reusable) {
+                appearAts.add(value);
+                return;
+            }
+            if (appearAtCount >= appearAtValues.length) {
+                appearAtValues = java.util.Arrays.copyOf(appearAtValues,
+                        Math.max(16, appearAtValues.length * 2));
+            }
+            appearAtValues[appearAtCount++] = value;
+        }
+
+        private void addTranslationFlight(boolean enabled, int k, int seed,
+                                          float fromX, float fromY, float toX, float toY,
+                                          float fontPx) {
+            HuiguangMotion.Flight flight = null;
+            if (enabled) {
+                if (reusable) {
+                    if (translationFlightCount < translationFlightPool.size()) {
+                        flight = translationFlightPool.get(translationFlightCount);
+                    } else {
+                        flight = new HuiguangMotion.Flight();
+                        translationFlightPool.add(flight);
+                    }
+                    HuiguangMotion.flightInto(flight, k, seed, fromX, fromY, toX, toY,
+                            fontPx, false);
+                } else {
+                    flight = HuiguangMotion.flight(k, seed, fromX, fromY, toX, toY,
+                            fontPx, false);
+                }
+            }
+            translationFlightCount++;
+            huiguangFlights.add(flight);
+        }
+
+        public float appearAt(int index) {
+            return reusable ? appearAtValues[index] : appearAts.get(index);
+        }
+
+        private int size() {
+            return reusable ? glyphCount : glyphs.size();
+        }
+
+        int appearAtSize() {
+            return reusable ? appearAtCount : appearAts.size();
+        }
+
+        private void trimUnused() {
+            while (glyphs.size() > glyphCount) glyphs.remove(glyphs.size() - 1);
+            while (huiguangFlights.size() > glyphCount) {
+                huiguangFlights.remove(huiguangFlights.size() - 1);
+            }
+        }
+
+        private static final LyricGlyphs RENDER_SCRATCH = new LyricGlyphs(0, 0f, true);
     }
 
     // ==================== 行切换 / 暂停 / 时钟 ====================
@@ -1827,20 +1944,38 @@ public final class WorldLyricsState {
     public static LyricGlyphs buildGlyphs(SpawnedLine f, long songNowMs, float alphaMul,
                                           boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
                                           boolean cadenza) {
-        return buildGlyphs(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf, cadenza, false, null, null);
+        return buildGlyphsInternal(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf,
+                cadenza, false, null, null, null);
     }
 
     public static LyricGlyphs buildGlyphs(SpawnedLine f, long songNowMs, float alphaMul,
                                           boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
                                           boolean cadenza, boolean huiguang, int[] keywordMatch) {
-        return buildGlyphs(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf, cadenza,
-                huiguang, keywordMatch, null);
+        return buildGlyphsInternal(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf,
+                cadenza, huiguang, keywordMatch, null, null);
     }
 
     public static LyricGlyphs buildGlyphs(SpawnedLine f, long songNowMs, float alphaMul,
                                           boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
                                           boolean cadenza, boolean huiguang, int[] keywordMatch,
                                           int[] gradientLut) {
+        return buildGlyphsInternal(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf,
+                cadenza, huiguang, keywordMatch, gradientLut, null);
+    }
+
+    static LyricGlyphs buildGlyphsForRender(SpawnedLine f, long songNowMs, float alphaMul,
+                                            boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
+                                            boolean cadenza, boolean huiguang, int[] keywordMatch,
+                                            int[] gradientLut) {
+        return buildGlyphsInternal(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf,
+                cadenza, huiguang, keywordMatch, gradientLut, LyricGlyphs.RENDER_SCRATCH);
+    }
+
+    private static LyricGlyphs buildGlyphsInternal(SpawnedLine f, long songNowMs, float alphaMul,
+                                                   boolean wordPop, boolean exiting,
+                                                   PixelWidthOf pixelWidthOf, boolean cadenza,
+                                                   boolean huiguang, int[] keywordMatch,
+                                                   int[] gradientLut, LyricGlyphs reuse) {
         List<String> lines = f.lines;
         long elapsedMs = songNowMs - f.startMs;
         // 逐字轴在 → 逐字点亮（卡拉OK扫掠）。原门控是 wordPop（弹跳设置），
@@ -1991,7 +2126,13 @@ public final class WorldLyricsState {
             entryFlights = f.huiguangEntry;
         }
 
-        LyricGlyphs out = new LyricGlyphs(seed, lines.size() * LINE_H);
+        LyricGlyphs out;
+        if (reuse == null) {
+            out = new LyricGlyphs(seed, lines.size() * LINE_H);
+        } else {
+            reuse.begin(seed, lines.size() * LINE_H);
+            out = reuse;
+        }
         out.huiguangElapsedMs = elapsedMs;
         float orbitPhase = seededJitter(0, 0L, 73, seed) * 2f * (float) Math.PI;
         if (huiguang) {
@@ -2144,7 +2285,7 @@ public final class WorldLyricsState {
                         float flyingGlow = flying ? HUIGUANG_POSE[3] * 0.45f : 0f;
                         float a = Math.max(enterFade, flyingGlow) * alphaMul;
                         if (a > 0.02f) {
-                            LyricGlyph g = new LyricGlyph(c, gx, gy, a, k, scale);
+                            LyricGlyph g = out.addGlyph(c, gx, gy, a, k, scale);
                             g.rot = rot;
                             g.pop = scale;
                             g.position = layoutPosition(huiguangLayout != null
@@ -2155,8 +2296,7 @@ public final class WorldLyricsState {
                             g.flyingWhite = flying && flyingGlow > 0.15f;
                             g.keywordRgb = keywordMatch != null && n - 1 >= 0
                                     && n - 1 < keywordMatch.length ? keywordMatch[n - 1] : 0;
-                            out.glyphs.add(g);
-                            out.appearAts.add(appearAt);
+                            out.addAppearAt(appearAt);
                             out.huiguangFlights.add(flying ? fl : null);
                         }
                         x += pixelWidthOf.charWidth(c);
@@ -2180,7 +2320,7 @@ public final class WorldLyricsState {
                                         + inBlockX;
                                 // 纵向 = 行基线 y + 块落点的纵向散布（舞台坐标）。
                                 float gy = y + (float) (token.homeY);
-                                LyricGlyph g = new LyricGlyph(c, gx, gy, a, k,
+                                LyricGlyph g = out.addGlyph(c, gx, gy, a, k,
                                         (float) pose.scale);
                                 g.position = layoutPosition(x, w, pixelWidthOf);
                                 if (gradientLut != null) g.rgbOverride = lutSample(gradientLut, g.position);
@@ -2192,8 +2332,7 @@ public final class WorldLyricsState {
                                 g.cadenzaGlow = (float) CadenzaMotion.glowPulse(token, elapsedMs);
                                 g.tokenActive = elapsedMs >= token.startMs
                                         && elapsedMs <= token.endMs;
-                                out.glyphs.add(g);
-                                out.appearAts.add(appearAt);
+                                out.addAppearAt(appearAt);
                             }
                         }
                         x += pixelWidthOf.charWidth(c);
@@ -2224,11 +2363,10 @@ public final class WorldLyricsState {
                         }
                         float a = fade * alphaMul;
                         if (a > 0.02f) {
-                            LyricGlyph g = new LyricGlyph(c, x, gy, a, k, scale);
-                            g.position = layoutPosition(x, w, pixelWidthOf);
-                            if (gradientLut != null) g.rgbOverride = lutSample(gradientLut, g.position);
-                            out.glyphs.add(g);
-                            out.appearAts.add(appearAt);
+                        LyricGlyph g = out.addGlyph(c, x, gy, a, k, scale);
+                        g.position = layoutPosition(x, w, pixelWidthOf);
+                        if (gradientLut != null) g.rgbOverride = lutSample(gradientLut, g.position);
+                        out.addAppearAt(appearAt);
                         }
                     }
                 }
@@ -2302,7 +2440,7 @@ public final class WorldLyricsState {
                                 }
                             float a = alphaMul * 0.95f * fade;
                             if (a > 0.02f) {
-                                LyricGlyph g = new LyricGlyph(c, tx, gy, a, key, pop);
+                                LyricGlyph g = out.addGlyph(c, tx, gy, a, key, pop);
                                 g.position = layoutPosition(tx, tw, pixelWidthOf);
                                 if (gradientLut != null) g.rgbOverride = lutSample(gradientLut, g.position);
                                 g.huiguangLit = tLit;
@@ -2314,16 +2452,13 @@ public final class WorldLyricsState {
                                                 elapsedMs - tAt);
                                     }
                                 }
-                                out.glyphs.add(g);
-                                out.appearAts.add(tAt);
+                                out.addAppearAt(tAt);
                                 // 副行特效开 = 微飞 Flight（落位点上方 0.6 字号落到位，
                                 // 短时长）：径迹/飞行白化数据就位；关 = null 占位。
                                 if (huiguang) {
-                                    out.huiguangFlights.add(f.transEffects
-                                            ? HuiguangMotion.flight(key, seed,
-                                                    tx, ty - LYRIC_SIZE * 0.6f, tx, gy,
-                                                    LYRIC_SIZE * 0.72f, false)
-                                            : null);
+                                    out.addTranslationFlight(f.transEffects, key, seed,
+                                            tx, ty - LYRIC_SIZE * 0.6f, tx, gy,
+                                            LYRIC_SIZE * 0.72f);
                                 }
                             }
                             }
@@ -2333,11 +2468,10 @@ public final class WorldLyricsState {
                             //      句身淡入淡出与副行淡入系数决定
                             float a = secAlphaMul;
                             if (a > 0.02f) {
-                                LyricGlyph g = new LyricGlyph(c, tx, ty, a, key, 0.72f);
+                                LyricGlyph g = out.addGlyph(c, tx, ty, a, key, 0.72f);
                                 g.position = layoutPosition(tx, tw, pixelWidthOf);
                                 if (gradientLut != null) g.rgbOverride = lutSample(gradientLut, g.position);
-                                out.glyphs.add(g);
-                                out.appearAts.add(0f);
+                                out.addAppearAt(0f);
                                 if (huiguang) out.huiguangFlights.add(null);
                             }
                         }
@@ -2349,19 +2483,21 @@ public final class WorldLyricsState {
             }
         }
 
+        if (out.reusable) out.trimUnused();
         // ---- 出场级联：行 alpha 已经是统一淡出系数（alphaMul），
         //      这里按「真实出现序」把退场提前量摊进 EXIT_STAGGER_MS —— 先唱的字先走。
         //      出现序不是排版序 k：逐字歌词（flashMode）的时间戳可能非单调（副歌重叠），
         //      级联必须按每字自己的 appearAt 归一，否则退场顺序和演唱顺序会拧着。
         //      心象模式不走级联（块自己的退场动画接手）。
-        if (!cadenza && !lingerFade && exiting && alphaMul < 1f && !out.glyphs.isEmpty() && !out.appearAts.isEmpty()) {
-            float first = out.appearAts.get(0);
-            float last = out.appearAts.get(out.appearAts.size() - 1);
+        if (!cadenza && !lingerFade && exiting && alphaMul < 1f
+                && out.size() > 0 && out.appearAtSize() > 0) {
+            float first = out.appearAt(0);
+            float last = out.appearAt(out.appearAtSize() - 1);
             float span = Math.max(1f, last - first);
-            for (int i = 0; i < out.glyphs.size(); i++) {
+            for (int i = 0; i < out.size(); i++) {
                 LyricGlyph g = out.glyphs.get(i);
                 // 出现序归一 0..1 → 级联延迟 0..EXIT_STAGGER_MS
-                float stagger = (out.appearAts.get(i) - first) / span * EXIT_STAGGER_MS;
+                float stagger = (out.appearAt(i) - first) / span * EXIT_STAGGER_MS;
                 float exitT = (1f - alphaMul) * (FADE_SECONDS * 1000f) - stagger;
                 if (exitT > 0f) {
                     float exitFade = (float) clamp01(1f - exitT / (FADE_SECONDS * 1000f * 0.75f));
