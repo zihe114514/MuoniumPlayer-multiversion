@@ -121,11 +121,23 @@ public final class LyricGlyphAtlas {
 
     private static final Object LOCK = new Object();
     private static final List<Page> PAGES = new ArrayList<>();
+    /** Detached pages stay alive until deferred world geometry from the frame is consumed. */
+    private static final List<RetiredPage> RETIRED_PAGES = new ArrayList<>();
     /** 缓存键 → 格子。 */
     private static final Map<String, GlyphCell> CELLS = new LinkedHashMap<>(256);
     /** Ultra 的形状只依赖字形与真实扩散值，颜色/强度变体不重复光栅化和卷积。 */
     private static final Map<String, BloomGlyph> BLOOM_FIELDS = new LinkedHashMap<>(128, .75f, true);
     private static final int BLOOM_FIELD_ENTRIES = 64;
+
+    private static final class RetiredPage {
+        final Host host;
+        final Page page;
+
+        RetiredPage(Host host, Page page) {
+            this.host = host;
+            this.page = page;
+        }
+    }
     private static final long BLOOM_FIELD_FLOAT_BUDGET = 4L * 1024 * 1024;
     private static long bloomFieldFloats;
 
@@ -197,23 +209,23 @@ public final class LyricGlyphAtlas {
     }
 
     /**
-     * 帧头调用（渲染线程，每帧一次）：重置帧内烘焙预算计数。
-     *
-     * <p>必须由渲染层在每帧开始时显式调用 —— 预算记账没有别的可靠帧边界。
-     * 之前的实现拿 {@code System.nanoTime()} 当帧身份（「值与上次不同就是新
-     * 帧」），而它每次调用天然唯一，条件恒真，于是每取一格都清零计数：
-     * {@link #BAKES_PER_FRAME_BUDGET} 与毫秒闸从未真正生效，换句首帧会把整句
-     * 几十格一次性同步烘完（每格含 5× 超采样重采样 + 高斯 bloom），掉帧尖峰。</p>
-     *
-     * <p>幂等且廉价（两次赋值），重复调用只是提前放行预算。</p>
+     * 帧头调用（渲染线程，每帧一次）：重置帧内烘焙预算计数，并释放上一帧已经
+     * 脱离缓存的页。图形提交可能延迟到本帧后段消费；不能在本帧换页/失效时立即
+     * 删除纹理，否则旧 quad 会解析到缺失材质。
      */
     public static void beginFrame() {
+        List<RetiredPage> retired = null;
         synchronized (LOCK) {
             bakesThisFrame = 0;
             bakeNanosThisFrame = 0;
             inkBakesThisFrame = 0;
             inkBakeNanosThisFrame = 0;
+            if (!RETIRED_PAGES.isEmpty()) {
+                retired = new ArrayList<>(RETIRED_PAGES);
+                RETIRED_PAGES.clear();
+            }
         }
+        if (retired != null) deletePages(retired);
     }
 
     /**
@@ -448,12 +460,12 @@ public final class LyricGlyphAtlas {
         invalidateAll();
     }
 
-    /** 整批作废（释放全部页纹理 + 清格子表 + 重建烘焙字体）。 */
+    /** 整批作废：缓存立即失效，页纹理延迟到下一帧边界再释放。 */
     public static void invalidateAll() {
-        Host h = host;
-        List<Page> dead;
         synchronized (LOCK) {
-            dead = new ArrayList<>(PAGES);
+            for (Page page : PAGES) {
+                RETIRED_PAGES.add(new RetiredPage(host, page));
+            }
             PAGES.clear();
             CELLS.clear();
             BLOOM_FIELDS.clear();
@@ -463,12 +475,14 @@ public final class LyricGlyphAtlas {
             glowFont = null;
             fontGeneration++;
         }
-        if (h != null) {
-            for (Page p : dead) {
-                try {
-                    h.deletePage(p.handle);
-                } catch (Throwable ignored) {
-                }
+    }
+
+    private static void deletePages(List<RetiredPage> retired) {
+        for (RetiredPage entry : retired) {
+            if (entry.host == null) continue;
+            try {
+                entry.host.deletePage(entry.page.handle);
+            } catch (Throwable ignored) {
             }
         }
     }
@@ -837,13 +851,7 @@ public final class LyricGlyphAtlas {
                 it.remove();
             }
         }
-        Host h = host;
-        if (h != null) {
-            try {
-                h.deletePage(oldest.handle);
-            } catch (Throwable ignored) {
-            }
-        }
+        RETIRED_PAGES.add(new RetiredPage(host, oldest));
     }
 
     /**
