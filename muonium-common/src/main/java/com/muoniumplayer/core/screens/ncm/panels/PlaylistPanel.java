@@ -5,6 +5,7 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.PlaybackPresentation;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
@@ -117,6 +118,7 @@ public class PlaylistPanel extends NCMPanel {
 
     /** 歌曲行分帧构建：先发布首屏，余下行在后续渲染帧里补齐，避免大歌单回调卡住主线程。 */
     private static final int MUSIC_WIDGET_BUILD_BATCH = 32;
+    private static final long MUSIC_WIDGET_BUILD_BUDGET_NANOS = 750_000L;
     private ScrollPanel musicsPanel;
     private List<Music> pendingMusicBuild;
     private int pendingMusicIndex;
@@ -727,6 +729,7 @@ public class PlaylistPanel extends NCMPanel {
             // 让首屏先出来，滚动和播放器其它动画不被几百个控件的构造阻塞。
             this.pendingMusicBuild = musics == null ? new ArrayList<>() : new ArrayList<>(musics);
             this.pendingMusicIndex = 0;
+            this.playingRowMusicCount = -1;
             this.revealQueue.restart();
             this.musicsLoading = false;
             this.buildPendingMusicWidgets();
@@ -748,10 +751,14 @@ public class PlaylistPanel extends NCMPanel {
         if (this.musicsPanel == null || this.pendingMusicBuild == null) return;
 
         int total = this.pendingMusicBuild.size();
-        int end = Math.min(total, this.pendingMusicIndex + MUSIC_WIDGET_BUILD_BATCH);
+        int batchSize = com.muoniumplayer.core.screens.ncm.PlayerIslandTransition.needsFrameBudget()
+                ? 2 : MUSIC_WIDGET_BUILD_BATCH;
+        int end = Math.min(total, this.pendingMusicIndex + batchSize);
         if (this.pendingMusicIndex < end) {
+            long startedAt = System.nanoTime();
             List<AbstractWidget<?>> batch = new ArrayList<>(end - this.pendingMusicIndex);
-            for (int index = this.pendingMusicIndex; index < end; index++) {
+            while (this.pendingMusicIndex < end) {
+                int index = this.pendingMusicIndex++;
                 MusicWidget musicWidget = new MusicWidget(this.pendingMusicBuild.get(index), this.playList, index);
                 musicWidget.setShouldOverrideMouseCursor(true);
                 musicWidget.setEntranceAnimation(this.revealQueue);
@@ -759,9 +766,9 @@ public class PlaylistPanel extends NCMPanel {
                     musicWidget.setHidden(!matchesMusicFilter(musicWidget.music, this.musicFilterText));
                 }
                 batch.add(musicWidget);
+                if (System.nanoTime() - startedAt >= MUSIC_WIDGET_BUILD_BUDGET_NANOS) break;
             }
             this.musicsPanel.addChild(batch);
-            this.pendingMusicIndex = end;
         }
 
         if (this.pendingMusicIndex >= total) {
@@ -937,17 +944,14 @@ public class PlaylistPanel extends NCMPanel {
      * {@link CloudMusic#playbackPresentation()} 的展示键（含跨源替身），保证「按钮出现了」
      * 与「滚过去真的有一行在亮」永远一致——按钮消失而 EQ 条还亮着（或反过来）都是骗局。
      */
+    private List<Music> playingRowMusics;
+    private int playingRowMusicCount = -1;
+    private String playingRowDisplayKey = "";
+    private String playingRowPeerKey = "";
+    private int cachedPlayingRow = -1;
+
     private boolean playlistContainsCurrentTrack() {
-        String displayKey = CloudMusic.playbackPresentation().displayKey();
-        if (displayKey == null || displayKey.isEmpty()) return false;
-        List<Music> musics = playList.getMusics();
-        if (musics == null || musics.isEmpty()) return false;
-        for (Music candidate : musics) {
-            if (candidate == null) continue;
-            if (displayKey.equals(candidate.getStableKey())) return true;
-            if (CloudMusic.playbackPresentation().isSelected(candidate)) return true;
-        }
-        return false;
+        return playingRowOffset() >= 0;
     }
 
     /** 定位按钮：把当前播放那行滚进视口并多留一点余量，让它不被列表上下沿贴边裁掉。 */
@@ -967,18 +971,30 @@ public class PlaylistPanel extends NCMPanel {
 
     /** 当前展示曲目在本歌单里的行号；不在本单返回 -1。 */
     private int playingRowOffset() {
-        String displayKey = CloudMusic.playbackPresentation().displayKey();
+        PlaybackPresentation presentation = CloudMusic.playbackPresentation();
+        String displayKey = presentation.displayKey();
+        String peerKey = presentation.displayTrack == null ? "" : presentation.displayTrack.getCrossSourcePeerKey();
         List<Music> musics = playList.getMusics();
-        if (displayKey == null || displayKey.isEmpty() || musics == null) return -1;
-        for (int i = 0; i < musics.size(); i++) {
-            Music candidate = musics.get(i);
-            if (candidate == null) continue;
-            if (displayKey.equals(candidate.getStableKey())
-                    || CloudMusic.playbackPresentation().isSelected(candidate)) {
-                return i;
+        int count = musics == null ? 0 : musics.size();
+        boolean unchanged = this.playingRowMusics == musics && this.playingRowMusicCount == count
+                && this.playingRowDisplayKey.equals(displayKey) && this.playingRowPeerKey.equals(peerKey);
+        if (unchanged && (this.cachedPlayingRow < 0
+                || (this.cachedPlayingRow < count && presentation.isSelected(musics.get(this.cachedPlayingRow))))) {
+            return this.cachedPlayingRow;
+        }
+        this.playingRowMusics = musics;
+        this.playingRowMusicCount = count;
+        this.playingRowDisplayKey = displayKey;
+        this.playingRowPeerKey = peerKey;
+        this.cachedPlayingRow = -1;
+        if (displayKey.isEmpty()) return -1;
+        for (int i = 0; i < count; i++) {
+            if (presentation.isSelected(musics.get(i))) {
+                this.cachedPlayingRow = i;
+                break;
             }
         }
-        return -1;
+        return this.cachedPlayingRow;
     }
 
     /**

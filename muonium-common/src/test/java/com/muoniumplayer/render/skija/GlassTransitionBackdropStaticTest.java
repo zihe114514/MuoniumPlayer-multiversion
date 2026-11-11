@@ -40,10 +40,22 @@ class GlassTransitionBackdropStaticTest {
     }
 
     @Test
+    void blurGenerationsBelongToTheSampledTarget() throws Exception {
+        Path path = ProjectPaths.sharedJava().resolve(Paths.get(
+                "com", "muoniumplayer", "render", "skija", "GlassBackdrop.java"));
+        String source = Files.readString(path, StandardCharsets.UTF_8);
+        String body = blurredCachedSource();
+        assertTrue(source.contains("destination.captures++"));
+        assertTrue(body.contains("long captures = activeTarget().captures;"));
+        assertTrue(body.contains("BlurCache cache = blurCache(raw);"));
+        assertFalse(source.contains("resetBlurSource("), "两层交替绘制不应释放另一层缓存");
+    }
+
+    @Test
     @DisplayName("旧档超龄时必须按本代数重糊，而不是继续贴旧图或裸图")
     void transitionRebuildsWhenTooStale() throws Exception {
         String body = blurredCachedSource();
-        assertTrue(body.contains("rebuildBlur(raw, sigma, key, blurLevels.allocate(key, captures))"),
+        assertTrue(body.contains("rebuildBlur(cache, raw, sigma, key, blurLevels.allocate(key, captures))"),
                 "超龄旧档要现糊一遍：这正是全开状态每个采集代数都在付的价钱");
         assertTrue(body.contains("blurLevels.overBudget()"),
                 "重建仍受每次采集的预算约束，不许转场独占");

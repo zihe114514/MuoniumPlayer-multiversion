@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -204,6 +205,68 @@ class ManualAutomixSelectionTest {
         session.invalidate();
         assertFalse(CloudMusic.playbackPresentation().preparing);
         assertSame(CloudMusic.currentlyPlaying, CloudMusic.playbackPresentation().displayTrack);
+    }
+
+    @Test
+    void cancellationReturnsWhileDecoderCleanupIsBlockedAndCannotStopTheNewOwner() throws Exception {
+        BlockingPlayer deck = (BlockingPlayer) unsafe().allocateInstance(BlockingPlayer.class);
+        deck.cleanupEntered = new CountDownLatch(1);
+        deck.releaseCleanup = new CountDownLatch(1);
+        deck.cleanupFinished = new CountDownLatch(1);
+        set(owner, "ownedPlayer", deck);
+        Thread newer = new Thread();
+        CloudMusic.playThread = newer;
+        boolean previousPlaying = CloudMusic.playing.getAndSet(true);
+        try {
+            assertTimeoutPreemptively(Duration.ofMillis(500), () -> call(owner, "cancelPlayback"));
+            assertTrue(deck.stopped);
+            assertFalse(session.isActive());
+            assertTrue(CloudMusic.playing.get(), "旧会话取消不能把新会话置为停止");
+            assertSame(newer, CloudMusic.playThread);
+            assertTrue(deck.cleanupEntered.await(2, TimeUnit.SECONDS));
+            assertEquals(1L, deck.cleanupFinished.getCount(), "关闭应仍在后台等待，不阻塞取消入口");
+        } finally {
+            deck.releaseCleanup.countDown();
+            assertTrue(deck.cleanupFinished.await(2, TimeUnit.SECONDS));
+            CloudMusic.playing.set(previousPlaying);
+        }
+    }
+
+    @Test
+    void obsoleteThreadCannotPublishItsStartIndex() throws Exception {
+        int previousIndex = CloudMusic.curIdx;
+        try {
+            CloudMusic.curIdx = 17;
+            CloudMusic.playThread = new Thread();
+            ((Thread) owner).run();
+            assertEquals(17, CloudMusic.curIdx);
+        } finally {
+            CloudMusic.curIdx = previousIndex;
+        }
+    }
+
+    private static sun.misc.Unsafe unsafe() throws Exception {
+        Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        field.setAccessible(true);
+        return (sun.misc.Unsafe) field.get(null);
+    }
+
+    private static final class BlockingPlayer extends AudioPlayer {
+        CountDownLatch cleanupEntered, releaseCleanup, cleanupFinished;
+        volatile boolean stopped;
+
+        private BlockingPlayer() { super(null); }
+        @Override void stopForReplacement() { stopped = true; }
+        @Override public synchronized void close() {
+            cleanupEntered.countDown();
+            try {
+                releaseCleanup.await();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } finally {
+                cleanupFinished.countDown();
+            }
+        }
     }
 
     private Object selection(Music song) throws Exception {

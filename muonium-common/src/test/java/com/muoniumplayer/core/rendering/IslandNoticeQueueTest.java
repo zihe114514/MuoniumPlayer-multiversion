@@ -61,6 +61,27 @@ class IslandNoticeQueueTest {
     }
 
     @Test
+    void skippedMorphOverlayPausesNoticePresentationWithoutLosingTheMessage() throws Exception {
+        Field transition = ISLAND.getDeclaredField("playerSurfaceTransition");
+        transition.setAccessible(true);
+        boolean previous = transition.getBoolean(null);
+        try {
+            publish("REFRESH_SUCCESS", "waiting-for-player");
+            visible(200L);
+            long elapsed = clock().elapsed();
+            transition.setBoolean(null, true);
+            assertFalse(DownloadDynamicIsland.needsScreenOverlay());
+            assertEquals("waiting-for-player", get("noticeTitle"));
+            assertEquals(elapsed, clock().elapsed());
+            assertEquals(-1L, clockField("lastPresented"));
+            transition.setBoolean(null, false);
+            assertTrue(DownloadDynamicIsland.needsScreenOverlay());
+        } finally {
+            transition.setBoolean(null, previous);
+        }
+    }
+
+    @Test
     void highPriorityEventsNeverCoalesceAndPeersRemainFifo() throws Exception {
         publish("REFRESH_SUCCESS", "ordinary");
         publish("PLAYBACK_ERROR", "error-1");

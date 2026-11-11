@@ -37,7 +37,11 @@ public class Textures implements SharedConstants {
      * 封面几乎同时淡入，又不至于在极端帧里挤占渲染预算。</p>
      */
     public void processPendingUploads() {
-        UPLOADS.drain(4_000_000L, 12);
+        if (com.muoniumplayer.core.screens.ncm.PlayerIslandTransition.needsFrameBudget()) {
+            UPLOADS.drain(500_000L, 2);
+        } else {
+            UPLOADS.drain(4_000_000L, 12);
+        }
     }
 
     public int pendingUploads() {

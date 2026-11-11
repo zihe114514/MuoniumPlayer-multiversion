@@ -81,6 +81,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     static final float SHADOW_OFFSET_Y_PX = 1f;
     /** 阴影强度（顶点 alpha 系数，纯黑 × 进出场 alpha）。 */
     static final float SHADOW_STRENGTH = 0.22f;
+    private static final java.util.ArrayList<Identifier> retiredTextures = new java.util.ArrayList<>();
 
     /** 每帧共享实例。 */
     public static final WorldBillboard INSTANCE = new WorldBillboard();
@@ -122,45 +123,30 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * .withTexture("Sampler0", rl).sortOnUpload() → RenderType.create（accessor）。
      * 光晕属瞬时发光体，不吃光照图、不进 OIT（与 beaconBeam translucent 同判）。</p>
      */
+    /**
+     * PipelineCache 按 RenderPipeline 对象身份缓存编译结果；管线本身不含页纹理，
+     * 必须在所有图集页之间共享，避免每个新页都在渲染线程触发一次阻塞编译。
+     */
+    private static final com.mojang.blaze3d.pipeline.RenderPipeline LYRIC_GLOW_PIPELINE =
+            com.mojang.blaze3d.pipeline.RenderPipeline.builder(
+                            net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
+                    .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
+                    .withColorTargetState(new com.mojang.blaze3d.pipeline.ColorTargetState(
+                            com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING))
+                    .withDepthStencilState(new com.mojang.blaze3d.pipeline.DepthStencilState(
+                            com.mojang.blaze3d.platform.CompareOp.GREATER_THAN_OR_EQUAL, false))
+                    .build();
+
     private static final java.util.concurrent.ConcurrentHashMap<Identifier, RenderType> GLOW_TYPES =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     private static RenderType glowType(Identifier rl) {
-        return GLOW_TYPES.computeIfAbsent(rl, r -> {
-            // 26.2/26.3 的管线构建走 bind-group 声明（withBindGroupLayout +
-            // withVertexBinding + withPrimitiveTopology，javap 核对 26.2 jar）；26.1.2
-            // 的 Builder 还是 1.21.x 形状——uniform 走 withUniform、顶点布局/拓扑合并成
-            // withVertexFormat(VertexFormat, VertexFormat.Mode)，没有 bind-group 这一概念
-            //（javap 核对 26.1.2 jar：无 BindGroupLayouts / PrimitiveTopology 类）。
-            //
-            // 【必须从 BEACON_BEAM_SNIPPET 起手】早先这里用空 builder 手搓，以为
-            // 「uniforms 由 RenderSetup 侧按 shader 需求自动供给」—— 这是错的。
-            // 26.1.2 的 GlProgram.setupUniforms 与 1.21.10/1.21.11 逐段相同：
-            // 只给管线声明过的 uniform/sampler 建槽，没声明的一律跳过，于是：
-            //   - DynamicTransforms 不在 BUILT_IN_UNIFORMS（只有 Projection/Lighting/
-            //     Fog/Globals）→ ModelViewMat 永不绑定 → 顶点塌到原点；
-            //   - Sampler0 同理不建 → texture() 采到 0 号空白纹理。
-            // 实机日志坐实：`Found unknown and unsupported uniform DynamicTransforms
-            // in muonium:lyric_glow`，同时 CPU 侧 `现代档字形 quad 已提交: '+glow'`
-            // 说明晕格纹理已取到 —— 断的就是 GPU 绑定这一环。
-            // snippet 自带 MATRICES_FOG_SNIPPET（DynamicTransforms/Projection/Fog）
-            // + withSampler("Sampler0") + BLOCK/QUADS，照原版 BEACON_BEAM_TRANSLUCENT
-            // 「以 snippet 为底只覆盖差异项」的正规做法。
-            com.mojang.blaze3d.pipeline.RenderPipeline pipeline =
-                    com.mojang.blaze3d.pipeline.RenderPipeline.builder(
-                                    net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
-                            .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
-                            .withColorTargetState(new com.mojang.blaze3d.pipeline.ColorTargetState(
-                                    com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING))
-                            .withDepthStencilState(new com.mojang.blaze3d.pipeline.DepthStencilState(
-                                    com.mojang.blaze3d.platform.CompareOp.GREATER_THAN_OR_EQUAL, false))
-                            .build();
-            return RenderTypeAccessors.muonium$create("muonium_lyric_glow",
-                    net.minecraft.client.renderer.rendertype.RenderSetup.builder(pipeline)
-                            .withTexture("Sampler0", r)
-                            .sortOnUpload()
-                            .createRenderSetup());
-        });
+        return GLOW_TYPES.computeIfAbsent(rl, r ->
+                RenderTypeAccessors.muonium$create("muonium_lyric_glow",
+                        net.minecraft.client.renderer.rendertype.RenderSetup.builder(LYRIC_GLOW_PIPELINE)
+                                .withTexture("Sampler0", r)
+                                .sortOnUpload()
+                                .createRenderSetup()));
     }
 
     /**
@@ -173,6 +159,15 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 : RenderTypes.textSeeThrough(rl);
     }
 
+    private static void releaseRetiredTextures() {
+        if (retiredTextures.isEmpty()) return;
+        Minecraft mc = Minecraft.getInstance();
+        for (Identifier rl : retiredTextures) {
+            mc.getTextureManager().release(rl);
+        }
+        retiredTextures.clear();
+    }
+
     /** 事件入口（worldRenderEnd 的矩阵在 Bridge 里已设好）。 */
     public void begin(PoseStack poseStack, Minecraft mc,
                       double camX, double camY, double camZ) {
@@ -181,6 +176,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         this.camX = camX;
         this.camY = camY;
         this.camZ = camZ;
+        releaseRetiredTextures();
         // 「更激进的适配」采集模式：光影激活 + 开关开 → 本帧不 submit，
         // 平滑字形/特效改记进 present 兜底缓冲（WorldLyricsHudDraw 类注释）。
         // 像素字路径不进采集（原版名牌同路径，光影下本就正常）。
@@ -284,11 +280,11 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 墨格：无发光留白（晕在独立晕格，墨格回归防裁切最小 pad）
         LyricGlyphAtlas.GlyphCell cell = LyricGlyphAtlas.getInkCell(c, rgb & 0xFFFFFF);
         if (cell == null) {
-            // 绘光模式下「预算内暂时没烘出来」不回退像素字 —— 那正是用户看到的
-            // 「有时退回原版渲染风格」：字形瞬闪像素风再换回烘焙字形，非常扎眼。
-            // 图集可用时静默跳过该字（下一帧补齐，烘焙预算已提到 4 格/帧）；
-            // 图集整体不可用（host 缺失/字体缺位）仍回退像素字，绝不吞字。
-            if (settings != null && settings.huiguang && LyricGlyphAtlas.isFunctional()) {
+            // 现代化风格下「预算内暂时没烘出来」不回退像素字 —— 否则新字会瞬闪像素风，
+            // 下一帧图集补齐后又切回烘焙字形，非常扎眼。
+            // 图集可用时静默跳过该字（下一帧补齐）；图集整体不可用
+            //（host 缺失/字体缺位）仍回退像素字，绝不吞字。
+            if (LyricGlyphAtlas.isFunctional()) {
                 return;
             }
             // 图集不可用/超尺寸：像素字兜底（带阴影 —— 与平滑档的立体感语义一致）
@@ -726,7 +722,28 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 特效贴图（径迹/光晕/星芒/条纹/拖尾画布共用）：继承 {@link MipDynamicTexture}
      * 拿强制 LINEAR 采样器 —— 渐变/径向贴图 + NEAREST 会出条带。
      */
+    /** ABGR int[] writes are bounded by the canvas, never by spare array/texture capacity. */
+    static void writeCanvasPixels(NativeImage image, int[] pixels, int w, int h) {
+        long count = (long) w * h;
+        if (image == null || image.format() != NativeImage.Format.RGBA || pixels == null
+                || w <= 0 || h <= 0 || w > image.getWidth() || h > image.getHeight()
+                || count > pixels.length) {
+            throw new IllegalArgumentException("Invalid lyric canvas rectangle: " + w + "x" + h);
+        }
+        if (image.isClosed()) throw new IllegalStateException("Disposed lyric canvas image");
+        java.nio.IntBuffer target = org.lwjgl.system.MemoryUtil.memByteBuffer(image.getPointer(),
+                Math.toIntExact((long) image.getWidth() * image.getHeight() * Integer.BYTES))
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN).asIntBuffer();
+        for (int row = 0; row < h; row++) {
+            target.position(row * image.getWidth());
+            target.put(pixels, row * w, w);
+        }
+    }
+
     private static final class TrailTexture extends MipDynamicTexture {
+        private java.nio.ByteBuffer uploadBytes;
+        private java.nio.IntBuffer uploadPixels;
+
         TrailTexture(NativeImage img) {
             this((java.util.function.Supplier<String>) () -> "muoniumplayer_worldlyrics_trail", img);
         }
@@ -734,6 +751,25 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         /** 拖尾画布用：label 传自己的名字，GL 调试/截帧里一眼认出这块纹理。 */
         TrailTexture(java.util.function.Supplier<String> label, NativeImage img) {
             super(label, img);
+        }
+
+        void uploadSub(int[] pixels, int w, int h) {
+            com.mojang.blaze3d.systems.RenderSystem.assertOnRenderThread();
+            NativeImage image = this.getPixels();
+            writeCanvasPixels(image, pixels, w, h);
+            if (this.getTexture() == null) throw new IllegalStateException("Disposed lyric canvas texture");
+            if (uploadBytes == null) {
+                uploadBytes = java.nio.ByteBuffer.allocateDirect(image.getWidth() * image.getHeight() * Integer.BYTES)
+                        .order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                uploadPixels = uploadBytes.asIntBuffer();
+            }
+            int count = w * h;
+            uploadPixels.clear();
+            uploadPixels.put(pixels, 0, count);
+            uploadBytes.clear();
+            uploadBytes.limit(count * Integer.BYTES);
+            com.mojang.blaze3d.systems.RenderSystem.getDevice().createCommandEncoder()
+                    .writeToTexture(this.getTexture(), uploadBytes, NativeImage.Format.RGBA, 0, 0, 0, 0, w, h);
         }
     }
 
@@ -773,12 +809,30 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 因此没有 drawTrail 那种「共享缓冲被下一个字覆写」的拷贝问题。</p>
      */
     @Override
+    public boolean supportsGpuTrailCanvas() {
+        return com.muoniumplayer.render.skija.SkijaTrailRenderer.available();
+    }
+
+    @Override
+    public boolean drawGpuTrailCanvas(io.github.humbleui.skija.Picture picture, int w, int h,
+                                      float planeX, float planeY, float planeW, float planeH,
+                                      float alpha, int slot) {
+        return drawTrailCanvas(null, picture, w, h, planeX, planeY, planeW, planeH, alpha, slot);
+    }
+
+    @Override
     public boolean drawTrailCanvas(int[] px, int w, int h,
                                    float planeX, float planeY,
                                    float planeW, float planeH, float alpha,
                                    int slot) {
+        return drawTrailCanvas(px, null, w, h, planeX, planeY, planeW, planeH, alpha, slot);
+    }
+
+    private boolean drawTrailCanvas(int[] px, io.github.humbleui.skija.Picture picture, int w, int h,
+                                    float planeX, float planeY, float planeW, float planeH,
+                                    float alpha, int slot) {
         if (poseStack == null || mc == null || trailCanvasError
-                || px == null || w <= 0 || h <= 0 || alpha <= 0.01f
+                || (px == null && picture == null) || w <= 0 || h <= 0 || alpha <= 0.01f
                 || slot < 0 || slot >= trailCanvasRl.length) return false;
         OrderedSubmitNodeCollector submitter = WorldLyricsBridgeAccess.submitter(mc);
         if (submitter == null) return false;
@@ -788,7 +842,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             int capW = nextPow2(w), capH = nextPow2(h);
             if (tex == null || trailCanvasW[slot] < w || trailCanvasH[slot] < h) {
                 if (rl != null) {
-                    Minecraft.getInstance().getTextureManager().release(rl);
+                    retiredTextures.add(rl);
+                    trailCanvasRl[slot] = null;
                     trailCanvasTex[slot] = null;
                 }
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
@@ -802,22 +857,16 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 trailCanvasW[slot] = capW;
                 trailCanvasH[slot] = capH;
             }
-            NativeImage img = tex.getPixels();
-            if (img == null || px.length < w * h) return false;
-            // 共享层已按 NativeImage 内存序（ABGR、直通 alpha）输出 —— 这里是
-            // 纯数组拷贝，不再做每像素换位（拖尾活跃帧像素量几十万~上百万级，
-            // 每帧省一整遍位运算扫描）。整图逐帧全量覆写：尺寸复用时旧径迹必须
-            // 被清掉，透明像素也写 0 —— 留白跳写会残留上一帧拖尾。
-            // 边界钉死 w×h：曾有共享层缓冲大于画布时按 px.length 越界写、
-            // 写坏相邻 native 内存的教训。
-            for (int row = 0, i = 0; row < h; row++) {
-                for (int col = 0; col < w; col++, i++) {
-                    img.setPixelABGR(col, row, px[i]);
-                }
+            if (picture != null) {
+                int glId = ((com.mojang.blaze3d.opengl.GlTexture) tex.getTexture()).glId();
+                if (!com.muoniumplayer.render.skija.SkijaTrailRenderer.render(picture, w, h,
+                        glId, trailCanvasW[slot], trailCanvasH[slot], slot)) return false;
+            } else {
+                // Keep the capacity texture, but write/upload only the actual canvas rectangle.
+                tex.uploadSub(px, w, h);
             }
-            // 基底层每帧全量变化 → 重传（≤1600² 亚毫秒，仅飞行窗口）。
-            trailCanvasTex[slot].upload();
         } catch (Throwable t) {
+            if (picture != null) return false;
             trailCanvasError = true;
             trailCanvasErrSlot = slot;
             if (TRACE) System.out.println("[WorldLyrics/trace] 拖尾画布纹理失败，径迹退回 quad 带: " + t);
@@ -899,7 +948,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float strength = settings != null ? settings.glowStrength : 0f;
         float spread = settings != null ? settings.glowSpread : 1f;
         String key = text + "|" + Integer.toHexString(glowColor & 0xFFFFFF)
-                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f);
+                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f)
+                + "|" + LyricGlyphAtlas.fontGeneration();
         int s = Math.abs(slot) % GLOW_SLOTS;
 
         int[] px = com.muoniumplayer.core.lyrics3d.RowGlowSprite.bake(
@@ -917,7 +967,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             TrailTexture tex = glowTex[s];
             if (tex == null || glowW[s] < w || glowH[s] < h) {
                 if (glowRl[s] != null) {
-                    Minecraft.getInstance().getTextureManager().release(glowRl[s]);
+                    retiredTextures.add(glowRl[s]);
+                    glowRl[s] = null;
                     glowTex[s] = null;
                 }
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
@@ -933,14 +984,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 glowKey[s] = null;
             }
             if (!key.equals(glowKey[s])) {
-                NativeImage img = tex.getPixels();
-                if (img == null) return;
-                for (int row = 0, i = 0; row < h; row++) {
-                    for (int col = 0; col < w; col++, i++) {
-                        img.setPixelABGR(col, row, px[i]);
-                    }
-                }
-                tex.upload();
+                tex.uploadSub(px, w, h);
                 glowKey[s] = key;
             }
         } catch (Throwable t) {

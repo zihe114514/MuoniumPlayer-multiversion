@@ -4,6 +4,9 @@ import com.muoniumplayer.core.ncm.music.CineBeatSource;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.PlaybackPulse;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.List;
 
 /**
@@ -33,6 +36,14 @@ import java.util.List;
  * 不自带音频分析。</p>
  */
 public final class CineDirector {
+
+    /**
+     * 日志走 slf4j（MC 自带，muonium-lan 同款先例）：neoforge 侧的日志后端
+     * <b>吞 System.out</b>（1.21.1/26.x neoforge 全部历史会话 stdout=0，fabric 正常），
+     * 之前用 println 时运镜启没启动在 neoforge 日志里完全不可观测——
+     * 排查「1.21.1/1.21.11 运镜不生效」时因此只能靠代码审查定位。
+     */
+    private static final Logger LOG = LoggerFactory.getLogger("muonium-cine");
 
     // ---------------- SceneProbe：共享层的世界窗口（树侧 compat 实现） ----------------
 
@@ -298,7 +309,7 @@ public final class CineDirector {
         smoothedPitch = 0f;
         lastCameraUpdateNanos = 0L;
         prepareShot(probe, System.nanoTime(), true);
-        System.out.println("[MuoniumPlayer/Cine] 运镜启动: 闲置 " + CineSettings.idleSeconds() + "s, 音乐在播");
+        LOG.info("[MuoniumPlayer/Cine] 运镜启动: 闲置 {}s, 音乐在播", CineSettings.idleSeconds());
     }
 
     private static void stop(SceneProbe probe, boolean restoreCamera) {
@@ -315,8 +326,8 @@ public final class CineDirector {
         transitionShotPending = false;
         cutPending = false;
         resetCameraSmoothing = true;
-        System.out.println("[MuoniumPlayer/Cine] 运镜退出: 持续 "
-                + livedTicks / 20 + "s (" + (restoreCamera ? "输入/界面/受伤" : "音乐停止或开关关闭") + ")");
+        LOG.info("[MuoniumPlayer/Cine] 运镜退出: 持续 {}s ({})",
+                livedTicks / 20, restoreCamera ? "输入/界面/受伤" : "音乐停止或开关关闭");
         // 恢复相机视角/HUD 是树侧动作：mixin 看到 isActive()=false 就不再接管，
         // 树桥的翻转沿调 CineProbe.entered()/left() 复原相机与 HUD。
     }
@@ -365,11 +376,11 @@ public final class CineDirector {
         CineBeatSource.Grid grid = CineBeatSource.currentGrid();
         boolean metered = grid != null && grid.isMetered();
         if (activeTicks % 40L == 0L) { // 每 2s 一条诊断
-            System.out.println("[MuoniumPlayer/Cine] tick#" + activeTicks
-                    + " metered=" + metered
-                    + " conf=" + (grid == null ? "null" : String.format("%.2f", grid.confidence()))
-                    + " bpm=" + (grid == null ? "-" : String.format("%.0f", grid.bpm()))
-                    + " trans=" + transitionEffect);
+            LOG.info("[MuoniumPlayer/Cine] tick#{} metered={} conf={} bpm={} trans={}",
+                    activeTicks, metered,
+                    grid == null ? "null" : String.format("%.2f", grid.confidence()),
+                    grid == null ? "-" : String.format("%.0f", grid.bpm()),
+                    transitionEffect);
         }
         if (transitionEffect != 0) {
             long midNanos = (transitionStartNanos + transitionEndNanos) / 2L;
@@ -517,10 +528,10 @@ public final class CineDirector {
             shotStartBeat = 0d;
             shotBeatsTotal = 0d; // 0 = 走 12s tick 兜底
         }
-        System.out.println("[MuoniumPlayer/Cine] 切镜 #" + shotSequenceForLog()
-                + " -> " + currentShot.kind()
-                + (trackedMob != null ? " (mob)" : "")
-                + " 时长=" + String.format("%.1f", shotBeatsTotal) + "拍");
+        LOG.info("[MuoniumPlayer/Cine] 切镜 #{} -> {}{} 时长={}拍",
+                shotSequenceForLog(), currentShot.kind(),
+                trackedMob != null ? " (mob)" : "",
+                String.format("%.1f", shotBeatsTotal));
     }
 
     /** 水平朝向向量（原样移植 horizontalDirection:yaw=0 面南 +Z）。 */

@@ -20,7 +20,7 @@ package com.muoniumplayer.render.skija;
  * 这也是为什么不设成 1：那样等于回到一格缓存的互顶，只是换了个死法。
  *
  * <h2>代数</h2>
- * 判「这一档还新不新」用的是 {@link GlassBackdrop#captures()} 那个采集计数，所以调用方
+ * 判「这一档还新不新」用所属背景目标自己的采集计数（不混用顶层与主界面代数），调用方
  * 每次进 {@link GlassBackdrop#blurred(float)} 都要先 {@link #beginCapture(long)}。
  * 忘了调用的后果是：老档被当成永远命中，玻璃透的是十秒前的画面，而这条在糊着的底上
  * 肉眼判不出来——只有「动起来的画面不跟着动」这种反馈能抓到它。

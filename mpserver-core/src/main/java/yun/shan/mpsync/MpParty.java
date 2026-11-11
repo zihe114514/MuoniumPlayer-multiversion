@@ -27,6 +27,8 @@ public final class MpParty {
     private static MpConfig config;
     private static RoomManager manager;
     private static MpPlatform platform;
+    /** 标准 init 从盘上读的那份配置文件；宿主自己装配配置的那条路（直连房间）为 null，不替它写盘。 */
+    private static Path configFile;
 
     public static MpConfig config() { return config; }
 
@@ -38,6 +40,7 @@ public final class MpParty {
     public static void init(MpPlatform p, Path configFile) {
         platform = p;
         config = MpConfig.load(configFile);
+        MpParty.configFile = configFile;
         manager = new RoomManager(config);
         Net.bind(p);
         // 封禁名单跟配置放同一个目录；代解析线程池也在这里装好（没配 Token 时它什么都不做）。
@@ -55,9 +58,28 @@ public final class MpParty {
     public static void init(MpPlatform p, MpConfig readyConfig, Path configFile) {
         platform = p;
         config = readyConfig;
+        MpParty.configFile = null;
         manager = new RoomManager(config);
         Net.bind(p);
         manager.bootstrap(banFile(configFile), p);
+    }
+
+    /**
+     * 把运行中改过的配置写回 {@code mpsync.json}（{@code /mp autojoin} 这类管理指令用）。
+     *
+     * @return 是否真的写进去了；直连房间那条路或写盘失败时为 false（内存里的值仍生效）
+     */
+    public static boolean saveConfig() {
+        MpConfig c = config;
+        Path f = configFile;
+        if (c == null || f == null) return false;
+        try {
+            c.save(f);
+            return true;
+        } catch (Throwable t) {
+            Net.warn("[mpsync] 配置写盘失败：" + f, t);
+            return false;
+        }
     }
 
     /** {@code mpsync.json} 旁边的 {@code mpsync-bans.json}。 */

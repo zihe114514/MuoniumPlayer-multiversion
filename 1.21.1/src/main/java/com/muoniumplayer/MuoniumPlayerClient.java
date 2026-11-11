@@ -62,7 +62,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.5.0";
+    public static final String MOD_VERSION = "2.5.2";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -488,6 +488,9 @@ public final class MuoniumPlayerClient {
         }
         try {
             RenderLayerNotice.draw(graphics, onScreen);
+            // MuoniumConfig 自动下载/更新提示：同一挂点、同一代际 API；钉在左上角，
+            // 与左下角的渲染层停用提示同时出现也不叠。
+            com.muoniumplayer.core.screens.MuoniumConfigNotice.draw(graphics, onScreen);
         } catch (Throwable t) {
             noticeRenderDisabled = true;
             System.err.println("[MuoniumPlayer] 停用提示渲染已关闭：" + t);
@@ -759,7 +762,12 @@ public final class MuoniumPlayerClient {
         if (screenRenderDisabled || this.api == null) {
             return;
         }
+        boolean editorOrOtherUi = screen instanceof GuiHudEditorPro
+                || (screen != null && !(screen instanceof NCMScreen));
+        if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()) return;
         try {
+            if (screen instanceof NCMScreen && !DownloadDynamicIsland.needsScreenOverlay()
+                    && !AutomixTransitionAnimation.hasStandaloneOverlay()) return;
             inSkijaFrame(() -> onScreenRenderedUnguarded(screen));
         } catch (Throwable t) {
             screenRenderDisabled = true;

@@ -56,6 +56,9 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/GuiTextField.java",
             "com/muoniumplayer/compat/mc/ScaledResolution.java",
             "com/muoniumplayer/compat/mc/ScreenCapture.java",
+            // --- 按键显示名：KeyMapping 是 MC 类，且取名字的 API 各代不同名；
+            //     共享层只调 displayName()，七树各一份 ---
+            "com/muoniumplayer/compat/mc/KeyMappingProbe.java",
             // --- 3D 世界歌词：相机/公告牌/桥全是 MC 触点，各树一份（共享层只放语义）---
             "com/muoniumplayer/compat/mc/CameraAccess.java",
             "com/muoniumplayer/compat/mc/WorldBillboard.java",
@@ -90,7 +93,9 @@ class SharedLayoutStaticTest {
 
     /** 只在部分树存在的（mixin 注入点、各树网络通道、光影期直画通路）。 */
     private static final Set<String> OPTIONAL_MAIN_JAVA = new LinkedHashSet<String>(Arrays.asList(
-            // --- MuoniumConfig 下载提示块：原版 GUI 绘制，暂仅 26.3（其余树等回打）---
+            // --- MuoniumConfig 下载/更新提示块：原版 GUI 绘制，两代文字 API
+            //     （GuiGraphics.drawString 与 GuiGraphicsExtractor.text）拼不成一份共享源码，
+            //     七树各一份；本表只登记"存在即可"，不要求每棵树都有 ---
             "com/muoniumplayer/core/screens/MuoniumConfigNotice.java",
             "com/muoniumplayer/mixin/FramebufferMixin.java",
             "com/muoniumplayer/mixin/GlSurfaceMixin.java",
@@ -160,6 +165,10 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/render/skija/Port121StaticTest.java",
             "com/muoniumplayer/render/skija/Port262StaticTest.java",
             "com/muoniumplayer/render/skija/Port263StaticTest.java",
+            // 26.x present/NativeImage 接口不同于旧树，仅主开发树运行真实版本探针。
+            "com/muoniumplayer/compat/mc/LyricPresentRendererUploadTest.java",
+            "com/muoniumplayer/compat/mc/WorldBillboardCanvasPixelsTest.java",
+            "com/muoniumplayer/render/skija/SkijaTrailGpuTest.java",
             "com/muoniumplayer/render/skija/RasterFrames.java"));
 
     // 仅铺设 Kotlin 源根，不迁移既有 Java 留守类；未来新增差异类需同步登记工具与本表。

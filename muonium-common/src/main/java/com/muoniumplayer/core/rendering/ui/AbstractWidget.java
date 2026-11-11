@@ -156,6 +156,11 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
         return true;
     }
 
+    /** Render/tooltip candidates only; layout and input still use the complete child list. */
+    protected List<AbstractWidget<?>> getRenderChildren() {
+        return this.getChildren();
+    }
+
     /**
      * 在当前组件完成布局和自身绘制后、开始绘制子组件前调用。
      */
@@ -207,9 +212,10 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
             GlassLook.endFusion();
             GlassLook.beginFusion(this.glassFusionSurface, fusionRadius);
         }
+        List<AbstractWidget<?>> renderChildren = this.getRenderChildren();
         try {
-            // 渲染所有子组件
-            for (AbstractWidget<?> child : this.getChildren()) {
+            // 渲染所有候选子组件
+            for (AbstractWidget<?> child : renderChildren) {
 
                 if (child.isHidden())
                     continue;
@@ -240,7 +246,7 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
         // 此刻每个子控件的本帧悬停状态都已由它自己的 renderWidget 更新过。
         // 这里与 drawTooltip 一律直取字段而不是 lombok 生成的访问器：渲染树深处逐控件走一遍，
         // 同类私有字段本就可见，也少一层调用。
-        for (AbstractWidget<?> child : this.children) {
+        for (AbstractWidget<?> child : renderChildren) {
             if (child.hidden) continue;
             child.drawTooltip(this);
         }
@@ -367,6 +373,15 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
     public void finishTransientAnimations() {
         for (AbstractWidget<?> child : this.getChildren()) {
             child.finishTransientAnimations();
+        }
+    }
+
+    /** Clear hover/tooltip state when a container stops visiting this subtree. */
+    public final void clearViewportHover() {
+        this.hovering = false;
+        this.tooltipHoverSince = 0L;
+        for (AbstractWidget<?> child : this.getChildren()) {
+            child.clearViewportHover();
         }
     }
 

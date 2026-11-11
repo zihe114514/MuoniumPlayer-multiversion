@@ -103,83 +103,152 @@ public final class TextGlow {
      * @param mask    字形覆盖度，长 w×h
      * @param fontPx  掩码所在域的字号（像素），σ 按 fontPx/50 等比缩放
      */
+    /** Immutable, color-independent convolution result; callers may share it between glow variants. */
+    public static final class BloomGlowField {
+        public final int width, height;
+        private final float[] wide, outer, inner, core;
+        private final BilinearGrid outerGrid, innerGrid;
+
+        private BloomGlowField(int width, int height, float[] wide, float[] outer,
+                               int outerWidth, int outerHeight, float[] inner,
+                               int innerWidth, int innerHeight, float[] core) {
+            this.width = width;
+            this.height = height;
+            this.wide = wide;
+            this.outer = outer;
+            this.outerGrid = new BilinearGrid(outerWidth, outerHeight, width, height);
+            this.inner = inner;
+            this.innerGrid = new BilinearGrid(innerWidth, innerHeight, width, height);
+            this.core = core;
+        }
+
+        /** Retained 32-bit elements, including the interpolation index/weight tables. */
+        public long floatCount() {
+            return (long) wide.length + outer.length + inner.length + core.length
+                    + outerGrid.elementCount() + innerGrid.elementCount();
+        }
+    }
+
+    /** Pixel-center sampling tables; exact arithmetic matches upTo and is reused across tints. */
+    private static final class BilinearGrid {
+        final int[] x0, x1, row0, row1;
+        final float[] tx, ty;
+
+        BilinearGrid(int width, int height, int targetWidth, int targetHeight) {
+            x0 = new int[targetWidth];
+            x1 = new int[targetWidth];
+            tx = new float[targetWidth];
+            row0 = new int[targetHeight];
+            row1 = new int[targetHeight];
+            ty = new float[targetHeight];
+            for (int x = 0; x < targetWidth; x++) {
+                float fx = (x + 0.5f) * width / (float) targetWidth - 0.5f;
+                x0[x] = Math.max(0, Math.min(width - 1, (int) Math.floor(fx)));
+                x1[x] = Math.min(width - 1, x0[x] + 1);
+                tx[x] = Math.max(0f, Math.min(1f, fx - x0[x]));
+            }
+            for (int y = 0; y < targetHeight; y++) {
+                float fy = (y + 0.5f) * height / (float) targetHeight - 0.5f;
+                int y0 = Math.max(0, Math.min(height - 1, (int) Math.floor(fy)));
+                row0[y] = y0 * width;
+                row1[y] = Math.min(height - 1, y0 + 1) * width;
+                ty[y] = Math.max(0f, Math.min(1f, fy - y0));
+            }
+        }
+
+        long elementCount() {
+            return 3L * (tx.length + ty.length);
+        }
+
+        float sample(float[] pixels, int x, int y) {
+            float wx = tx[x], wy = ty[y];
+            return (pixels[row0[y] + x0[x]] * (1 - wx) + pixels[row0[y] + x1[x]] * wx) * (1 - wy)
+                    + (pixels[row1[y] + x0[x]] * (1 - wx) + pixels[row1[y] + x1[x]] * wx) * wy;
+        }
+    }
+
     public static int[] bakeBloomGlowPixels(float[] mask, int w, int h, float fontPx,
                                             double spread, double strength, int lightRgb) {
-        try {
-            float clamped = (float) clamp01(strength);
-            if (mask == null || w <= 0 || h <= 0 || mask.length < w * h || clamped <= .004f) {
-                return null;
-            }
-            if ((lightRgb & 0xFFFFFF) == 0) {
-                return null;   // 黑光色 = 不发光（白核的提白会把黑变成灰，必须显式回退旧路径）
-            }
-            float k = (float) (fontPx / 50.0 * Math.max(.05, spread));
-            float lr = ((lightRgb >> 16) & 255) / 255f;
-            float lg = ((lightRgb >> 8) & 255) / 255f;
-            float lb = (lightRgb & 255) / 255f;
+        if ((float) clamp01(strength) <= .004f || (lightRgb & 0xFFFFFF) == 0) return null;
+        return shadeBloomGlowPixels(prepareBloomGlowField(mask, w, h, fontPx, spread), strength, lightRgb);
+    }
 
-            // ---- bright-pass（soft-knee）→ 线性域 ----
-            float[] b = new float[w * h];
-            for (int i = 0; i < b.length; i++) {
+    /** Covers geometry, low-pass, mip chain and gamma only; no color, strength or quantization. */
+    public static BloomGlowField prepareBloomGlowField(float[] mask, int w, int h, float fontPx,
+                                                       double spread) {
+        try {
+            if (mask == null || w <= 0 || h <= 0 || (long) w * h > mask.length) return null;
+            float k = (float) (fontPx / 50.0 * Math.max(.05, spread));
+            int w1 = w / 2, h1 = h / 2, w2 = w1 / 2, h2 = h1 / 2, w3 = w2 / 2, h3 = h2 / 2;
+            if (w3 < 1 || h3 < 1) return null;
+            int n = w * h;
+            float[] blurTmp = new float[n];
+            float[] blurAcc = new float[n];
+            float[] b = new float[n];
+            for (int i = 0; i < n; i++) {
                 float v = Math.max(0f, mask[i]);
-                if (v <= 1e-4f) {
-                    continue;   // 无光：膝部形状在 v=0 处仍有残值，必须显式归零
-                }
+                if (v <= 1e-4f) continue;
                 float hard = Math.max(v - BLOOM_THRESH, 0);
                 float soft = BLOOM_KNEE * Math.max(0f, Math.min(v - BLOOM_THRESH + BLOOM_KNEE, 2 * BLOOM_KNEE));
                 soft = soft * soft / (4 * BLOOM_KNEE + 1e-4f);
                 b[i] = (float) Math.pow(Math.max(hard, soft), 2.2);
             }
-            // ---- 下行链：每级先低通再降采样（防高频混叠成块）----
-            gaussBlur(b, w, h, BLOOM_SIGMA_PRE * k);
-            int w1 = w / 2, h1 = h / 2, w2 = w1 / 2, h2 = h1 / 2, w3 = w2 / 2, h3 = h2 / 2;
-            if (w3 < 1 || h3 < 1) {
-                return null;
-            }
+            gaussBlur(b, w, h, BLOOM_SIGMA_PRE * k, blurTmp, blurAcc);
             float[] m1 = down2(b, w, h);
-            gaussBlur(m1, w1, h1, BLOOM_SIGMA_M1 * k);
+            gaussBlur(m1, w1, h1, BLOOM_SIGMA_M1 * k, blurTmp, blurAcc);
             float[] m2 = down2(m1, w1, h1);
-            gaussBlur(m2, w2, h2, BLOOM_SIGMA_M2 * k);
+            gaussBlur(m2, w2, h2, BLOOM_SIGMA_M2 * k, blurTmp, blurAcc);
             float[] m3 = down2(m2, w2, h2);
-            gaussBlur(m3, w3, h3, BLOOM_SIGMA_M3 * k);
-            // ---- 上行链：每步只放大 ~2×，相加后轻高斯压台阶 ----
+            gaussBlur(m3, w3, h3, BLOOM_SIGMA_M3 * k, blurTmp, blurAcc);
             float[] u = upTo(m3, w3, h3, w2, h2);
             addInto(u, m2);
-            gaussBlur(u, w2, h2, BLOOM_SIGMA_UP1 * k);
+            gaussBlur(u, w2, h2, BLOOM_SIGMA_UP1 * k, blurTmp, blurAcc);
             u = upTo(u, w2, h2, w1, h1);
             addInto(u, m1);
-            gaussBlur(u, w1, h1, BLOOM_SIGMA_UP2 * k);
+            gaussBlur(u, w1, h1, BLOOM_SIGMA_UP2 * k, blurTmp, blurAcc);
             u = upTo(u, w1, h1, w, h);
             gammaBack(u);
-            // 外圈/内圈层在小域上 γ 返程后双线性放大到全网格（探针 addBilin 口径）
             gammaBack(m3);
             gammaBack(m1);
+            float[] core = new float[n];
+            System.arraycopy(mask, 0, core, 0, n);
+            gaussBlur(core, w, h, BLOOM_SIGMA_CORE * k, blurTmp, blurAcc);
+            return new BloomGlowField(w, h, u, m3, w3, h3, m1, w1, h1, core);
+        } catch (Throwable failure) {
+            return null;
+        }
+    }
 
-            // ---- 分层加色：宽晕场 / 外圈饱和 / 内圈字色 / 字色白核 ----
-            float[] gR = new float[w * h], gG = new float[w * h], gB = new float[w * h];
-            addLayerTinted(gR, gG, gB, u, BLOOM_GAIN_WIDE * clamped, lr, lg, lb, 0f, 1f);
-            addLayerTinted(gR, gG, gB, upTo(m3, w3, h3, w, h),
-                    BLOOM_GAIN_OUTER * clamped, lr, lg, lb, 0f, BLOOM_SAT_OUTER);
-            addLayerTinted(gR, gG, gB, upTo(m1, w1, h1, w, h),
-                    BLOOM_GAIN_INNER * clamped, lr, lg, lb, BLOOM_WHITEN_INNER, 1f);
-            float[] core = new float[w * h];
-            System.arraycopy(mask, 0, core, 0, w * h);
-            gaussBlur(core, w, h, BLOOM_SIGMA_CORE * k);
-            addLayerTinted(gR, gG, gB, core, BLOOM_GAIN_CORE * clamped, lr, lg, lb, BLOOM_WHITEN_CORE, 1f);
-
-            // ---- 直通 alpha 输出：a = max 通道，rgb 除回满强度（GL 加色贡献 rgb×a 不变）----
-            // ING 有序抖动（Jimenez 2014，±0.5 LSB）：晕的暗端 alpha < 16 的尾部在
-            // 8bit 量化下出现同心台阶（游戏里叠在动态背景上显形为"割裂"），
-            // 抖动把台阶打散成空间噪声 —— 人眼读作连续渐变。
-            int[] out = new int[w * h];
+    /** Original tint, layer order, ING dither and ARGB quantization applied to a reusable field. */
+    public static int[] shadeBloomGlowPixels(BloomGlowField field, double strength, int lightRgb) {
+        try {
+            float clamped = (float) clamp01(strength);
+            if (field == null || clamped <= .004f || (lightRgb & 0xFFFFFF) == 0) return null;
+            int w = field.width, h = field.height, n = w * h;
+            float lr = ((lightRgb >> 16) & 255) / 255f;
+            float lg = ((lightRgb >> 8) & 255) / 255f;
+            float lb = (lightRgb & 255) / 255f;
+            float[][] tint = bloomTints(lr, lg, lb);
+            float wideGain = BLOOM_GAIN_WIDE * clamped, outerGain = BLOOM_GAIN_OUTER * clamped;
+            float innerGain = BLOOM_GAIN_INNER * clamped, coreGain = BLOOM_GAIN_CORE * clamped;
+            int[] out = new int[n];
             for (int y = 0; y < h; y++) {
                 int row = y * w;
                 for (int x = 0; x < w; x++) {
                     int i = row + x;
+                    float r = 0f, g = 0f, bl = 0f;
+                    float v = field.wide[i] * wideGain;
+                    r += v * tint[0][0]; g += v * tint[0][1]; bl += v * tint[0][2];
+                    v = field.outerGrid.sample(field.outer, x, y) * outerGain;
+                    r += v * tint[1][0]; g += v * tint[1][1]; bl += v * tint[1][2];
+                    v = field.innerGrid.sample(field.inner, x, y) * innerGain;
+                    r += v * tint[2][0]; g += v * tint[2][1]; bl += v * tint[2][2];
+                    v = field.core[i] * coreGain;
+                    r += v * tint[3][0]; g += v * tint[3][1]; bl += v * tint[3][2];
                     float dither = ing(x, y) / 255f;
-                    float r = Math.max(0f, gR[i] + dither);
-                    float g = Math.max(0f, gG[i] + dither);
-                    float bl = Math.max(0f, gB[i] + dither);
+                    r = Math.max(0f, r + dither);
+                    g = Math.max(0f, g + dither);
+                    bl = Math.max(0f, bl + dither);
                     float mx = Math.max(r, Math.max(g, bl));
                     if (mx <= 0.001f) {
                         out[i] = 0;
@@ -194,9 +263,28 @@ public final class TextGlow {
                 }
             }
             return out;
-        } catch (Throwable t) {
+        } catch (Throwable failure) {
             return null;
         }
+    }
+
+    private static float[][] bloomTints(float lr, float lg, float lb) {
+        float[][] tints = new float[4][3];
+        float gray = 0.299f * lr + 0.587f * lg + 0.114f * lb;
+        for (int layer = 0; layer < tints.length; layer++) {
+            float saturation = layer == 1 ? BLOOM_SAT_OUTER : 1f;
+            float whiten = layer == 2 ? BLOOM_WHITEN_INNER : layer == 3 ? BLOOM_WHITEN_CORE : 0f;
+            float r = gray + (lr - gray) * saturation;
+            float g = gray + (lg - gray) * saturation;
+            float b = gray + (lb - gray) * saturation;
+            r += (1f - r) * whiten;
+            g += (1f - g) * whiten;
+            b += (1f - b) * whiten;
+            tints[layer][0] = r;
+            tints[layer][1] = g;
+            tints[layer][2] = b;
+        }
+        return tints;
     }
 
     /** 灰度场 γ 返程（负值钳零 —— 滑窗浮点误差的微负值经 pow 会成 NaN，碎屏根源）。 */
@@ -207,30 +295,26 @@ public final class TextGlow {
         }
     }
 
-    /** 颜色场累加：src × gain × tint（tint = 光色按 satK 调饱和后再向白提 whiten）。 */
-    private static void addLayerTinted(float[] gR, float[] gG, float[] gB, float[] src,
-                                       float gain, float lr, float lg, float lb,
-                                       float whiten, float satK) {
-        if (gain <= 0) {
-            return;
-        }
-        float gray = 0.299f * lr + 0.587f * lg + 0.114f * lb;
-        float tr = gray + (lr - gray) * satK;
-        float tg = gray + (lg - gray) * satK;
-        float tb = gray + (lb - gray) * satK;
-        tr += (1f - tr) * whiten;
-        tg += (1f - tg) * whiten;
-        tb += (1f - tb) * whiten;
-        for (int i = 0; i < gR.length; i++) {
-            float v = src[i] * gain;
-            gR[i] += v * tr;
-            gG[i] += v * tg;
-            gB[i] += v * tb;
-        }
-    }
-
-    /** 真高斯核分离模糊（各向同性；输出钳非负）。 */
-    private static void gaussBlur(float[] a, int w, int h, float sigma) {
+    /**
+     * 真高斯核分离模糊（各向同性；输出钳非负）。
+     *
+     * <p>两个 pass 都是<b>行连续</b>的（早年纵 pass 按 {@code for x { for y }} 走列，
+     * 每步跨一行 = 一次 cache miss；154×189 的晕格上实测纵 pass 单步成本是横
+     * pass 的 2 倍）。横 pass 拆三段：中间段 [r, w-r) 下标恒在界内，去掉每采样
+     * 一次的双重 clamp。纵 pass 改成 scatter（对每个核偏移做一次整行加法），
+     * 目标数组按行顺序累加，同样全程连续。</p>
+     *
+     * <p>横 pass 的浮点运算次序与旧实现<b>完全相同</b>（只是省掉界内像素多余的
+     * clamp 分支）；纵 pass 改成 scatter 后累加被「按核偏移分组」，数学同值、
+     * 浮点上可能差最后一位。8bit 量化后的逐像素一致性由
+     * TextGlowBloomGoldenTest 用内联的旧实现钉死（15 组参数全 0 差异）。</p>
+     *
+     * @param tmp  横 pass 的中间缓冲，长度 ≥ w*h（由调用方复用，避免每格每 pass
+     *             新建 float[n]：晕格烘焙一次调用要跑 6 个 pass）
+     * @param acc2 纵 pass 的累加缓冲，长度 ≥ w*h（同上）
+     */
+    private static void gaussBlur(float[] a, int w, int h, float sigma,
+                                  float[] tmp, float[] acc2) {
         if (sigma <= 0.05f) {
             return;
         }
@@ -246,28 +330,63 @@ public final class TextGlow {
         for (int i = 0; i < k.length; i++) {
             k[i] /= sum;
         }
-        float[] t = new float[w * h];
+
+        // ---- 横 pass：分三段，中间段去掉 clamp ----
+        float[] t = tmp;
+        int midStart = Math.min(r, w);
+        int midEnd = Math.max(midStart, w - r);
         for (int y = 0; y < h; y++) {
             int row = y * w;
-            for (int x = 0; x < w; x++) {
+            for (int x = 0; x < midStart; x++) {
                 float acc = 0;
                 for (int i = -r; i <= r; i++) {
-                    int sx = Math.max(0, Math.min(w - 1, x + i));
-                    acc += a[row + sx] * k[i + r];
+                    acc += a[row + clampIdx(x + i, w)] * k[i + r];
+                }
+                t[row + x] = acc;
+            }
+            for (int x = midStart; x < midEnd; x++) {
+                float acc = 0;
+                int base = row + x;
+                for (int i = -r; i <= r; i++) {
+                    acc += a[base + i] * k[i + r];
+                }
+                t[base] = acc;
+            }
+            for (int x = midEnd; x < w; x++) {
+                float acc = 0;
+                for (int i = -r; i <= r; i++) {
+                    acc += a[row + clampIdx(x + i, w)] * k[i + r];
                 }
                 t[row + x] = acc;
             }
         }
-        for (int x = 0; x < w; x++) {
+
+        // ---- 纵 pass：scatter，两个数组都按行连续 ----
+        // 累加顺序是「按核偏移分组」而非「按像素逐个累加」——两者数学同值，
+        // 浮点上因分组顺序不同可能差最后一位；晕格最终经 8bit 量化输出。
+        // 逐像素一致性由 TextGlowBloomGoldenTest 钉着（内联旧实现做金标准）。
+        java.util.Arrays.fill(acc2, 0, w * h, 0f);
+        for (int dy = -r; dy <= r; dy++) {
+            float kv = k[dy + r];
+            if (kv == 0f) {
+                continue;
+            }
             for (int y = 0; y < h; y++) {
-                float acc = 0;
-                for (int i = -r; i <= r; i++) {
-                    int sy = Math.max(0, Math.min(h - 1, y + i));
-                    acc += t[sy * w + x] * k[i + r];
+                int srow = clampIdx(y + dy, h) * w;
+                int drow = y * w;
+                for (int x = 0; x < w; x++) {
+                    acc2[drow + x] += t[srow + x] * kv;
                 }
-                a[y * w + x] = Math.max(0f, acc);
             }
         }
+        for (int i = 0, n = w * h; i < n; i++) {
+            a[i] = Math.max(0f, acc2[i]);
+        }
+    }
+
+    /** 下标夹紧到 [0, n-1]（gaussBlur 的边缘延拓口径）。 */
+    private static int clampIdx(int v, int n) {
+        return v < 0 ? 0 : (v >= n ? n - 1 : v);
     }
 
     /** 2×2 box 下采样（天然低通）。 */
@@ -403,8 +522,9 @@ public final class TextGlow {
             float lb = (lightRgb & 255) / 255f;
 
             // ---- 亮部提取（soft-knee）→ 线性域 ----
-            float[] base = new float[w * h];
-            for (int i = 0; i < base.length; i++) {
+            int n = w * h;
+            float[] base = new float[n];
+            for (int i = 0; i < n; i++) {
                 float v = Math.max(0f, mask[i]);
                 if (v <= 1e-4f) {
                     continue;
@@ -415,6 +535,10 @@ public final class TextGlow {
                 base[i] = (float) Math.pow(Math.max(hard, soft), 2.2);
             }
 
+            // 逐级低通复用同一对临时表（每级网格都不超过 w*h，长度取原网格即可）
+            float[] blurTmp = new float[n];
+            float[] blurAcc = new float[n];
+
             // ---- 下行：逐级先低通再降采样 ----
             // 只有第一级在原网格上做高斯（这一级负责把抗锯齿边缘揉开，是唯一的
             // 大半径卷积）；之后每级都在已经缩小的网格上低通，σ 折算回本级域后
@@ -422,7 +546,7 @@ public final class TextGlow {
             float[][] lv = new float[levels][];
             int[] lw = new int[levels];
             int[] lh = new int[levels];
-            gaussBlur(base, w, h, BLOOM_SIGMA_PRE * k);
+            gaussBlur(base, w, h, BLOOM_SIGMA_PRE * k, blurTmp, blurAcc);
             float[] cur = base;
             int cw = w, ch = h;
             for (int i = 0; i < levels; i++) {
@@ -434,7 +558,7 @@ public final class TextGlow {
                 cw = nw;
                 ch = nh;
                 // 降采样后的本级域低通：σ 按域比例折回（像素域 σ / 2^i）
-                gaussBlur(cur, cw, ch, BLOOM_SIGMA_M1 * k);
+                gaussBlur(cur, cw, ch, BLOOM_SIGMA_M1 * k, blurTmp, blurAcc);
                 lv[i] = cur;
                 lw[i] = cw;
                 lh[i] = ch;

@@ -109,4 +109,47 @@ class WorldLyricsStaticTest {
         assertTrue(src.contains("new LyricLine("),
                 "拆出的半句必须是全新 LyricLine（渲染对象带动画状态不能复用）");
     }
+
+    @Test
+    @DisplayName("图集页不得重复构造同一条辉光 RenderPipeline")
+    void glowPipelineIsSharedAcrossPages() throws IOException {
+        Path billboard = ProjectPaths.versionJava().resolve(
+                "com/muoniumplayer/compat/mc/WorldBillboard.java");
+        if (!Files.exists(billboard)) return;
+        String src = read(billboard);
+        int glowMethod = src.indexOf("glowType(");
+        if (glowMethod < 0) return;
+
+        int glowMap = src.indexOf("GLOW_TYPES", glowMethod);
+        int pipeline = src.indexOf("LYRIC_GLOW_PIPELINE");
+        assertTrue(glowMap > glowMethod && pipeline >= 0 && pipeline < glowMap,
+                "自定义辉光版本必须先定义共享 LYRIC_GLOW_PIPELINE，再定义按页 GLOW_TYPES");
+
+        int methodEnd = src.indexOf("\n    /**", glowMethod + 1);
+        if (methodEnd < 0) methodEnd = src.length();
+        String method = src.substring(glowMethod, methodEnd);
+        assertTrue(method.contains("LYRIC_GLOW_PIPELINE"),
+                "glowType 只能把共享管线交给页级 RenderType");
+        assertTrue(!method.contains("RenderPipeline.builder"),
+                "glowType 的按页工厂不得重新 builder；否则 PipelineCache 会按页阻塞编译");
+    }
+
+    @Test
+    @DisplayName("现代字形暂缺时不因烘焙预算回退原版字体")
+    void modernGlyphBakeMissDoesNotFallbackToVanillaFont() throws IOException {
+        Path billboard = ProjectPaths.versionJava().resolve(
+                "com/muoniumplayer/compat/mc/WorldBillboard.java");
+        if (!Files.exists(billboard)) return;
+        String src = read(billboard);
+        int drawMethod = src.indexOf("drawSmoothGlyph(");
+        int cellMiss = src.indexOf("if (cell == null)", drawMethod);
+        int pixelFallback = src.indexOf("drawPixelText(String.valueOf(c)", cellMiss);
+        assertTrue(drawMethod >= 0 && cellMiss > drawMethod && pixelFallback > cellMiss,
+                "现代字形必须有明确的图集未命中处理和原版兜底顺序");
+        String missPath = src.substring(cellMiss, pixelFallback);
+        assertTrue(missPath.contains("if (LyricGlyphAtlas.isFunctional())"),
+                "图集功能正常但当前帧预算暂缺字形时，应跳过本帧而非闪回原版字体");
+        assertTrue(!missPath.contains("settings.huiguang"),
+                "避免把防闪回保护限定在绘光特效；所有现代字形模式都要一致");
+    }
 }

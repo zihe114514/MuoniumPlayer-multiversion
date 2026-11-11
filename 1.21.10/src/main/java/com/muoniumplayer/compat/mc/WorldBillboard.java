@@ -139,21 +139,27 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * {@code NO_LIGHTMAP}）：1.21.10 的 RenderPipeline 没有 RenderSetup 那一层，
      * snippet 只补 uniform / sampler 声明，纹理还是在 RenderType 的 state 里挂。</p>
      */
+    /**
+     * PipelineCache 按 RenderPipeline 对象身份缓存编译结果；管线本身不含页纹理，
+     * 必须在所有图集页之间共享，避免每个新页都在渲染线程触发一次阻塞编译。
+     */
+    private static final com.mojang.blaze3d.pipeline.RenderPipeline LYRIC_GLOW_PIPELINE =
+            com.mojang.blaze3d.pipeline.RenderPipeline.builder(
+                            net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
+                    .withLocation(net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("muonium", "lyric_glow"))
+                    .withBlend(com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING)
+                    .withDepthTestFunction(com.mojang.blaze3d.platform.DepthTestFunction.NO_DEPTH_TEST)
+                    .withDepthWrite(false)
+                    .withColorWrite(true, false)
+                    .withCull(false)
+                    .build();
+
     private static final java.util.concurrent.ConcurrentHashMap<ResourceLocation, net.minecraft.client.renderer.RenderType>
             GLOW_TYPES = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static net.minecraft.client.renderer.RenderType glowType(ResourceLocation rl) {
         return GLOW_TYPES.computeIfAbsent(rl, r -> com.muoniumplayer.mixin.RenderTypeCreateAccessor.muonium$create(
-                "muonium_lyrics_glow", 1536,
-                com.mojang.blaze3d.pipeline.RenderPipeline.builder(
-                                net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
-                        .withLocation(net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("muonium", "lyric_glow"))
-                        .withBlend(com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING)
-                        .withDepthTestFunction(com.mojang.blaze3d.platform.DepthTestFunction.NO_DEPTH_TEST)
-                        .withDepthWrite(false)
-                        .withColorWrite(true, false)
-                        .withCull(false)
-                        .build(),
+                "muonium_lyrics_glow", 1536, LYRIC_GLOW_PIPELINE,
                 RenderType.CompositeState.builder()
                         .setTextureState(new RenderStateShard.TextureStateShard(r, false))
                         .setLightmapState(RenderStateShard.NO_LIGHTMAP)
@@ -273,11 +279,11 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 墨格：无发光留白（晕在独立晕格，墨格回归防裁切最小 pad）
         LyricGlyphAtlas.GlyphCell cell = LyricGlyphAtlas.getInkCell(c, rgb & 0xFFFFFF);
         if (cell == null) {
-            // 绘光模式下「预算内暂时没烘出来」不回退像素字 —— 那正是用户看到的
-            // 「有时退回原版渲染风格」：字形瞬闪像素风再换回烘焙字形，非常扎眼。
-            // 图集可用时静默跳过该字（下一帧补齐，烘焙预算已提到 4 格/帧）；
-            // 图集整体不可用（host 缺失/字体缺位）仍回退像素字，绝不吞字。
-            if (settings != null && settings.huiguang && LyricGlyphAtlas.isFunctional()) {
+            // 现代化风格下「预算内暂时没烘出来」不回退像素字 —— 否则新字会瞬闪像素风，
+            // 下一帧图集补齐后又切回烘焙字形，非常扎眼。
+            // 图集可用时静默跳过该字（下一帧补齐）；图集整体不可用
+            //（host 缺失/字体缺位）仍回退像素字，绝不吞字。
+            if (LyricGlyphAtlas.isFunctional()) {
                 return;
             }
             // 图集不可用/超尺寸：像素字兜底（带阴影 —— 与平滑档的立体感语义一致）
@@ -607,7 +613,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float strength = settings != null ? settings.glowStrength : 0f;
         float spread = settings != null ? settings.glowSpread : 1f;
         String key = text + "|" + Integer.toHexString(glowColor & 0xFFFFFF)
-                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f);
+                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f)
+                + "|" + LyricGlyphAtlas.fontGeneration();
 
         // 烘/复用：key 变才重烘像素并重灌纹理（尺寸不变时只重传，不重建）。
         int[] px = com.muoniumplayer.core.lyrics3d.RowGlowSprite.bake(
@@ -758,12 +765,30 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * slot 是行槽位（active 0、淡出行 1 起），各槽独立纹理互不覆盖。
      */
     @Override
+    public boolean supportsGpuTrailCanvas() {
+        return com.muoniumplayer.render.skija.SkijaTrailRenderer.available();
+    }
+
+    @Override
+    public boolean drawGpuTrailCanvas(io.github.humbleui.skija.Picture picture, int w, int h,
+                                      float planeX, float planeY, float planeW, float planeH,
+                                      float alpha, int slot) {
+        return drawTrailCanvas(null, picture, w, h, planeX, planeY, planeW, planeH, alpha, slot);
+    }
+
+    @Override
     public boolean drawTrailCanvas(int[] px, int w, int h,
                                    float planeX, float planeY,
                                    float planeW, float planeH, float alpha,
                                    int slot) {
+        return drawTrailCanvas(px, null, w, h, planeX, planeY, planeW, planeH, alpha, slot);
+    }
+
+    private boolean drawTrailCanvas(int[] px, io.github.humbleui.skija.Picture picture, int w, int h,
+                                    float planeX, float planeY, float planeW, float planeH,
+                                    float alpha, int slot) {
         if (poseStack == null || buffers == null || trailCanvasError
-                || px == null || w <= 0 || h <= 0 || alpha <= 0.01f
+                || (px == null && picture == null) || w <= 0 || h <= 0 || alpha <= 0.01f
                 || slot < 0 || slot >= trailCanvasRl.length) return false;
         ResourceLocation rl = trailCanvasRl[slot];
         TrailTexture tex = trailCanvasTex[slot];
@@ -793,24 +818,31 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 trailCanvasW[slot] = capW;
                 trailCanvasH[slot] = capH;
             }
-            NativeImage img = tex.getPixels();
-            if (img == null || px.length < w * h) return false;
-            // 共享层已按 NativeImage 内存序（ABGR、直通 alpha）输出 —— 这里是
-            // 纯数组拷贝，不再做每像素换位（拖尾活跃帧像素量几十万~上百万级，
-            // 每帧省一整遍位运算扫描）。整图逐帧全量覆写：尺寸复用时旧径迹必须
-            // 被清掉，透明像素也写 0 —— 留白跳写会残留上一帧拖尾。
-            // 边界钉死 w×h：曾有共享层缓冲大于画布时按 px.length 越界写、
-            // 写坏相邻 native 内存的教训。
-            for (int row = 0, i = 0; row < h; row++) {
-                for (int col = 0; col < w; col++, i++) {
-                    img.setPixelABGR(col, row, px[i]);
+            if (picture != null) {
+                int glId = ((com.mojang.blaze3d.opengl.GlTexture) tex.getTexture()).glId();
+                if (!com.muoniumplayer.render.skija.SkijaTrailRenderer.render(picture, w, h,
+                        glId, trailCanvasW[slot], trailCanvasH[slot], slot)) return false;
+            } else {
+                NativeImage img = tex.getPixels();
+                if (img == null || px.length < w * h) return false;
+                // 共享层已按 NativeImage 内存序（ABGR、直通 alpha）输出 —— 这里是
+                // 纯数组拷贝，不再做每像素换位（拖尾活跃帧像素量几十万~上百万级，
+                // 每帧省一整遍位运算扫描）。整图逐帧全量覆写：尺寸复用时旧径迹必须
+                // 被清掉，透明像素也写 0 —— 留白跳写会残留上一帧拖尾。
+                // 边界钉死 w×h：曾有共享层缓冲大于画布时按 px.length 越界写、
+                // 写坏相邻 native 内存的教训。
+                for (int row = 0, i = 0; row < h; row++) {
+                    for (int col = 0; col < w; col++, i++) {
+                        img.setPixelABGR(col, row, px[i]);
+                    }
                 }
+                // 26.3 前系（1.21.11）的 writeToTexture 10 参：子矩形发进 0 级，
+                // 且 encoder 自行绑定目标纹理（javap 核对）——无需先 bind。
+                RenderSystem.getDevice().createCommandEncoder().writeToTexture(
+                        trailCanvasTex[slot].getTexture(), img, 0, 0, 0, 0, w, h, 0, 0);
             }
-            // 26.3 前系（1.21.11）的 writeToTexture 10 参：子矩形发进 0 级，
-            // 且 encoder 自行绑定目标纹理（javap 核对）——无需先 bind。
-            RenderSystem.getDevice().createCommandEncoder().writeToTexture(
-                    trailCanvasTex[slot].getTexture(), img, 0, 0, 0, 0, w, h, 0, 0);
         } catch (Throwable t) {
+            if (picture != null) return false;
             trailCanvasError = true;
             trailCanvasErrSlot = slot;
             if (TRACE) System.out.println("[WorldLyrics/trace] 拖尾画布纹理失败，径迹退回 quad 带: " + t);

@@ -10,6 +10,7 @@ import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import java.awt.image.BufferedImage;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
 
 /**
  * 从提供的美术资源导入的静态播放器控制图标。
@@ -73,6 +74,7 @@ public final class PlayerIconAssets {
 
     /** 正在后台解码/上传的图标，防止重复排队。 */
     private static final Set<Location> PENDING_PREWARM = ConcurrentHashMap.newKeySet();
+    private static final Map<Location, Long> RETRY_AFTER = new ConcurrentHashMap<>();
 
     /**
      * 把这批控制图标提前装进 {@code TextureManager}：工作线程读 jar + 解码，
@@ -101,8 +103,15 @@ public final class PlayerIconAssets {
         prewarmIcon(PLAY_MODE_SINGLE_LOOP);
     }
 
+    /** 首开早于 HUD 预热时同样走后台读取；渲染侧用现有字形等待纹理就绪。 */
+    public static void requestLoad(Location icon) {
+        prewarmIcon(icon);
+    }
+
     private static void prewarmIcon(Location icon) {
         if (icon == null) return;
+        Long retryAfter = RETRY_AFTER.get(icon);
+        if (retryAfter != null && System.nanoTime() < retryAfter) return;
         TextureManager textureManager = TextureManager.getInstance();
         if (textureManager.getTexture(icon) != null || !PENDING_PREWARM.add(icon)) {
             return;
@@ -115,13 +124,19 @@ public final class PlayerIconAssets {
                     queuedUpload = true;
                     // 与 downloadTextureAndLoadAsync 同一收尾口径：上传真正完成后才释放图片。
                     Textures.loadTextureAsyncly(icon, img, true, true, false,
-                            () -> PENDING_PREWARM.remove(icon));
+                            () -> {
+                                RETRY_AFTER.remove(icon);
+                                PENDING_PREWARM.remove(icon);
+                            });
                 }
             } catch (Throwable t) {
                 System.err.println("[MuoniumPlayer] 播放器图标预热失败(" + icon + "): " + t);
             } finally {
                 // 失败（缺资源/解码不出）时允许将来重试；成功排队时由 after 回调释放。
-                if (!queuedUpload) PENDING_PREWARM.remove(icon);
+                if (!queuedUpload) {
+                    RETRY_AFTER.put(icon, System.nanoTime() + 5_000_000_000L);
+                    PENDING_PREWARM.remove(icon);
+                }
             }
         });
     }

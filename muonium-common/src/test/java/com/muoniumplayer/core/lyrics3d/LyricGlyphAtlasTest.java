@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.lyrics3d;
 
+import com.muoniumplayer.core.rendering.font.TextGlow;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -132,6 +134,43 @@ class LyricGlyphAtlasTest {
         LyricGlyphAtlas.invalidateAll();
         String after = LyricGlyphAtlas.cacheKey('字', 0xF7E1D7, 0.35f, 1.30f, 0xFFFFFF);
         assertNotEquals(before, after, "世代必须进键：字体切换后旧格绝不能复用");
+    }
+
+    // ==================== 晕格键：Ultra 档不吃墨色 ====================
+
+    @Test
+    @DisplayName("Ultra 晕格键忽略墨色（bloom 只用覆盖掩码+光色，墨色进键会炸出重复烘焙）")
+    void ultraGlowKeyIgnoresInkColor() {
+        // Ultra 走 bakeBloomLocked：像素只由「字形覆盖掩码 + 光色 + strength/spread」决定，
+        // 墨色根本不参与。封面渐变（每字一个 rgbOverride）下若墨色进键，同一笔画会被
+        // 烘成几十份逐像素相同的晕格 —— 一句 30 字 = 每次换句多烧约 300ms 同步烘焙。
+        String a = LyricGlyphAtlas.glowKey('e', 0.45f, 1.3f, 0xFFFFFF, 0xFF0000,
+                TextGlow.GLOW_TIER_ULTRA);
+        String b = LyricGlyphAtlas.glowKey('e', 0.45f, 1.3f, 0xFFFFFF, 0x00FF00,
+                TextGlow.GLOW_TIER_ULTRA);
+        String c = LyricGlyphAtlas.glowKey('e', 0.45f, 1.3f, 0xFFFFFF, 0x123456,
+                TextGlow.GLOW_TIER_ULTRA);
+        assertEquals(a, b, "Ultra 档墨色不得进键");
+        assertEquals(a, c, "Ultra 档墨色不得进键");
+
+        // 光色仍然必须进键（它真的烘进像素的 rgb）
+        assertNotEquals(a, LyricGlyphAtlas.glowKey('e', 0.45f, 1.3f, 0xFF0000, 0xFF0000,
+                TextGlow.GLOW_TIER_ULTRA), "Ultra 档光色必须进键");
+        // strength / spread 仍进键（alpha 与 pad 随它们变）
+        assertNotEquals(a, LyricGlyphAtlas.glowKey('e', 0.60f, 1.3f, 0xFFFFFF, 0xFF0000,
+                TextGlow.GLOW_TIER_ULTRA), "Ultra 档强度必须进键");
+        assertNotEquals(a, LyricGlyphAtlas.glowKey('e', 0.45f, 2.0f, 0xFFFFFF, 0xFF0000,
+                TextGlow.GLOW_TIER_ULTRA), "Ultra 档扩散必须进键");
+    }
+
+    @Test
+    @DisplayName("Standard/High 晕格键必须保留墨色（分层高斯的内层亮环向墨色回收）")
+    void legacyGlowKeyKeepsInkColor() {
+        for (int tier : new int[] {TextGlow.GLOW_TIER_STANDARD, TextGlow.GLOW_TIER_HIGH}) {
+            String a = LyricGlyphAtlas.glowKey('e', 0.45f, 1.3f, 0xFFFFFF, 0xFF0000, tier);
+            String b = LyricGlyphAtlas.glowKey('e', 0.45f, 1.3f, 0xFFFFFF, 0x00FF00, tier);
+            assertNotEquals(a, b, "档 " + tier + " 的像素依赖墨色回收，墨色必须进键");
+        }
     }
 
     // ==================== 预乘 → 直通 ====================

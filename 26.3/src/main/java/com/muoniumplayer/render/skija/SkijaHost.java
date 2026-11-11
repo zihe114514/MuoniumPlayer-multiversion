@@ -690,7 +690,7 @@ public final class SkijaHost {
 
     /** Defer an overlay until the base GUI has reached the window framebuffer. */
     public static boolean deferPostCompositeOverlay(Runnable overlay) {
-        if (overlay == null || disabled || DEBUG_DRAW_DIRECT) return false;
+        if (overlay == null || disabled || DEBUG_DRAW_DIRECT || context == null || offscreen == null) return false;
         postCompositeOverlay = overlay;
         return true;
     }
@@ -1161,6 +1161,32 @@ public final class SkijaHost {
      * Skia 的 GPU 上下文。{@link SkijaImages} 需要它来包装 Minecraft 的 GL 纹理。
      * 只在渲染层内部使用，业务代码不应该看见它。
      */
+    /** Isolated GPU work outside a UI frame; it neither clears nor composites the UI target. */
+    static boolean renderOffscreen(Runnable draw) {
+        if (draw == null || inFrame || disabled || context == null) return false;
+        savedFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
+        org.lwjgl.opengl.GL11.glGetIntegerv(org.lwjgl.opengl.GL11.GL_VIEWPORT, SAVED_VIEWPORT);
+        SNAPSHOT.capture();
+        int readFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_READ_FRAMEBUFFER_BINDING);
+        int renderbuffer = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_RENDERBUFFER_BINDING);
+        float[] clearColor = new float[4];
+        org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_COLOR_CLEAR_VALUE, clearColor);
+        boolean dither = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_DITHER);
+        try {
+            context.resetAll();
+            resetPixelUnpackLayout();
+            draw.run();
+            return true;
+        } finally {
+            if (dither) org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_DITHER);
+            else org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_DITHER);
+            org.lwjgl.opengl.GL11.glClearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
+            restoreMinecraftState();
+            org.lwjgl.opengl.GL30.glBindFramebuffer(org.lwjgl.opengl.GL30.GL_READ_FRAMEBUFFER, readFbo);
+            org.lwjgl.opengl.GL30.glBindRenderbuffer(org.lwjgl.opengl.GL30.GL_RENDERBUFFER, renderbuffer);
+        }
+    }
+
     static DirectContext context() {
         return context;
     }
@@ -1189,6 +1215,7 @@ public final class SkijaHost {
         // 背景采集与折射各自持有一个绑在<b>当前</b> GL 上下文 / DirectContext 上的对象：
         // 上下文没了之后那些 id 就是别人的了，必须在这里一起丢掉（GL 还是 current 的，
         // 所以现在删才删得掉）。丢掉之后 broken 也复位，重载完成的那一帧会重新建。
+        SkijaTrailRenderer.release();
         GlassLiquidSurface.release();
         GlassRefraction.release();
         GlassBackdrop.invalidate();

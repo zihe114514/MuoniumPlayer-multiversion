@@ -182,7 +182,10 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                         ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
             }
             if (buffers != null && pendingEffectRl != null) {
-                buffers.endBatch(currentEffectType(pendingEffectRl));
+                // 必须用取批时同一个类型收（见 flushEffectBatch 注释）：特效通道的
+                // getBuffer 走 currentGlyphType，这里若用 currentEffectType 会落空
+                // （两者在本树是不同实例：textSeeThrough vs 自建 additiveType）。
+                buffers.endBatch(currentGlyphType(pendingEffectRl));
             }
         } finally {
             pendingGlyphPage = null;
@@ -267,11 +270,11 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 墨格：无发光留白（晕在独立晕格，墨格回归防裁切最小 pad）
         LyricGlyphAtlas.GlyphCell cell = LyricGlyphAtlas.getInkCell(c, rgb & 0xFFFFFF);
         if (cell == null) {
-            // 绘光模式下「预算内暂时没烘出来」不回退像素字 —— 那正是用户看到的
-            // 「有时退回原版渲染风格」：字形瞬闪像素风再换回烘焙字形，非常扎眼。
-            // 图集可用时静默跳过该字（下一帧补齐，烘焙预算已提到 4 格/帧）；
-            // 图集整体不可用（host 缺失/字体缺位）仍回退像素字，绝不吞字。
-            if (settings != null && settings.huiguang && LyricGlyphAtlas.isFunctional()) {
+            // 现代化风格下「预算内暂时没烘出来」不回退像素字 —— 否则新字会瞬闪像素风，
+            // 下一帧图集补齐后又切回烘焙字形，非常扎眼。
+            // 图集可用时静默跳过该字（下一帧补齐）；图集整体不可用
+            //（host 缺失/字体缺位）仍回退像素字，绝不吞字。
+            if (LyricGlyphAtlas.isFunctional()) {
                 return;
             }
             // 图集不可用/超尺寸：像素字兜底（带阴影 —— 与平滑档的立体感语义一致）
@@ -433,6 +436,21 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 (cell.x + cell.w) / pageF - halfTexel, cell.y / pageF + halfTexel);
 
         // 同页合批：这里不再逐字 endBatch —— 页切换/帧尾统一收（见上）。
+        //
+        // ---- 必须重新登记页句柄（幽灵字形的根因）----
+        // 上面写阴影前的那次冲刷把 pendingGlyphPage 置了 null（避免阴影并进上一字的
+        // 墨批参与 sortOnUpload 重排），而本字的墨格是冲刷之后才写入的。若这里不重新
+        // 登记，end() 的 `pendingGlyphPage != null` 门控永远不成立 —— 本帧最后一个字形的
+        // 墨格 quad 留在共享 builder 里没人收，直到原版在歌词渲染窗口之外（手部/GUI 阶段）
+        // 替我们冲出去。那时模型视图与投影早已 pop 回原样，同一个 quad 被另一套矩阵
+        // 重新投影：位置偏离所属行，透视除法变化还会让它看起来更大。症状正是「某行
+        // 最后一个字飘到远处且变大」—— 有翻译副行时副行字形追加在主行之后，中招的
+        // 就是副行末字（用户实测「边」）。
+        if (pendingGlyphPage != cell.page) {
+            pendingGlyphPage = cell.page;
+            pendingGlyphCount = 0;
+        }
+        pendingGlyphCount++;
 
         if (TRACE && !tracedSmooth) {
             tracedSmooth = true;
@@ -609,7 +627,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float strength = settings != null ? settings.glowStrength : 0f;
         float spread = settings != null ? settings.glowSpread : 1f;
         String key = text + "|" + Integer.toHexString(glowColor & 0xFFFFFF)
-                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f);
+                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f)
+                + "|" + LyricGlyphAtlas.fontGeneration();
 
         // 烘/复用：key 变才重烘像素并重灌纹理（尺寸不变时只重传，不重建）。
         int[] px = com.muoniumplayer.core.lyrics3d.RowGlowSprite.bake(
@@ -713,7 +732,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
     private void flushEffectBatch(ResourceLocation newRl) {
         if (pendingEffectRl != null && pendingEffectRl != newRl) {
-            buffers.endBatch(currentEffectType(pendingEffectRl));
+            // 与取批同源：特效口用 currentGlyphType 取，就必须用它收
+            // （currentEffectType 在本树是不同实例，endBatch 会落空、顶点不冲刷）。
+            buffers.endBatch(currentGlyphType(pendingEffectRl));
         }
         pendingEffectRl = newRl;
     }

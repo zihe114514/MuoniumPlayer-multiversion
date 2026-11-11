@@ -17,6 +17,7 @@
 package repackage.com.jsyn.util;
 
 import lombok.SneakyThrows;
+import repackage.com.jsyn.data.DownmixSample;
 import repackage.com.jsyn.data.FloatSample;
 import repackage.com.jsyn.util.soundfile.CustomSampleLoader;
 import repackage.com.jsyn.util.soundfile.streamed.buffered.BufferedSampleLoader;
@@ -77,12 +78,19 @@ public class SampleLoader {
 
         String name = fileIn.getName();
         if (name.endsWith(".flac")) {
-            return new BufferedSampleLoader().loadFromFlacStream(new BufferedInputStream(Files.newInputStream(fileIn.toPath())));
+            // FLAC 的 StreamInfo 声道数原样透传：5.1 环绕声会建成 6 声道 FloatSample，
+            // 而播放引擎只认 1/2 声道（mono/stereo 读头 + 端口声道数校验）。出口统一
+            // 降混成立体声，1/2 声道的样本原样归还（零包装开销）。
+            return DownmixSample.stereoOrSame(new BufferedSampleLoader()
+                    .loadFromFlacStream(new BufferedInputStream(Files.newInputStream(fileIn.toPath()))));
         } else if (name.endsWith(".wav")) {
-            return new RafSampleLoader().loadFloatSample(new RandomAccessFile(fileIn, "r"));
+            // WAV 的声道数来自 fmt 头，同样原样透传（多声道 WAV 走这里），出口同上。
+            return DownmixSample.stereoOrSame(new RafSampleLoader()
+                    .loadFloatSample(new RandomAccessFile(fileIn, "r")));
         } else if (name.endsWith(".mp3")) {
             Converter converter = new Converter();
-            return loadFloatSample(new ByteArrayInputStream(converter.convert(Files.newInputStream(fileIn.toPath()), null, null)));
+            return DownmixSample.stereoOrSame(loadFloatSample(
+                    new ByteArrayInputStream(converter.convert(Files.newInputStream(fileIn.toPath()), null, null))));
         } else {
             throw new RuntimeException("Extension not supported: " + name.substring(name.lastIndexOf(".")));
         }

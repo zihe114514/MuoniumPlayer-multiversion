@@ -212,6 +212,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     public void initGui() {
         alpha = 0f;
         closing = false;
+        settledAtNanos = 0L;
 
         this.checkDirty();
         PlayerIslandTransition.open(HudConfig.playerFadeSpeed);
@@ -260,7 +261,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         // checkDirty 之前），立刻补会把「落定」和「整树重建」叠在同一帧 —— 用户看到的是
         // 动画收尾瞬间又顿一下。宽限期（材质交接窗走完）过后才补，落定帧只做淡入，
         // 重活挪到画面完全停稳之后。
-        if (this.dirty && (PlayerIslandTransition.isRunning() || !settleGraceElapsed())) {
+        boolean settled = settleGraceElapsed();
+        if (this.dirty && (PlayerIslandTransition.isRunning() || !settled)) {
             return;
         }
         if (this.dirty) {
@@ -288,31 +290,27 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         }
     }
 
-    /** 上一次展开转场落定的时刻；0 = 不在宽限期内（照常补账）。 */
-    private static long settledAtMillis;
-    /** 落定后的静默期（毫秒）：材质交接窗走完再加一拍，重活不与落定淡入同帧。 */
-    private static final long SETTLE_GRACE_MS = 200L;
+    /** 上一次展开转场落定的单调时刻；0 = 尚未落定。 */
+    private static long settledAtNanos;
+    /** 落定后的静默期：材质交接走完再补布局。 */
+    private static final long SETTLE_GRACE_NANOS = 200_000_000L;
 
-    /**
-     * 展开转场是否已落定超过宽限期。落定沿 tick 里 state→OPEN 的翻转检测一次
-     * （isRunning 从 true 变 false 且 t 已到 1），关闭方向（CLOSING→IDLE）不算 ——
-     * 那之后屏幕就要摘掉了，没有再补账的必要。
-     */
     private static boolean settleGraceElapsed() {
-        boolean running = PlayerIslandTransition.isRunning();
-        if (running) {
-            settledAtMillis = 0L;
-            return true;
-        }
-        if (PlayerIslandTransition.contentAlpha() < 0.999) {
-            // 关闭方向或未展开：不算「落定」，不设宽限。
-            return true;
-        }
-        if (settledAtMillis == 0L) {
-            settledAtMillis = System.currentTimeMillis();
+        if (PlayerIslandTransition.isRunning()) {
+            settledAtNanos = 0L;
             return false;
         }
-        return System.currentTimeMillis() - settledAtMillis >= SETTLE_GRACE_MS;
+        if (PlayerIslandTransition.contentAlpha() < 0.999) {
+            settledAtNanos = 0L;
+            return true;
+        }
+        long now = System.nanoTime();
+        if (settledAtNanos == 0L) {
+            settledAtNanos = now;
+            return false;
+        }
+        return PlayerIslandTransition.surfaceHandoff() >= 0.999
+                && now - settledAtNanos >= SETTLE_GRACE_NANOS;
     }
 
     @Override
@@ -490,6 +488,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 //        }));
 
         this.checkDirty();
+        if (!PlayerIslandTransition.needsFrameBudget()) {
+            com.muoniumplayer.core.management.FontAssetDownload.pollFromRenderThread();
+        }
         this.panelTransitionActive = false;
 
         // 「本次启动第一次打开播放器」的模型提示。放在这里而不是 initGui：岛屿展开动画跑完
@@ -546,11 +547,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         //首尾 10% 在几何上在动，视觉上却不可见。
         PlayerIslandTransition.renderSurface();
 
-        // 低于 3.5% 时内容不可察觉。在此跳过整个组件树，避免
-        //在形变首尾帧支付封面/歌词/队列的工作，
-        //而那恰是音乐播放最可能挤压帧预算的时候。
-        // 表面先完成一小段展开，再让整棵控件树进入裁剪区。
-        // 这样开合首尾不会为几乎看不见的内容支付封面、字体和列表渲染成本。
+        // 低于 7.5% 时跳过内容树，保留连续的形变表面。
         if (alpha > .075f) {
             // 裁剪必须在缩放矩阵外：surfaceBounds 已经是屏幕坐标；
             // 矩阵只负责把 target 面板内容压进这块 surface。

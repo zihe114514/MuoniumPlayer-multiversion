@@ -14,6 +14,8 @@ import com.muoniumplayer.core.settings.JsonConfigStorage;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * 「上次播放到哪」的会话快照：重启游戏后队列、当前歌、播放模式、歌单上下文与播放位置都能
@@ -39,7 +41,8 @@ import java.util.List;
  * <h2>恢复语义（与 CloudMusic 的分工）</h2>
  * 这里只负责「文件 ↔ 快照对象」这一层：读文件、校验、反序列化。往 {@code CloudMusic} 的
  * 静态字段里摆、续播偏移的消费，全部在 {@code CloudMusic.restoreLastSession()}——那边才是
- * 知道线程纪律的地方。本类不创建线程、不碰音频、不发网络请求。
+ * 知道线程纪律的地方。本类的写入口只捕获快照，实际序列化和文件写入由单线程后台写手合并执行，
+ * 不创建网络请求、不碰音频。
  */
 public final class PlaybackResumeStore {
 
@@ -57,6 +60,16 @@ public final class PlaybackResumeStore {
 
     private static final Object LOCK = new Object();
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
+    private static final ExecutorService WRITER = Executors.newSingleThreadExecutor(task -> {
+        Thread thread = new Thread(task, "muonium-playback-resume");
+        thread.setDaemon(true);
+        thread.setPriority(Thread.MIN_PRIORITY);
+        return thread;
+    });
+    private static Snapshot pendingSave;
+    private static boolean pendingClear;
+    private static boolean writerScheduled;
+    private static long lastRequestedAtMillis;
 
     private static boolean loaded;
     /** 心跳/去抖共用的「上次落盘」墙钟；0 表示还没有过落盘。 */
@@ -85,19 +98,78 @@ public final class PlaybackResumeStore {
 
     // ─────────────────────────── 写 ───────────────────────────
 
-    /**
-     * 播放边界事件：换歌、暂停/恢复、seek。无条件落盘（仍然全 catch）。
-     * {@code positionMillis} 传调用方读到的当前位置；负数按 0 处理。
-     */
+    /** 交互路径只捕获队列快照；序列化与原子写在单线程中合并到最新意图。 */
+    public static void requestSave(List<Music> queue, int index, long positionMillis,
+                                   CloudMusic.PlayMode playMode, PlayList context, long minimumIntervalMillis) {
+        if (PlaybackResumeStore.personalFmActive() || MpPartyClient.inRoom()) return;
+        synchronized (LOCK) {
+            long now = System.currentTimeMillis();
+            if (minimumIntervalMillis > 0L && lastRequestedAtMillis > 0L
+                    && now - lastRequestedAtMillis < minimumIntervalMillis) return;
+            try {
+                List<Music> snapshot = queue == null ? new ArrayList<>() : new ArrayList<>(queue);
+                pendingSave = new Snapshot(snapshot, index, positionMillis, playMode, context);
+                pendingClear = false;
+                lastRequestedAtMillis = now;
+                scheduleWriter();
+            } catch (RuntimeException ignored) {
+                // 队列正在替换时保留上次快照，下一个事件或心跳重试。
+            }
+        }
+    }
+
+    public static void requestClear() {
+        synchronized (LOCK) {
+            pendingSave = null;
+            pendingClear = true;
+            lastRequestedAtMillis = 0L;
+            scheduleWriter();
+        }
+    }
+
+    private static void scheduleWriter() {
+        if (writerScheduled) return;
+        writerScheduled = true;
+        WRITER.execute(PlaybackResumeStore::writePending);
+    }
+
+    private static void writePending() {
+        while (true) {
+            Snapshot snapshot;
+            boolean delete;
+            synchronized (LOCK) {
+                snapshot = pendingSave;
+                delete = pendingClear;
+                pendingSave = null;
+                pendingClear = false;
+                if (snapshot == null && !delete) {
+                    writerScheduled = false;
+                    return;
+                }
+            }
+            if (delete) {
+                try {
+                    java.nio.file.Files.deleteIfExists(ConfigPaths.PLAYBACK_RESUME.toPath());
+                } catch (Throwable ignored) {
+                }
+            } else {
+                save(snapshot.queue, snapshot.index, snapshot.positionMillis, snapshot.playMode, snapshot.context);
+            }
+        }
+    }
+
+    /** 关闭钩子/离线测试可等磁盘收尾；UI 路径禁止调用。 */
+    static void flushPending() throws Exception {
+        WRITER.submit(() -> { }).get();
+    }
+
+    /** 关闭钩子和兼容调用的同步写入口；交互路径使用 requestSave。 */
     public static void noteTrackEvent(List<Music> queue, int index, long positionMillis,
                                       CloudMusic.PlayMode playMode, PlayList context) {
         save(queue, index, positionMillis, playMode, context);
     }
 
-    /**
-     * seek 去抖入口：拖进度条会连发很多次，只有距上次落盘超过 {@link #MIN_INTERVAL_MILLIS}
-     * 才真的写。终态事件（切歌/暂停）走 {@link #noteTrackEvent}，不受去抖限制。
-     */
+    /** 兼容同步 seek 去抖入口；交互路径使用 requestSave。 */
     public static void noteSeekThrottled(List<Music> queue, int index, long positionMillis,
                                          CloudMusic.PlayMode playMode, PlayList context) {
         synchronized (LOCK) {
@@ -107,10 +179,7 @@ public final class PlaybackResumeStore {
         }
     }
 
-    /**
-     * 播放中的心跳。距上次落盘不足 {@link #HEARTBEAT_MILLIS} 就跳过——它要跟播线的
-     * 10ms tick 共处，大部分 tick 都必须是纯内存判断后立刻返回。
-     */
+    /** 兼容同步心跳入口；播放监督线程使用 requestSave。 */
     public static void noteHeartbeat(List<Music> queue, int index, long positionMillis,
                                      CloudMusic.PlayMode playMode, PlayList context) {
         synchronized (LOCK) {
@@ -120,17 +189,13 @@ public final class PlaybackResumeStore {
         }
     }
 
-    /**
-     * 用户清空队列 / 停止 / 登出时把快照一起删掉：这些动作的语义就是「我不在听了」，
-     * 下次启动复活一条用户亲手清掉的队列是惊吓而不是便利。文件不存在就算了。
-     */
+    /** 兼容同步清空入口；UI 使用 requestClear，避免在交互线程删除文件。 */
     public static void clear() {
         synchronized (LOCK) {
             lastSavedAtMillis = 0L;
             try {
                 java.nio.file.Files.deleteIfExists(ConfigPaths.PLAYBACK_RESUME.toPath());
             } catch (Throwable ignored) {
-                // 删不掉顶多下次启动多恢复一次；写路径全 catch 的地方不需要这里抛。
             }
         }
     }

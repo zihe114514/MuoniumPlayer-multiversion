@@ -277,6 +277,55 @@ class SkijaNativeCatalogStaticTest {
                 && SkijaNativeCatalog.loadableWith("android/arm64", "libskija.so"));
     }
 
+    @Test
+    @DisplayName("别的系统的库文件不能进候选（issue #19：android/arm64 却去试 skija.dll）")
+    void rejectsForeignLibraryNameOnDisk() throws IOException {
+        Path root = Files.createTempDirectory("muonium-skija-foreign");
+        try {
+            // 用户把 windows 包也丢进了同一个目录；本机是 Android（mapLibraryName = libskija.so）
+            write(root, "windows/x64/skija.dll", "MZ");
+            write(root, "windows/x64/" + SkijaNativeCatalog.VERSION_FILE, PINNED);
+
+            // 不过滤时它会被当成候选：暂存目录里放 skija.dll，Library.load() 却去找
+            // libskija.so，于是每个落点都报「找不到 libskija.so」——而那个文件从未存在。
+            assertEquals(1, SkijaNativeCatalog.scan(root.toFile(), PINNED, "android/arm64")
+                            .usable().size(),
+                    "不传库名时保持旧行为（只按版本筛）");
+
+            SkijaNativeCatalog.Scan filtered = SkijaNativeCatalog.scan(
+                    root.toFile(), PINNED, "android/arm64", "libskija.so");
+            assertTrue(filtered.usable().isEmpty(), "skija.dll 在 Android 上永远加载不了");
+            assertEquals(1, filtered.rejected().size(), "必须留下一条拒收理由");
+            assertTrue(filtered.rejected().get(0).contains("libskija.so"),
+                    "要说清本机只认哪个名字：" + filtered.rejected());
+            assertTrue(filtered.rejected().get(0).contains("skija.dll"),
+                    "也要说清这份实际叫什么：" + filtered.rejected());
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    @Test
+    @DisplayName("过滤器只筛文件名，不筛 ABI：linux/arm64 与 android/arm64 都能进候选")
+    void keepsSameNamedLibrariesAcrossAbis() throws IOException {
+        Path root = Files.createTempDirectory("muonium-skija-abi");
+        try {
+            write(root, "linux/arm64/libskija.so", "ELF");
+            write(root, "linux/arm64/" + SkijaNativeCatalog.VERSION_FILE, PINNED);
+            write(root, "android/arm64/libskija.so", "ELF");
+            write(root, "android/arm64/" + SkijaNativeCatalog.VERSION_FILE, PINNED);
+
+            SkijaNativeCatalog.Scan scan = SkijaNativeCatalog.scan(
+                    root.toFile(), PINNED, "android/arm64", "libskija.so");
+            assertEquals(2, scan.usable().size(),
+                    "同名不同 ABI 由试加载裁决，扫描层不许替它决定");
+            assertEquals("android/arm64", scan.usable().get(0).platform(),
+                    "本机平台要排在最前");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
     // ------------------------------------------------------------------
     // 跨文件一致性：这三件事错了都不会在编译期报错
     // ------------------------------------------------------------------

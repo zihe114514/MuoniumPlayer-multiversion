@@ -121,17 +121,81 @@ public final class LyricGlyphAtlas {
 
     private static final Object LOCK = new Object();
     private static final List<Page> PAGES = new ArrayList<>();
+    /** Detached pages stay alive until deferred world geometry from the frame is consumed. */
+    private static final List<RetiredPage> RETIRED_PAGES = new ArrayList<>();
     /** 缓存键 → 格子。 */
     private static final Map<String, GlyphCell> CELLS = new LinkedHashMap<>(256);
-    /** 字体世代：invalidateAll 自增，进缓存键防跨世代复用。 */
-    private static int fontGeneration;
+    /** Ultra 的形状只依赖字形与真实扩散值，颜色/强度变体不重复光栅化和卷积。 */
+    private static final Map<String, BloomGlyph> BLOOM_FIELDS = new LinkedHashMap<>(128, .75f, true);
+    private static final int BLOOM_FIELD_ENTRIES = 64;
 
-    /** 帧内烘焙预算：同一帧最多烘焙多少格 + 多少毫秒（渲染线程帧内同步烘焙的掉帧闸）。
-     * 毫秒闸兜住 HDR bloom 晕格（单格 ~3ms）与普通格混跑时的最坏帧。 */
+    private static final class RetiredPage {
+        final Host host;
+        final Page page;
+
+        RetiredPage(Host host, Page page) {
+            this.host = host;
+            this.page = page;
+        }
+    }
+    private static final long BLOOM_FIELD_FLOAT_BUDGET = 4L * 1024 * 1024;
+    private static long bloomFieldFloats;
+
+    private static final class BloomGlyph {
+        final TextGlow.BloomGlowField field;
+        final int pad, inkHeight;
+        final float advance;
+
+        BloomGlyph(TextGlow.BloomGlowField field, int pad, int inkHeight, float advance) {
+            this.field = field;
+            this.pad = pad;
+            this.inkHeight = inkHeight;
+            this.advance = advance;
+        }
+    }
+
+    /** 字体世代：invalidateAll 自增，进缓存键防跨世代复用。 */
+    private static volatile int fontGeneration;
+
+    /** Font/quality epoch shared with dependent sprite and upload caches. */
+    public static int fontGeneration() {
+        return fontGeneration;
+    }
+
+    /**
+     * 帧内烘焙预算：同一帧最多烘焙多少格 + 多少毫秒（渲染线程帧内同步烘焙的
+     * 掉帧闸）。
+     *
+     * <p>这三个数字是<b>实测标定</b>的，不是拍的（本机 CJK 50px 墨格：
+     * 光栅化 + readPixels ≈ 0.58ms/格；Ultra 晕格 bloom 管线 ≈ 8ms/格）。</p>
+     */
     private static final int BAKES_PER_FRAME_BUDGET = 4;
     private static final long BAKE_NANOS_BUDGET = 8_000_000L;
-    /** 预算记账（nanoTime 值天然唯一，当帧标记用）。 */
-    private static long bakeFrameEndNanos;
+    /**
+     * 墨格的独立预算（比晕格宽，但<b>受毫秒闸硬约束</b>）。
+     *
+     * <p>墨格是<b>不可缺</b>的字形本体：返回 null 时宿主会逐字回退像素字
+     * （非绘光档）或静默跳过（绘光档），两种都是肉眼可见的闪烁/吞字 —— 比
+     * 掉一帧难看得多。晕格则可以安全丢弃（只丢光晕、不丢字），所以晕格没有
+     * 独立加宽。</p>
+     *
+     * <p><b>为什么从 24 格 / 24ms 收到 8 格 / 5ms</b>：24 格的额度是按旧代码
+     * 「单格约 1ms」估的，实测 CJK 墨格 0.58ms 时 24 格仍是 14ms —— 换句首帧
+     * 一次性烘完一句生字，单帧直接掉到 ~20fps。这正是「外文歌 + 开翻译换句时
+     * 大幅掉帧」的主因：副行整句都是新字形。8 格 × 0.58ms ≈ 4.6ms 落在 5ms
+     * 闸内；30 字的一句摊到 4 帧补齐（~66ms），完全淹没在换句的逐字飞行动画
+     * （700ms）里，肉眼不可辨。毫秒闸兜住更慢的机器/更大的字号。</p>
+     */
+    private static final int INK_BAKES_PER_FRAME_BUDGET = 8;
+    private static final long INK_BAKE_NANOS_BUDGET = 5_000_000L;
+    /**
+     * 预算记账。帧边界由 {@link #beginFrame()} 显式重置 —— <b>不能用 nanoTime
+     * 当帧标记</b>：之前写的是「每次取格现读 nanoTime，与上次不相同就认为换了
+     * 一帧」，而 nanoTime 每次调用天然唯一，条件恒真 → 计数每格都清零，
+     * 预算形同虚设（换句首帧一次性同步烘几十格，掉帧尖峰）。
+     */
+    private static int inkBakesThisFrame;
+    private static long inkBakeNanosThisFrame;
     private static int bakesThisFrame;
     private static long bakeNanosThisFrame;
     /** 上次页逐出的时刻（防抖：刚逐出过就不再建新页）。 */
@@ -142,6 +206,26 @@ public final class LyricGlyphAtlas {
 
     public static void setHost(Host h) {
         host = h;
+    }
+
+    /**
+     * 帧头调用（渲染线程，每帧一次）：重置帧内烘焙预算计数，并释放上一帧已经
+     * 脱离缓存的页。图形提交可能延迟到本帧后段消费；不能在本帧换页/失效时立即
+     * 删除纹理，否则旧 quad 会解析到缺失材质。
+     */
+    public static void beginFrame() {
+        List<RetiredPage> retired = null;
+        synchronized (LOCK) {
+            bakesThisFrame = 0;
+            bakeNanosThisFrame = 0;
+            inkBakesThisFrame = 0;
+            inkBakeNanosThisFrame = 0;
+            if (!RETIRED_PAGES.isEmpty()) {
+                retired = new ArrayList<>(RETIRED_PAGES);
+                RETIRED_PAGES.clear();
+            }
+        }
+        if (retired != null) deletePages(retired);
     }
 
     /**
@@ -280,7 +364,16 @@ public final class LyricGlyphAtlas {
                 return cell;
             }
 
+            // ---- 帧内烘焙预算（墨格用独立宽额度，见 INK_BAKES_PER_FRAME_BUDGET）----
+            if (inkBakesThisFrame >= INK_BAKES_PER_FRAME_BUDGET
+                    || inkBakeNanosThisFrame >= INK_BAKE_NANOS_BUDGET) {
+                return null;
+            }
+            inkBakesThisFrame++;
+            long inkBakeStart = System.nanoTime();
+
             GlyphCell made = bakeInkLocked(h, font, key, ch, inkRgb);
+            inkBakeNanosThisFrame += System.nanoTime() - inkBakeStart;
             if (made == null) return null;
             CELLS.put(key, made);
             return made;
@@ -314,13 +407,7 @@ public final class LyricGlyphAtlas {
                 return cell;
             }
 
-            // ---- 帧内烘焙预算（与墨格共享同一预算池）----
-            long now = System.nanoTime();
-            if (bakeFrameEndNanos != now) {
-                bakeFrameEndNanos = now;
-                bakesThisFrame = 0;
-                bakeNanosThisFrame = 0;
-            }
+            // ---- 帧内烘焙预算（与墨格共享同一预算池，帧边界由 beginFrame 给）----
             if (bakesThisFrame >= BAKES_PER_FRAME_BUDGET || bakeNanosThisFrame >= BAKE_NANOS_BUDGET) {
                 return null;
             }
@@ -373,25 +460,29 @@ public final class LyricGlyphAtlas {
         invalidateAll();
     }
 
-    /** 整批作废（释放全部页纹理 + 清格子表 + 重建烘焙字体）。 */
+    /** 整批作废：缓存立即失效，页纹理延迟到下一帧边界再释放。 */
     public static void invalidateAll() {
-        Host h = host;
-        List<Page> dead;
         synchronized (LOCK) {
-            dead = new ArrayList<>(PAGES);
+            for (Page page : PAGES) {
+                RETIRED_PAGES.add(new RetiredPage(host, page));
+            }
             PAGES.clear();
             CELLS.clear();
+            BLOOM_FIELDS.clear();
+            bloomFieldFloats = 0;
             ADVANCE_CACHE.clear();
             bakeFont = null;
             glowFont = null;
             fontGeneration++;
         }
-        if (h != null) {
-            for (Page p : dead) {
-                try {
-                    h.deletePage(p.handle);
-                } catch (Throwable ignored) {
-                }
+    }
+
+    private static void deletePages(List<RetiredPage> retired) {
+        for (RetiredPage entry : retired) {
+            if (entry.host == null) continue;
+            try {
+                entry.host.deletePage(entry.page.handle);
+            } catch (Throwable ignored) {
             }
         }
     }
@@ -444,8 +535,15 @@ public final class LyricGlyphAtlas {
 
     /**
      * 晕格键。spread 上限 3.0（16 档量化 → 每档 0.167）；strength 64 档。
-     * 颜色烘死进晕格像素 —— 跟随字色模式下渐变逐字变色会多烘几组晕格，
-     * 但晕格 LRU 与烘焙预算兜底，量化档让滑块抖动不触发重烘。
+     * 光色烘死进晕格像素。
+     *
+     * <p><b>墨色只进 Ultra 档的键</b>。Ultra 走 HDR bloom 管线
+     * （{@link #bakeBloomLocked}），它只用字形<b>覆盖掩码</b> + 光色，墨色根本不
+     * 参与像素生成 —— 键里带墨色会让「每个字墨色都不同」的场景（封面渐变！
+     * 每字一个 rgbOverride）把同一笔画烘成几十份逐像素相同的晕格。实测一句
+     * 30 字、单格烘焙 ~10ms，等于每次换句多烧 300ms 的同步烘焙。Standard/High
+     * 档走 {@link TextGlow#drawGlowOn} 的分层高斯，内层亮环会混墨色回收，
+     * 所以墨色必须留在那两个档的键里。</p>
      */
     static String glowKey(char ch, float glowStrength, float glowSpread, int glowColorRgb,
                           int inkRgb, int tier) {
@@ -453,7 +551,9 @@ public final class LyricGlyphAtlas {
                 + "|" + Math.round(clamp01(glowStrength) * 64f)
                 + "|" + Math.round(clamp01(glowSpread / 3.0f) * 16f)
                 + "|" + Integer.toHexString(glowColorRgb & 0xFFFFFF)
-                + "|" + Integer.toHexString(inkRgb & 0xFFFFFF)
+                // Ultra 走纯掩码 bloom，墨色不参与像素 —— 不进键（见方法注释）
+                + (tier == TextGlow.GLOW_TIER_ULTRA
+                        ? "" : "|" + Integer.toHexString(inkRgb & 0xFFFFFF))
                 + "|" + tier
                 + "|v" + TextGlow.BLOOM_PIPELINE_VERSION
                 + "|" + fontGeneration;
@@ -528,6 +628,12 @@ public final class LyricGlyphAtlas {
      * 烘焙一个<b>晕格</b>。Ultra 档走 HDR bloom 管线（独立 3× 低频域，见
      * {@link #bakeBloomLocked}）；其余档走 Skija 分层高斯（5× 域）。两条路径
      * 失败互相兜底 —— 新管线在任何环境下炸掉都只降级回旧观感，不丢晕。
+     *
+     * <p><b>Ultra 档的回退路径不吃墨色</b>（传 0 = 无回收，各层都用光色）：
+     * Ultra 的缓存键不含 {@code inkRgb}（见 {@link #glowKey}，bloom 管线只用
+     * 覆盖掩码 + 光色）。若回退时仍按墨色回收内层亮环，同一格就会被不同墨色
+     * 复用 → 屏幕上是错的色相。回退本身是「bloom 管线已失败」的兜底，观感降级
+     * 可接受，但缓存键必须与像素保持一致。</p>
      */
     private static GlyphCell bakeGlowLocked(Host h, CFontRenderer font, String key, char ch,
                                             float glowStrength, float glowSpread, int glowColorRgb,
@@ -537,19 +643,65 @@ public final class LyricGlyphAtlas {
             if (bloom != null) {
                 return bloom;
             }
-            // 新管线失败（掩码/内存/异常）：回退旧分层烘焙，同 key 落格
+            // 新管线失败（掩码/内存/异常）：回退旧分层烘焙。墨色传 0 —— 键里
+            // 没有墨色，像素就不能依赖墨色（见方法注释）。
+            return bakeGlowLegacyLocked(h, font, key, ch, glowStrength, glowSpread,
+                    glowColorRgb, 0, tier);
         }
         return bakeGlowLegacyLocked(h, font, key, ch, glowStrength, glowSpread,
                 glowColorRgb, inkRgb, tier);
     }
 
-    /**
-     * Ultra 档晕格：HDR bloom 管线（{@link TextGlow#bakeBloomGlowPixels}）。
-     * 独立 3× 烘焙域（晕是低频光形，3× 足够且 mip 链可运行、格小烘焙快）——
-     * 与墨格 5× 域不同，世界侧按 {@code cell.scale} 各自折算。
-     */
+    /** Shape cache uses exact spread bits; quantized glow keys must not merge distinct convolutions. */
+    static String bloomFieldKey(char ch, float glowSpread) {
+        return ch + "|" + Integer.toHexString(Float.floatToIntBits(glowSpread))
+                + "|" + fontGeneration + "|v" + TextGlow.BLOOM_PIPELINE_VERSION;
+    }
+
+    private static void rememberBloomFieldLocked(String key, BloomGlyph glyph) {
+        long weight = glyph.field.floatCount();
+        if (weight > BLOOM_FIELD_FLOAT_BUDGET) return;
+        BloomGlyph old = BLOOM_FIELDS.put(key, glyph);
+        if (old != null) bloomFieldFloats -= old.field.floatCount();
+        bloomFieldFloats += weight;
+        Iterator<BloomGlyph> it = BLOOM_FIELDS.values().iterator();
+        while (BLOOM_FIELDS.size() > BLOOM_FIELD_ENTRIES || bloomFieldFloats > BLOOM_FIELD_FLOAT_BUDGET) {
+            bloomFieldFloats -= it.next().field.floatCount();
+            it.remove();
+        }
+    }
+
+    /** Ultra convolution is cached before tinting; final cells retain the original color/strength keys. */
     private static GlyphCell bakeBloomLocked(Host h, char ch,
                                              float glowStrength, float glowSpread, int glowColorRgb) {
+        if ((glowColorRgb & 0xFFFFFF) == 0) return null;
+        String key = bloomFieldKey(ch, glowSpread);
+        BloomGlyph glyph = BLOOM_FIELDS.get(key);
+        if (glyph == null) {
+            glyph = prepareBloomGlyphLocked(ch, glowSpread);
+            if (glyph == null) return null;
+            rememberBloomFieldLocked(key, glyph);
+        }
+        int cellW = glyph.field.width, cellH = glyph.field.height;
+        int[] pixelsArgb = TextGlow.shadeBloomGlowPixels(glyph.field, glowStrength, glowColorRgb & 0xFFFFFF);
+        if (pixelsArgb == null) return null;
+        dilateTransparentRgb(pixelsArgb, cellW, cellH);
+        int[] at = probeOrMakePageLocked(h, cellW, cellH);
+        if (at == null) return null;
+        Page page = PAGES.get(at[2]);
+        try {
+            h.uploadCell(page.handle, at[0], at[1], cellW, cellH, pixelsArgb);
+        } catch (Throwable failure) {
+            return null;
+        }
+        page.commit(at[0], at[1], cellW, cellH);
+        page.lastUseNanos = System.nanoTime();
+        return new GlyphCell(page.handle, at[0], at[1], cellW, cellH,
+                glyph.pad, glyph.pad, glyph.advance, glyph.inkHeight, TextGlow.GLOW_BAKE_SCALE);
+    }
+
+    /** Glyph mask and convolution stay at the original 4× domain and padding. */
+    private static BloomGlyph prepareBloomGlyphLocked(char ch, float glowSpread) {
         if (!SkijaNatives.ensureLoaded()) return null;
         ensureGlowFontLocked();
         CFontRenderer font = glowFont;
@@ -558,14 +710,11 @@ public final class LyricGlyphAtlas {
         if (advanceBake <= 0.01f) return null;
         int inkH = Math.max(1, font.lineBox());
         if (inkH <= 0) return null;
-
         int glowPad = TextGlow.glowPadding(font, glowSpread, TextGlow.GLOW_TIER_ULTRA);
         int pad = Math.max(2 * TextGlow.GLOW_BAKE_SCALE, glowPad);
         int cellW = (int) Math.ceil(advanceBake) + pad * 2;
         int cellH = inkH + pad * 2;
         if (cellW > PAGE_SIZE || cellH > PAGE_SIZE) return null;
-
-        // ---- 字形覆盖掩码（白字 premul 的 alpha 通道即覆盖度）----
         float[] mask;
         try (Bitmap bitmap = new Bitmap()) {
             if (!bitmap.allocPixels(ImageInfo.makeN32Premul(cellW, cellH))) return null;
@@ -579,30 +728,12 @@ public final class LyricGlyphAtlas {
             byte[] src = bitmap.readPixels();
             if (src == null || src.length < cellW * cellH * 4) return null;
             mask = new float[cellW * cellH];
-            for (int i = 0; i < mask.length; i++) {
-                mask[i] = (src[i * 4 + 3] & 0xFF) / 255f;
-            }
-        } catch (Throwable t) {
+            for (int i = 0; i < mask.length; i++) mask[i] = (src[i * 4 + 3] & 0xFF) / 255f;
+        } catch (Throwable failure) {
             return null;
         }
-
-        int[] pixelsArgb = TextGlow.bakeBloomGlowPixels(mask, cellW, cellH, font.sizePx,
-                glowSpread, glowStrength, glowColorRgb & 0xFFFFFF);
-        if (pixelsArgb == null) return null;
-        dilateTransparentRgb(pixelsArgb, cellW, cellH);
-
-        int[] at = probeOrMakePageLocked(h, cellW, cellH);
-        if (at == null) return null;
-        Page page = PAGES.get(at[2]);
-        try {
-            h.uploadCell(page.handle, at[0], at[1], cellW, cellH, pixelsArgb);
-        } catch (Throwable t) {
-            return null;
-        }
-        page.commit(at[0], at[1], cellW, cellH);
-        page.lastUseNanos = System.nanoTime();
-        return new GlyphCell(page.handle, at[0], at[1], cellW, cellH,
-                pad, pad, advanceBake, inkH, TextGlow.GLOW_BAKE_SCALE);
+        TextGlow.BloomGlowField field = TextGlow.prepareBloomGlowField(mask, cellW, cellH, font.sizePx, glowSpread);
+        return field == null ? null : new BloomGlyph(field, pad, inkH, advanceBake);
     }
 
     /**
@@ -720,13 +851,7 @@ public final class LyricGlyphAtlas {
                 it.remove();
             }
         }
-        Host h = host;
-        if (h != null) {
-            try {
-                h.deletePage(oldest.handle);
-            } catch (Throwable ignored) {
-            }
-        }
+        RETIRED_PAGES.add(new RetiredPage(host, oldest));
     }
 
     /**

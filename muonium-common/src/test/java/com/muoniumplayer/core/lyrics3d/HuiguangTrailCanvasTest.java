@@ -19,6 +19,90 @@ import com.muoniumplayer.testsupport.RequiresSkijaNative;
 @RequiresSkijaNative
 class HuiguangTrailCanvasTest {
 
+    @Test
+    void recordingReplaysTheExactRasterPixelsAndNeverReadsThePreviousFrame() {
+        HuiguangTrailCanvas.close();
+        float[] xs = {-20f, -8f, 12f, 24f};
+        float[] ys = {-5f, 8f, -2f, 5f};
+        assertTrue(HuiguangTrailCanvas.begin(64f, 32f, -32f, -16f));
+        HuiguangTrailCanvas.strokeTrail(xs, ys, xs.length, 0x4080FF, .65f, 10f);
+        int[] expected = HuiguangTrailCanvas.readPixelsAbgr();
+        assertNotNull(expected);
+        assertTrue(HuiguangTrailCanvas.beginRecording(64f, 32f, -32f, -16f));
+        HuiguangTrailCanvas.strokeTrail(xs, ys, xs.length, 0x4080FF, .65f, 10f);
+        assertNull(HuiguangTrailCanvas.readPixelsAbgr());
+        try (io.github.humbleui.skija.Picture picture = HuiguangTrailCanvas.finishRecording()) {
+            assertNotNull(picture);
+            assertNull(HuiguangTrailCanvas.readPixelsAbgr(), "Finished recording is not a new raster frame");
+            assertTrue(HuiguangTrailCanvas.rasterize(picture));
+            assertArrayEquals(expected, HuiguangTrailCanvas.readPixelsAbgr());
+        }
+    }
+
+    @Test
+    void gpuRejectionOrExceptionFallsBackInTheSameFrameWithoutChangingPixels() {
+        HuiguangTrailCanvas.close();
+        float[] xs = {-20f, 0f, 20f};
+        float[] ys = {-4f, 8f, 2f};
+        assertTrue(HuiguangTrailCanvas.begin(64f, 32f, -32f, -16f));
+        HuiguangTrailCanvas.strokeTrail(xs, ys, xs.length, 0xFF8040, .55f, 10f);
+        int[] expected = HuiguangTrailCanvas.readPixelsAbgr();
+        for (boolean throwsFailure : new boolean[] {false, true}) {
+            assertTrue(HuiguangTrailCanvas.beginRecording(64f, 32f, -32f, -16f));
+            HuiguangTrailCanvas.strokeTrail(xs, ys, xs.length, 0xFF8040, .55f, 10f);
+            int[][] uploaded = new int[1][];
+            WorldLyricsRenderer.Host host = (WorldLyricsRenderer.Host) java.lang.reflect.Proxy.newProxyInstance(
+                    WorldLyricsRenderer.Host.class.getClassLoader(), new Class<?>[] {WorldLyricsRenderer.Host.class},
+                    (proxy, method, args) -> {
+                        if (method.getName().equals("drawGpuTrailCanvas")) {
+                            if (throwsFailure) throw new IllegalStateException("GPU unavailable");
+                            return false;
+                        }
+                        if (method.getName().equals("drawTrailCanvas")) {
+                            uploaded[0] = (int[]) args[0];
+                            assertEquals(2, args[8]);
+                            return true;
+                        }
+                        throw new AssertionError("Unexpected host call: " + method.getName());
+                    });
+            try (io.github.humbleui.skija.Picture picture = HuiguangTrailCanvas.finishRecording()) {
+                assertTrue(WorldLyricsRenderer.presentTrailCanvas(host, picture, 2));
+                assertArrayEquals(expected, uploaded[0]);
+            }
+        }
+    }
+
+    @Test
+    void acceptedGpuCommandsDoNotCreateOrUploadCpuPixels() {
+        HuiguangTrailCanvas.close();
+        assertTrue(HuiguangTrailCanvas.beginRecording(64f, 32f, -32f, -16f));
+        HuiguangTrailCanvas.strokeTrail(new float[] {-20f, 20f}, new float[] {0f, 0f},
+                2, 0xFF8040, .55f, 10f);
+        WorldLyricsRenderer.Host host = (WorldLyricsRenderer.Host) java.lang.reflect.Proxy.newProxyInstance(
+                WorldLyricsRenderer.Host.class.getClassLoader(), new Class<?>[] {WorldLyricsRenderer.Host.class},
+                (proxy, method, args) -> {
+                    assertEquals("drawGpuTrailCanvas", method.getName());
+                    return true;
+                });
+        try (io.github.humbleui.skija.Picture picture = HuiguangTrailCanvas.finishRecording()) {
+            assertTrue(WorldLyricsRenderer.presentTrailCanvas(host, picture, 0));
+            assertNull(HuiguangTrailCanvas.readPixelsAbgr());
+        }
+    }
+
+    @Test
+    void abandonedRecordingAndResizeKeepNativeOwnershipSafe() {
+        HuiguangTrailCanvas.close();
+        assertTrue(HuiguangTrailCanvas.beginRecording(200f, 100f, -100f, -50f));
+        assertTrue(HuiguangTrailCanvas.beginRecording(64f, 32f, -32f, -16f));
+        HuiguangTrailCanvas.close();
+        assertNull(HuiguangTrailCanvas.finishRecording());
+        assertTrue(HuiguangTrailCanvas.begin(16f, 16f, -8f, -8f));
+        assertEquals(32 * 32, HuiguangTrailCanvas.readPixelsAbgr().length);
+        assertFalse(HuiguangTrailCanvas.beginRecording(Float.NaN, 16f, 0f, 0f));
+        assertFalse(HuiguangTrailCanvas.beginRecording(801f, 16f, 0f, 0f));
+    }
+
     @AfterAll
     static void cleanup() {
         HuiguangTrailCanvas.close();

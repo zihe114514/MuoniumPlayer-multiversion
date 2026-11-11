@@ -26,6 +26,14 @@ public final class LxSourceStore {
     private static final Object LOCK = new Object();
     private static final Gson GSON = new Gson();
 
+    /**
+     * 内置源的固定 ID（jar 里 {@code /muonium/lx/builtin_source.js} 那一份）。
+     * 与用户导入的 {@code user_api_*} 随机 ID 区分开：升级换脚本时按它找到旧条目整条替换。
+     */
+    public static final String BUILTIN_ID = "builtin_wildgrass";
+    /** jar 内置脚本的资源路径。 */
+    private static final String BUILTIN_RESOURCE = "/muonium/lx/builtin_source.js";
+
     private static boolean loaded;
     private static String activeId = "";
     /**
@@ -157,6 +165,65 @@ public final class LxSourceStore {
         }
     }
 
+    // ════════════════════════════ 内置源装配 ════════════════════════════
+
+    /**
+     * 首次使用（存档里一条脚本都没有）时把 jar 内置源导入并启用，让自定义源开箱即用；
+     * 用户已经导入过任何脚本时一个字节都不动 —— 存档是用户的，内置只在空场时铺地毯。
+     * 内置脚本随版本更新（正文变了）时按 {@link #BUILTIN_ID} 把旧条目整条替换，
+     * 但不抢回启用权：用户换成别的脚本或关闭了，保持用户的选择。
+     */
+    private static void provisionBuiltin() {
+        provisionBuiltin(true);
+    }
+
+    /**
+     * @param firstUse 存档文件本身不存在（真正的首次启动）；删过内置源的老存档传 false
+     */
+    private static void provisionBuiltin(boolean firstUse) {
+        String builtin = readBuiltinResource();
+        if (builtin.isEmpty()) return;
+        boolean hasUserScript = false;
+        Entry builtinEntry = null;
+        for (Entry entry : ENTRIES) {
+            if (BUILTIN_ID.equals(entry.id)) builtinEntry = entry;
+            else hasUserScript = true;
+        }
+        if (hasUserScript) return;
+        // 非首次但既无内置条目也无用户脚本：用户删过内置源，尊重这个选择不复活。
+        // （builtinEntry != null 时是「随版本更新」，不管 firstUse 都要往下走换正文。）
+        if (builtinEntry == null && (!firstUse || !ENTRIES.isEmpty())) return;
+        LxScriptInfo info;
+        try {
+            info = LxScriptInfo.parse(builtin);
+        } catch (RuntimeException broken) {
+            // jar 里的内置脚本坏了不该阻断播放器启动，静默跳过。
+            return;
+        }
+        String stored = deflateScript(builtin);
+        if (builtinEntry != null) {
+            if (builtinEntry.storedScript.equals(stored)) return; // 正文没变，不重写存档
+            ENTRIES.remove(builtinEntry);
+        }
+        boolean activate = activeId.isEmpty();
+        ENTRIES.add(new Entry(BUILTIN_ID, info, true, stored));
+        if (activate) activeId = BUILTIN_ID;
+        save();
+    }
+
+    private static String readBuiltinResource() {
+        try (java.io.InputStream stream = LxSourceStore.class.getResourceAsStream(BUILTIN_RESOURCE)) {
+            if (stream == null) return "";
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] chunk = new byte[8192];
+            int read;
+            while ((read = stream.read(chunk)) >= 0) out.write(chunk, 0, read);
+            return out.toString("UTF-8");
+        } catch (Throwable broken) {
+            return "";
+        }
+    }
+
     // ════════════════════════════ 持久化 ════════════════════════════
 
     private static void load() {
@@ -165,9 +232,15 @@ public final class LxSourceStore {
             loaded = true;
             try {
                 File file = ConfigPaths.LX_SOURCES;
-                if (!file.isFile()) return;
+                if (!file.isFile()) {
+                    provisionBuiltin(true);
+                    return;
+                }
                 JsonObject root = JsonConfigStorage.readObject(file, GSON);
-                if (root == null) return;
+                if (root == null) {
+                    provisionBuiltin(true);
+                    return;
+                }
                 if (root.has("activeId") && !root.get("activeId").isJsonNull()) {
                     activeId = root.get("activeId").getAsString();
                 }
@@ -176,7 +249,7 @@ public final class LxSourceStore {
                     extraActions = root.get("extraActions").getAsBoolean();
                 }
                 JsonArray scripts = root.getAsJsonArray("scripts");
-                if (scripts == null) return;
+                if (scripts == null) scripts = new JsonArray();
                 for (JsonElement element : scripts) {
                     JsonObject item = element.getAsJsonObject();
                     String stored = string(item, "script");
@@ -194,8 +267,10 @@ public final class LxSourceStore {
                     boolean allow = !item.has("allowUpdateAlert") || item.get("allowUpdateAlert").getAsBoolean();
                     ENTRIES.add(new Entry(id, info, allow, stored));
                 }
+                provisionBuiltin(false);
             } catch (Throwable ignored) {
                 // 配置读坏了就当没有导入过任何源，不能因此阻断播放器启动。
+                provisionBuiltin(true);
             }
         }
     }

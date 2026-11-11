@@ -42,4 +42,15 @@ public interface MpPlatform {
     void execute(Runnable task);
 
     default void warn(String message, Throwable t) { }
+
+    /**
+     * 这个在线玩家是不是服务器管理员（可选实现）。
+     *
+     * <p>默认 false：那时 core 只能在他敲过一次 {@code /mp} 之后才认得他（见
+     * {@code RoomManager#noteOperator}），而客户端只在握手时读一次 {@code hello.serverAdmin} ——
+     * 握手发生在进服时、敲指令之前，于是频道里管理员的界面按钮（直接切歌、直接踢人…）一直
+     * 不出现。能便宜拿到权限的平台（Paper）实现它，握手时下发的 serverAdmin 就是对的，客户端
+     * 不用改。权限 API 各版本变过的加载器可以不实现，行为与以前一样。</p>
+     */
+    default boolean isOperator(UUID uuid) { return false; }
 }

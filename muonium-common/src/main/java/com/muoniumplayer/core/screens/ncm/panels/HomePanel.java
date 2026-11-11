@@ -898,7 +898,8 @@ public class HomePanel extends NCMPanel {
         scrollPanel
                 .setSpacing(GRID_GAP)
                 .setScrollStrength(44)
-                .setAlignment(ScrollPanel.Alignment.VERTICAL_WITH_HORIZONTAL_FILL);
+                .setAlignment(ScrollPanel.Alignment.VERTICAL_WITH_HORIZONTAL_FILL)
+                .setIndexedVerticalLayout();
         // 网格视口的 bounds 不在这里挂 beforeRender：几何由 HomePanel#onRender 每帧 O(1) 刷新，
         // 那里跑在子控件之前，本帧新补的卡片在构造时就能拿到当帧列宽。
         // 账号身份已经挪到侧栏的账号行（那里本来就有头像和昵称），主页下方不再需要给它留位置。
@@ -1029,22 +1030,25 @@ public class HomePanel extends NCMPanel {
         if (this.cardsPanel == null || this.pendingCards == null) return;
 
         int total = this.pendingCards.size();
-        int end = Math.min(total, this.pendingCardIndex + CARD_BUILD_BATCH);
+        int batchSize = com.muoniumplayer.core.screens.ncm.PlayerIslandTransition.needsFrameBudget()
+                ? 1 : CARD_BUILD_BATCH;
+        int end = Math.min(total, this.pendingCardIndex + batchSize);
         if (this.pendingCardIndex < end) {
+            long startedAt = System.nanoTime();
             List<AbstractWidget<?>> batch = new ArrayList<>(end - this.pendingCardIndex);
-            for (int index = this.pendingCardIndex; index < end; index++) {
-                PlayList playList = this.pendingCards.get(index);
+            while (this.pendingCardIndex < end) {
+                PlayList playList = this.pendingCards.get(this.pendingCardIndex++);
                 PlaylistWidget card = new PlaylistWidget(playList,
                         this.pendingCardActions.get(playList.getId()), this.grid, this.reshape,
                         this.cardsPanel);
                 card.setShouldOverrideMouseCursor(true);
                 card.setEntranceAnimation(this.revealQueue);
                 batch.add(card);
+                if (System.nanoTime() - startedAt >= CARD_BUILD_BUDGET_NANOS) break;
             }
             this.cardsPanel.addChild(batch);
             // 子项数量变了，排版签名必须失效：否则容器会以为上一帧的排布仍然有效。
             this.cardsPanel.invalidateLayout();
-            this.pendingCardIndex = end;
         }
 
         if (this.pendingCardIndex >= total) {
@@ -1053,8 +1057,9 @@ public class HomePanel extends NCMPanel {
         }
     }
 
-    /** 每帧构建的卡片数。与歌单页同一档：一屏可见十来张，32 张约两屏，首屏当帧就到齐。 */
+    /** 数量与耗时双上限：冷字体/低配设备构建一张慢卡片后不继续挤占这一帧。 */
     private static final int CARD_BUILD_BATCH = 32;
+    private static final long CARD_BUILD_BUDGET_NANOS = 750_000L;
 
     /** 卡片进场的错峰发号器，见 {@link PanelItemEntrance.RevealQueue}。 */
     private final PanelItemEntrance.RevealQueue revealQueue = new PanelItemEntrance.RevealQueue();

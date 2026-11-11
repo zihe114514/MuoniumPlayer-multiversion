@@ -128,16 +128,26 @@ public final class MuoniumPlayerForge {
     }
 
     /**
-     * 世界声源线框：世界渲染的最后（{@code AFTER_LEVEL}）。
+     * 3D 世界歌词 + 世界声源线框：世界渲染的最后（{@code AFTER_LEVEL}）。
      *
-     * <p>3D 歌词<b>不在这里画了</b> —— 改由树内 {@code LevelRendererLateStageMixin}
-     * 注入 {@code renderLevel} RETURN，那是两加载器唯一共同、且真正位于半透明合成
-     * 之后的时点（Forge 的 {@code AFTER_LEVEL} 虽然也在 {@code renderLevel} 返回后，
-     * 但它由 {@code GameRenderer} 派发，Fabric 没有对应物；单点入口才保证观感一致，
-     * 也避免两处都画导致加色混合叠两遍）。</p>
+     * <h2>为什么这里必须调用 worldRenderEnd()（Forge 歌词消失的根因）</h2>
+     * <p>此前一度只依赖树内 {@code LevelRendererLateStageMixin}（注入
+     * {@code renderLevel} RETURN）。但 <b>Forge 47 的 fmlloader 根本不读
+     * {@code mods.toml} 的 {@code [[mixins]]} 段</b> —— 那是 NeoForge 的语法，
+     * 反编译 fmlloader 全 jar 找不到任何 mixin 相关类/字符串。于是该 mixin
+     * 在 Forge 侧是<b>死代码</b>：没有任何人调用 {@code worldRenderEnd()}，
+     * 3D 歌词整体不显示（Fabric 侧靠 fabric.mod.json 的 "mixins" 字段，
+     * 同一个 mixin 是生效的，所以只有 Forge 出问题）。</p>
+     *
+     * <p>重复绘制由 {@code WorldLyricsBridge.worldRenderEnd()} 的帧内时间戳
+     * 守卫兜住（一帧只放行一次），所以这里与 mixin 并存是安全的：
+     * 哪天 Forge 换了 mixin 加载方式，两边也不会叠两遍加色晕。</p>
      */
     private void onRenderLevelStage(RenderLevelStageEvent event) {
         if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_LEVEL) return;
+        // 3D 世界歌词（矩阵与 GL 状态由 Bridge 自己设；Forge 侧加载器给的矩阵不可信，
+        // 相机旋转自算 —— 与 Fabric 侧同口径）。
+        WorldLyricsBridge.worldRenderEnd();
         // 世界声源线框(有音箱才画;内部第一行判空)。
         com.muoniumplayer.compat.mc.SpeakerRenderBridge.render();
     }

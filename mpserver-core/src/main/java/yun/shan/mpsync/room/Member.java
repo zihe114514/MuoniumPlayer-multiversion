@@ -29,6 +29,11 @@ public final class Member {
      * 立刻推一次权威位置过去，否则他会从暂停那一刻的位置继续放，越听越偏。
      */
     public boolean selfPaused;
+    /**
+     * 掉线时刻（epoch ms）；0 = 在线。频道自动加入打开时，{@code RoomManager} 据此回收长期离线的座位。
+     * 不复用 {@link #lastSeen}：那是客户端心跳时刻，没开播的人不会发心跳。
+     */
+    public long offlineSince;
 
     public Member(UUID uuid, String name, Role role) {
         this.uuid = uuid;

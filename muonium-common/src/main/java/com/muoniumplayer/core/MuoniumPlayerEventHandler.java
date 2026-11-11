@@ -34,14 +34,21 @@ public class MuoniumPlayerEventHandler implements EventHandler {
     @Getter
     private static final Logger logger = LogManager.getLogger("MuoniumPlayerEventHandler");
 
+    private static final long MAIN_TASK_BUDGET_NANOS = 1_000_000L;
+    private static final int MAX_MAIN_TASKS_PER_LOOP = 8;
     private final Queue<FutureTask<?>> scheduledTasks = Queues.newArrayDeque();
 
     @Override
     public void onLoop() {
-        synchronized (this.scheduledTasks) {
-            while (!this.scheduledTasks.isEmpty()) {
-                runTask((FutureTask<?>) this.scheduledTasks.poll(), logger);
+        long startedAt = System.nanoTime();
+        for (int count = 0; count < MAX_MAIN_TASKS_PER_LOOP; count++) {
+            FutureTask<?> task;
+            synchronized (this.scheduledTasks) {
+                task = this.scheduledTasks.poll();
             }
+            if (task == null) break;
+            runTask(task, logger);
+            if (System.nanoTime() - startedAt >= MAIN_TASK_BUDGET_NANOS) break;
         }
         Textures.processPendingUploads();
     }

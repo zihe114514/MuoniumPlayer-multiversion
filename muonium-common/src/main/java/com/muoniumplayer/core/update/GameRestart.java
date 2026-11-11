@@ -56,6 +56,13 @@ import java.util.Optional;
  * {@link #onNativesLoaded()}（SkijaNatives.adopt 的任何 TRUE 跃迁都会调）删除；
  * ESC 取消也删除（拆雷）。marker 还在 = 上一次重启没把库带活，arm 读到计数已达上限
  * 就不再布防；标记超过两小时视为陈旧，计数重新起算。看守只读标记、从不删标记。
+ *
+ * <h2>MuoniumConfig 的更新也走这条路</h2>
+ * 设置界面是 mod 形式的 jar，装好/更新后同样必须重启才生效，所以
+ * {@code MuoniumConfigDownload.isRestartRequired()} 也是布防来源之一。
+ * 与渲染层不同的是它<b>永远不致命</b>：更新失败只是少一个设置界面，因此它的会话内重试
+ * （{@link com.muoniumplayer.core.screens.hud.MuoniumConfigDownload#tick()}）挂在同一个
+ * tick 上，先于布防检查——可能刚好把这一轮跑成功，下一 tick 就正常布防。
  */
 public final class GameRestart {
 
@@ -155,12 +162,18 @@ public final class GameRestart {
         try {
             // ① 布防检查：有东西装好了、尚未生效 → 准备替用户重启。
             //    两处来源：Skija 伴生包（缺了渲染层起不来），以及 MuoniumConfig
-            //    （HUD 设置界面；Fabric 只在启动阶段扫 mods/，运行中塞进去的 jar 不会被加载）。
+            //    （HUD 设置界面；加载器只在启动阶段扫 mods/，运行中塞进去的 jar 不会被加载）。
             if (stage == Stage.NONE
                     && (SkijaNatives.companionRestartPending()
                         || com.muoniumplayer.core.screens.hud.MuoniumConfigDownload.isRestartRequired())) {
                 arm();
             }
+
+            // ①' MuoniumConfig 的会话内重试：下载失败后自己再试，不用用户重启。
+            //     放在布防之前调：它可能刚好把这一轮跑成功，下一 tick 就会进布防。
+            //     它自己判冷却与次数上限，这里无脑每 tick 问一次即可。
+            com.muoniumplayer.core.screens.hud.MuoniumConfigDownload.tick();
+
             if (stage != Stage.ARMED) {
                 return;
             }

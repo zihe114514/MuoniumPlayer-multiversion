@@ -63,7 +63,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.5.0";
+    public static final String MOD_VERSION = "2.5.2";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -782,7 +782,7 @@ public final class MuoniumPlayerClient {
             return;
         }
         try {
-            inSkijaFrame(() -> onScreenRenderedUnguarded(screen));
+            onScreenRenderedUnguarded(screen);
         } catch (Throwable t) {
             screenRenderDisabled = true;
             reportRenderFailure("GuiScreen 覆盖层", t);
@@ -793,11 +793,12 @@ public final class MuoniumPlayerClient {
         RenderSystem.refreshResolution();
         Interpolations.calcFrameDelta();
 
+        boolean editorOrOtherUi = screen instanceof GuiHudEditorPro
+                || (screen != null && !(screen instanceof NCMScreen));
+        if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()) return;
+        if (screen instanceof NCMScreen && !DownloadDynamicIsland.needsScreenOverlay()
+                && !AutomixTransitionAnimation.hasStandaloneOverlay()) return;
         Runnable islandOverlay = () -> {
-            // HUD 设置界面自己画灵动岛的专用预览，这里再画一次会叠成双层；
-            // 背包/原版设置等其它界面也不叠常驻岛与切换动画（全屏播放器自管）。
-            boolean editorOrOtherUi = screen instanceof GuiHudEditorPro
-                    || (screen != null && !(screen instanceof NCMScreen));
             if (DownloadDynamicIsland.isDownloadActive() || !editorOrOtherUi) {
                 DownloadDynamicIsland.render();
             }
@@ -805,6 +806,7 @@ public final class MuoniumPlayerClient {
                 AutomixTransitionAnimation.render();
             }
         };
-        if (!SkijaHost.deferPostCompositeOverlay(islandOverlay)) islandOverlay.run();
+        // Deferred hosts own the drawing frame; immediate hosts still need a paired wrapper.
+        if (!SkijaHost.deferPostCompositeOverlay(islandOverlay)) inSkijaFrame(islandOverlay);
     }
 }

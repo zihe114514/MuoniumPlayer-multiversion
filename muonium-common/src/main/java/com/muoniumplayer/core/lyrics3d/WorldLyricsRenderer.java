@@ -150,6 +150,18 @@ public final class WorldLyricsRenderer {
             return false;
         }
 
+        /** True only when GPU execution and same-frame CPU replay are available. */
+        default boolean supportsGpuTrailCanvas() {
+            return false;
+        }
+
+        /** Picture is consumed synchronously; the caller closes it after this method returns. */
+        default boolean drawGpuTrailCanvas(io.github.humbleui.skija.Picture picture, int w, int h,
+                                           float planeX, float planeY, float planeW, float planeH,
+                                           float alpha, int slot) {
+            return false;
+        }
+
         /**
          * 绘光逐字光晕（folia halos：每字一枚径向渐变柔光点垫在字下）。
          * (cx, cy) 是字心（文字像素坐标、公告牌平面系），sizePx 是光晕正方形
@@ -227,6 +239,10 @@ public final class WorldLyricsRenderer {
      */
     public static void render(WorldLyricsState state, WorldLyricsState.CameraView camera,
                               WorldLyricsSettings settings, Host host, long nowNanos) {
+        // 帧边界：重置字形图集的帧内烘焙预算。图集自己认不出帧（曾在内部拿
+        // nanoTime 当帧标记，条件恒真、预算从未生效），这里每帧一次是唯一可靠
+        // 的重置点 —— 见 LyricGlyphAtlas.beginFrame。
+        LyricGlyphAtlas.beginFrame();
         try {
             renderGuarded(state, camera, settings, host, nowNanos);
             consecutiveFailures = 0;
@@ -324,6 +340,9 @@ public final class WorldLyricsRenderer {
                         return total;
                     }
                     : host::pixelWidth;
+            if (smooth && LyricGlyphAtlas.isFunctional()) {
+                widthOf = WorldLyricsState.cachedTextMetrics(f, widthOf, host, LyricGlyphAtlas.fontGeneration());
+            }
             // 心象动效仅在现代化引擎生效（原版像素风格不受影响）。
             // 两个动效都开时绘光优先（与设置界面的「此处优先」文案一致）——
             // 绘光是用户点名要的模式，心象作为兜底回退。
@@ -337,7 +356,7 @@ public final class WorldLyricsRenderer {
             // 走原配色。快照空（封面未就绪/提取为空）回落原配置色。
             int[] coverLut = coverGradientLut(settings);
             int coverMain = coverMainColor(settings);
-            WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphs(
+            WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphsForRender(
                     f, songNowMs, row.alpha, settings.wordPop, !row.active, widthOf,
                     cadenza, huiguang, keywordMatch, coverLut);
             // 心象模式的分块配色基准色：取色器自定义过的色原样用，没动过时纯白
@@ -386,15 +405,15 @@ public final class WorldLyricsRenderer {
                             && glyphs.glyphs.get(spotCount).k >= 0) spotCount++;
                 }
                 if (row.active && spotCount > 0 && glyphs.huiguangLayout != null) {
-                    float firstA = glyphs.appearAts.get(0);
-                    float lastA = glyphs.appearAts.get(spotCount - 1);
+                    float firstA = glyphs.appearAt(0);
+                    float lastA = glyphs.appearAt(spotCount - 1);
                     if (spotElapsed >= firstA - 250L && spotElapsed <= lastA + 600L) {
                         int gi = 0;
-                        while (gi + 1 < spotCount && glyphs.appearAts.get(gi + 1) <= spotElapsed) gi++;
+                        while (gi + 1 < spotCount && glyphs.appearAt(gi + 1) <= spotElapsed) gi++;
                         WorldLyricsState.LyricGlyph a = glyphs.glyphs.get(gi);
                         WorldLyricsState.LyricGlyph b = glyphs.glyphs.get(Math.min(gi + 1, spotCount - 1));
-                        float aAt = glyphs.appearAts.get(gi);
-                        float bAt = glyphs.appearAts.get(Math.min(gi + 1, spotCount - 1));
+                        float aAt = glyphs.appearAt(gi);
+                        float bAt = glyphs.appearAt(Math.min(gi + 1, spotCount - 1));
                         float t = bAt > aAt ? (spotElapsed - aAt) / (bAt - aAt) : 0f;
                         t = Math.max(0f, Math.min(1f, t));
                         // 排版路径坐标（layout 中心 + 整句绕行；不含逐字微动）
@@ -518,6 +537,7 @@ public final class WorldLyricsRenderer {
                 //      只在径迹存活窗口内分配/上传（folia drawTracks 的「彻底消失」
                 //      条款同样约束画布：窗口外整帧零成本，不画空气 quad）。
                 boolean trailCanvasActive = false;
+                boolean gpuTrailCanvas = false;
                 boolean trailWindow = glyphs.huiguangElapsedMs
                         <= HuiguangMotion.ENTRY_WINDOW_MS
                                 + HuiguangMotion.TRACK_TIME_S * 1000f;
@@ -562,9 +582,10 @@ public final class WorldLyricsRenderer {
                     // 1600 设计 px 是 3200² 设备 = 10.2M px ≈ 40MB 纹理 + 单帧
                     // 上百 MB 瞬时分配，必须拦；正常句 ≤600 设计 → 1200² 设备
                     if (bw * HuiguangTrailCanvas.superSample() <= 1600f
-                            && bh * HuiguangTrailCanvas.superSample() <= 1600f
-                            && HuiguangTrailCanvas.begin(bw, bh, bx0, by0)) {
-                        trailCanvasActive = true;
+                            && bh * HuiguangTrailCanvas.superSample() <= 1600f) {
+                        gpuTrailCanvas = host.supportsGpuTrailCanvas()
+                                && HuiguangTrailCanvas.beginRecording(bw, bh, bx0, by0);
+                        trailCanvasActive = gpuTrailCanvas || HuiguangTrailCanvas.begin(bw, bh, bx0, by0);
                     }
                 }
                 // ---- 绘光预通道：径迹 + 逐字光晕（folia 层序 spots<track<halos<glyphs：
@@ -580,9 +601,13 @@ public final class WorldLyricsRenderer {
                             <= HuiguangMotion.ENTRY_WINDOW_MS
                                     + HuiguangMotion.TRACK_TIME_S * 1000f;
                         if (fl != null && fl.valid && trailAlive) {
-                            int n = HuiguangMotion.trailPoints(fl, glyphs.huiguangElapsedMs,
-                                    HuiguangMotion.ENTRY_WINDOW_MS, WorldLyricsState.LYRIC_SIZE,
-                                    TRAIL_XS, TRAIL_YS);
+                            int n = HuiguangMotion.TRACK_SAMPLES + 1;
+                            // 一次采样同时得到绘制点和无抖动路径强度：原先这里先
+                            // 求 21 点拖尾，再用同一时刻完整回溯 21 点算强度，换句时
+                            // 每个飞行字重复做一遍贝塞尔求值。
+                            float strength = HuiguangMotion.trailPointsAndStrength(fl,
+                                    glyphs.huiguangElapsedMs, HuiguangMotion.ENTRY_WINDOW_MS,
+                                    WorldLyricsState.LYRIC_SIZE, TRAIL_XS, TRAIL_YS);
                             // 径迹点补上本句恒定绕行 + 本字呼吸（与字形同一套微动）——
                             // 拖尾才能一直连着正在漂移的字
                             float[] br = TRAIL_BREATH;
@@ -595,9 +620,6 @@ public final class WorldLyricsRenderer {
                             if (n > 1) {
                             // 强度按无 wobble 的 pose 折线判定（静止字恒 0、收尾自然
                             // 衰减归零）；带 wobble 的 TRAIL_XS/YS 只用于绘制顶点。
-                            float strength = HuiguangMotion.trailPoseStrength(fl,
-                                    glyphs.huiguangElapsedMs, HuiguangMotion.ENTRY_WINDOW_MS,
-                                    WorldLyricsState.LYRIC_SIZE);
                             if (strength > HuiguangMotion.TRAIL_MIN_STRENGTH) {
                                 // Skija 光栅化：折线进共享画布（多层辉光 + 沿程渐变 +
                                 // 圆头圆接，Skija AA 无锯齿），帧尾整块上屏
@@ -658,17 +680,13 @@ public final class WorldLyricsRenderer {
                 //      宿主不吃下（未实现/熔断）→ 累计失败并停用画布通路：
                 //      之后整帧直接走 quad 带，不再每帧白做光栅化与像素拷贝。
                 if (trailCanvasActive) {
-                    // ABGR 直出（像素换位在 Skija 读出时一次完成）：宿主写入
-                    // 退化纯拷贝，拖尾活跃帧省一整遍逐像素位运算扫描
-                    int[] px = HuiguangTrailCanvas.readPixelsAbgr();
-                    boolean accepted = false;
-                    if (px != null) {
-                        accepted = host.drawTrailCanvas(px,
-                                HuiguangTrailCanvas.canvasWidth(),
-                                HuiguangTrailCanvas.canvasHeight(),
-                                HuiguangTrailCanvas.offX(), HuiguangTrailCanvas.offY(),
-                                HuiguangTrailCanvas.planeW(), HuiguangTrailCanvas.planeH(),
-                                1f, canvasSlot);
+                    boolean accepted;
+                    if (gpuTrailCanvas) {
+                        try (io.github.humbleui.skija.Picture picture = HuiguangTrailCanvas.finishRecording()) {
+                            accepted = presentTrailCanvas(host, picture, canvasSlot);
+                        }
+                    } else {
+                        accepted = presentTrailCanvas(host, null, canvasSlot);
                     }
                     if (accepted) {
                         trailCanvasFailStreak = 0;
@@ -862,6 +880,26 @@ public final class WorldLyricsRenderer {
         } finally {
             host.popBillboard();
         }
+    }
+
+    /** GPU consumes no pixels; a rejected Picture is replayed by CPU in this same frame. */
+    static boolean presentTrailCanvas(Host host, io.github.humbleui.skija.Picture picture, int slot) {
+        int width = HuiguangTrailCanvas.canvasWidth();
+        int height = HuiguangTrailCanvas.canvasHeight();
+        if (picture != null) {
+            try {
+                if (host.drawGpuTrailCanvas(picture, width, height,
+                        HuiguangTrailCanvas.offX(), HuiguangTrailCanvas.offY(),
+                        HuiguangTrailCanvas.planeW(), HuiguangTrailCanvas.planeH(), 1f, slot)) return true;
+            } catch (Throwable failure) {
+                // Failure is local to GPU acceleration; preserve this frame via the raster path.
+            }
+            if (!HuiguangTrailCanvas.rasterize(picture)) return false;
+        }
+        int[] pixels = HuiguangTrailCanvas.readPixelsAbgr();
+        return pixels != null && host.drawTrailCanvas(pixels, width, height,
+                HuiguangTrailCanvas.offX(), HuiguangTrailCanvas.offY(),
+                HuiguangTrailCanvas.planeW(), HuiguangTrailCanvas.planeH(), 1f, slot);
     }
 
     /** Split lines（拆句已由解析层实现，这里保留入口给渲染层开关用）。 */

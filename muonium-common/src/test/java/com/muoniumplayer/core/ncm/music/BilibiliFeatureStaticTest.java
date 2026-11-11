@@ -183,10 +183,19 @@ class BilibiliFeatureStaticTest {
     }
 
     @Test
-    @DisplayName("分P 的 sourceKey 只在第二页起带页码")
+    @DisplayName("分P 的 sourceKey 只在第二页起带页码，且房间协议收得下（issue #21）")
     void sourceKeyOnlyAppendsPageWhenNeeded() {
         assertEquals("BV1xx411c7mD", BilibiliMusicService.sourceKey("BV1xx411c7mD", 1));
-        assertEquals("BV1xx411c7mD:3", BilibiliMusicService.sourceKey("BV1xx411c7mD", 3));
+        assertEquals("BV1xx411c7mD_p3", BilibiliMusicService.sourceKey("BV1xx411c7mD", 3));
+        // 冒号是房间身份键 source:songId 的分隔符，一起听客户端与服务端闸门都会挡含冒号的 id：
+        // 2.5.0 的 BV…:2 格式让 P2 起全部进不了房间。新格式里不能再出现冒号。
+        assertFalse(BilibiliMusicService.sourceKey("BV1xx411c7mD", 2).contains(":"));
+        assertFalse(BilibiliMusicService.sourceKey("BV1xx411c7mD", 12).contains(":"));
+        // 下划线在 BVID 字符集（BV[0-9A-Za-z]{10}）之外，页码后缀不会与本体混淆。
+        assertTrue(BilibiliMusicService.sourceKey("BV1xx411c7mD", 2)
+                .matches("BV[0-9A-Za-z]{10}_p[0-9]+"));
+        // 缓存键保持旧冒号格式：stableId 由它派生，换了会让红心 / 封面缓存一夜全部失配。
+        assertEquals("BV1xx411c7mD:3", BilibiliMusicService.localCacheKey("BV1xx411c7mD", 3));
     }
 
     // ════════════════════════════ 字幕 → LRC ════════════════════════════

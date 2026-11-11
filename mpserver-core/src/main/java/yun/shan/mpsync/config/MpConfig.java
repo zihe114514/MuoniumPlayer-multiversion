@@ -233,6 +233,32 @@ public final class MpConfig {
      */
     public int channelMaxPerMember = 3;
 
+    /**
+     * 装了客户端 mod 的玩家握手（hello）时自动加入服务器频道。
+     *
+     * <p>触发点是 hello 而不是进服事件：只有装了 mod 的客户端才会发 hello，原版玩家不会被拉进
+     * 频道、也不会被房间消息刷屏。这是全服开关（{@code /mp autojoin server on|off}）；玩家还可以用
+     * {@code /mp autojoin off} 关掉自己的，记在 {@code mpsync-autojoin-optout.json}。{@code /mp leave} 只是
+     * 这一次离开，不影响下次进服自动加入。
+     *
+     * <p>打开后频道里离线超过 {@link #emptyRoomGraceMs} 的座位会被回收 —— 否则频道成员会累积成
+     * 「自开服以来所有来过的人」，每一帧房间快照都要拖着他们。回收掉的人下次握手会再自动加入。
+     */
+    public boolean channelAutoJoin = false;
+
+    // ── 频道空闲歌单 ─────────────────────────────────────────────────────────
+    // 歌单内容与开关存在 mpsync-idle.json（用 /mp idle 管理），这里只放调优参数。
+
+    /** 频道队列不足这么多首时从空闲歌单补歌。至少 1；2 让前瞻解析与房间交叠都有「下一首」可用。 */
+    public int idleQueueLead = 2;
+    /** 一首空闲歌解析失败后，多久内不再选它。 */
+    public long idleFailCooldownMs = 30 * 60 * 1000L;
+    /** 连续这么多首空闲歌都解析失败，就把空闲歌单暂停 {@link #idlePauseMs}。 */
+    public int idleMaxConsecutiveFails = 5;
+    public long idlePauseMs = 5 * 60 * 1000L;
+    /** 空闲歌在歌单里显示的「点歌人」。 */
+    public String idleRequesterName = "服务器歌单";
+
     // ── 投票（频道） ──────────────────────────────────────────────────────────
 
     /** 一次投票的窗口。需求：倒计时 30 秒后展示结果。 */
@@ -374,6 +400,14 @@ public final class MpConfig {
             if (cfg.channelName == null || cfg.channelName.isBlank()) cfg.channelName = "服务器频道";
             if (cfg.channelMaxPerMember < 1) cfg.channelMaxPerMember = 3;
             if (cfg.maxChannelMembers < 0) cfg.maxChannelMembers = 0;
+            if (cfg.idleQueueLead < 1) cfg.idleQueueLead = 1;
+            if (cfg.idleQueueLead > 5) cfg.idleQueueLead = 5;
+            if (cfg.idleFailCooldownMs < 60_000L) cfg.idleFailCooldownMs = 60_000L;
+            if (cfg.idleMaxConsecutiveFails < 1) cfg.idleMaxConsecutiveFails = 1;
+            if (cfg.idlePauseMs < 30_000L) cfg.idlePauseMs = 30_000L;
+            if (cfg.idleRequesterName == null || cfg.idleRequesterName.isBlank()) {
+                cfg.idleRequesterName = "服务器歌单";
+            }
             // 投票窗口太短没人来得及看到，太长又会把频道卡住。
             if (cfg.voteWindowMs < 10_000L) cfg.voteWindowMs = 10_000L;
             if (cfg.voteWindowMs > 300_000L) cfg.voteWindowMs = 300_000L;

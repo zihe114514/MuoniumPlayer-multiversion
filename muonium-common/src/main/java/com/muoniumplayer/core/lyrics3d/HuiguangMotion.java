@@ -94,7 +94,13 @@ public final class HuiguangMotion {
     public static Flight flight(int k, int seed,
                                 float fromX, float fromY, float toX, float toY,
                                 float fontPx, boolean exitEase) {
-        Flight f = new Flight();
+        return flightInto(new Flight(), k, seed, fromX, fromY, toX, toY, fontPx, exitEase);
+    }
+
+    /** Fill a caller-owned flight so per-frame translation effects need no object allocation. */
+    static Flight flightInto(Flight f, int k, int seed,
+                             float fromX, float fromY, float toX, float toY,
+                             float fontPx, boolean exitEase) {
         f.fromX = fromX; f.fromY = fromY;
         f.toX = toX; f.toY = toY;
         // 控制点抽取：a1 随机方向甩出，模长 1.6~4.8 字号；
@@ -181,6 +187,38 @@ public final class HuiguangMotion {
             }
             px = POSE[0];
             py = POSE[1];
+        }
+        return Math.min(1f, len / (fontPx * TRAIL_SATURATION_FONTS));
+    }
+
+    /**
+     * 同时采样绘制用径迹与未抖动强度，避免热路径对每个字重复求值 21 点贝塞尔。
+     * 输出点与 {@link #trailPoints} 完全同口径，强度与 {@link #trailPoseStrength} 同序计算。
+     */
+    public static float trailPointsAndStrength(Flight f, float elapsedMs, float windowMs,
+                                               float fontPx, float[] xs, float[] ys) {
+        if (f == null || !f.valid) return 0f;
+        int n = TRACK_SAMPLES;
+        float len = 0f;
+        float px = 0f, py = 0f;
+        for (int j = 0; j <= n; j++) {
+            float te = elapsedMs - TRACK_TIME_S * 1000f * (1f - (float) j / n);
+            if (te < 0f) te = 0f;
+            poseAt(f, te, windowMs, POSE);
+            float poseX = POSE[0];
+            float poseY = POSE[1];
+            if (j > 0) {
+                float dx = poseX - px;
+                float dy = poseY - py;
+                len += (float) Math.sqrt(dx * dx + dy * dy);
+            }
+            px = poseX;
+            py = poseY;
+            // 保留 trailPoints 的抖动与采样次序，绘制坐标逐位一致。
+            float w = (float) Math.sin(j * 0.9f + f.wobblePhase + te * 0.006f)
+                    * fontPx * TRAIL_WOBBLE;
+            xs[j] = poseX + w;
+            ys[j] = poseY - 0.6f * w;
         }
         return Math.min(1f, len / (fontPx * TRAIL_SATURATION_FONTS));
     }

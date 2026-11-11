@@ -101,6 +101,17 @@ public final class WorldLyricsBridge {
             hudCameraValid = false;
             return;
         }
+        // 帧内只画一次（幂等守卫）。
+        // 1.20.1 Forge 的 mixin 从来没生效过 —— Forge 47 的 fmlloader 不读
+        // mods.toml 的 [[mixins]]（那是 NeoForge 语法，全 jar 无 mixin 相关类），
+        // 所以 LevelRendererLateStageMixin 在 Forge 侧是死代码。加载器事件与
+        // 树内 mixin 必须都能独立把歌词画出来；两处同时到达时靠本守卫去重，
+        // 否则加色晕会叠两遍（同一帧重复 pushBillboard/draw 的全部顶点）。
+        long now = System.nanoTime();
+        if (now - lastRenderEndNanos < 1_000_000L) {
+            return;
+        }
+        lastRenderEndNanos = now;
         // 懒装配（幂等）：加载器外壳忘了调 install() 时（1.20.1 fabric 曾漏），
         // 第一帧世界渲染也会把图集宿主装上 —— 现代化渲染不因接线遗漏而整档失效。
         install();
@@ -215,6 +226,14 @@ public final class WorldLyricsBridge {
     }
 
     // ==================== 更激进的适配：HUD 阶段直画 ====================
+
+    /**
+     * 上次 {@link #worldRenderEnd()} 实际执行的时间戳（纳秒）。
+     * 一帧内只放行一次：树内 mixin 与加载器事件可能同时触发
+     * （Forge 侧 mixin 不生效、Fabric 侧两者都生效），不守卫就会把
+     * 同一帧的全部顶点画两遍 —— 加色晕直接叠成白团。
+     */
+    private static long lastRenderEndNanos;
 
     /** 本帧世界投影矩阵（世界阶段捕获；HUD 阶段恢复用）。 */
     private static final org.joml.Matrix4f hudProjection = new org.joml.Matrix4f();

@@ -596,6 +596,14 @@ public final class HudConfig {
     public static String playbackFeed = HUD_PLAYBACK_FEED_INTERNAL;
 
     /**
+     * SMTC 时间轴稳定器的用户覆盖（镜像路径专用，见 SmtcTimelineStabilizer）。
+     * -1 = 跟随内置表（Apple Music 450ms 补偿 / 各播放器外推窗口）；否则为用户拖的值。
+     */
+    public static int smtcTimelineDelayMs = -1;
+    /** SMTC 外推窗口覆盖（毫秒）；-1 = 跟随内置表。 */
+    public static int smtcTimelineWindowMs = -1;
+
+    /**
      * 歌词搜索弹窗（手动选词那一页）的整体缩放倍率：
      * 那一页照抄的是 folia 的 CSS px，1.0 就是「一单位一个物理像素」，在游戏窗口里正文只有
      * 14 像素、比播放器其它界面小一半；这一档把弹窗所在的那条轴整体放大，面板、文字、间距、
@@ -1110,6 +1118,12 @@ public final class HudConfig {
         if (o.has("playbackFeed") && o.get("playbackFeed").isJsonPrimitive()) {
             playbackFeed = normalizePlaybackFeed(o.get("playbackFeed").getAsString());
         }
+        if (o.has("smtcTimelineDelayMs") && o.get("smtcTimelineDelayMs").isJsonPrimitive()) {
+            smtcTimelineDelayMs = o.get("smtcTimelineDelayMs").getAsInt();
+        }
+        if (o.has("smtcTimelineWindowMs") && o.get("smtcTimelineWindowMs").isJsonPrimitive()) {
+            smtcTimelineWindowMs = o.get("smtcTimelineWindowMs").getAsInt();
+        }
         hudEditorPanelX = clamp(getFloat(o, "hudEditorPanelX", hudEditorPanelX), -1.0f, 1.0f);
         hudEditorPanelY = clamp(getFloat(o, "hudEditorPanelY", hudEditorPanelY), -1.0f, 1.0f);
         hudEditorLastCategory = (int) clamp(getFloat(o, "hudEditorLastCategory", hudEditorLastCategory), 0.0f, 31.0f);
@@ -1329,6 +1343,8 @@ public final class HudConfig {
         o.addProperty("lyricSearchUiScale", lyricSearchUiScale);
         o.addProperty("hudEditorUi", hudEditorUi);
         o.addProperty("playbackFeed", playbackFeed);
+        o.addProperty("smtcTimelineDelayMs", smtcTimelineDelayMs);
+        o.addProperty("smtcTimelineWindowMs", smtcTimelineWindowMs);
         o.addProperty("hudEditorPanelX", hudEditorPanelX);
         o.addProperty("hudEditorPanelY", hudEditorPanelY);
         o.addProperty("hudEditorLastCategory", hudEditorLastCategory);
