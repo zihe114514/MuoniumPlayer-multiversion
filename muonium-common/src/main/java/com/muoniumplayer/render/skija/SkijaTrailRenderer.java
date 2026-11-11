@@ -1,6 +1,5 @@
 package com.muoniumplayer.render.skija;
 
-import com.muoniumplayer.core.rendering.MobileRendererEnv;
 import io.github.humbleui.skija.BackendRenderTarget;
 import io.github.humbleui.skija.ColorType;
 import io.github.humbleui.skija.DirectContext;
@@ -73,7 +72,10 @@ public final class SkijaTrailRenderer {
     }
 
     public static boolean available() {
-        return ENABLED && !unavailable && !MobileRendererEnv.current().launcherFamily()
+        // 实验放行移动端：真机验证 Skia GL 互操作（MobileGL/MobileGlues 翻译层之上）。
+        // 失败路径不变：renderOn 抛错（含 GL 3.2 缺失）→ unavailable 熔断 → 同帧 CPU 回放；
+        // 逃生开关 -Dmuonium.lyrics3d.gpuTrails=false 恒可强制 CPU。
+        return ENABLED && !unavailable
                 && SkijaHost.context() != null && !SkijaHost.isDisabled() && !SkijaHost.inFrame();
     }
 

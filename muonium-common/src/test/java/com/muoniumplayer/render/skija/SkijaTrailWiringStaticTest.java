@@ -50,7 +50,10 @@ class SkijaTrailWiringStaticTest {
         String gpu = Files.readString(root.resolve("muonium-common/src/main/java/com/muoniumplayer/render/skija/SkijaTrailRenderer.java"));
         assertFalse(gpu.contains("glReadPixels"));
         assertFalse(gpu.contains("glFinish"));
-        assertTrue(gpu.contains("!MobileRendererEnv.current().launcherFamily()"));
+        // 移动端实验放行：available 不再按 launcherFamily 硬拦截（真机验证 Skia GL 互操作）；
+        // 失败安全网仍在——异常熔断 unavailable、GL 3.2 探测、逃生开关三道都在。
+        assertFalse(gpu.contains("MobileRendererEnv"),
+                "GPU 拖尾不得再按移动启动器指纹硬拦截（实验放行，失败仍同帧回 CPU）");
         assertTrue(gpu.contains("muonium.lyrics3d.gpuTrails"));
         assertTrue(gpu.contains("(rgb * 255 + q.a / 2) / q.a"));
         assertTrue(gpu.contains("GL_COLOR_LOGIC_OP") && gpu.contains("GL_DITHER"));
