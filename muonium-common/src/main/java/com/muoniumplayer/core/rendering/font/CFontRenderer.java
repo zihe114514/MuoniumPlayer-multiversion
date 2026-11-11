@@ -113,31 +113,6 @@ public class CFontRenderer implements Closeable, SharedConstants {
     @Getter
     private float baselineOffset;
 
-    /**
-     * Oracle JDK 8 对 CFF（PostScript outline，即 .otf）字体存在 2x 缩放 bug：
-     * deriveFont(size) 报告的 getSize2D() 正确，但实际 ascent/descent/advance 都被放成应有的 2 倍。
-     * 这个修正只作用于 AWT 侧派生出来的 {@link #font}（{@code GlyphInk} 还在用它），
-     * Skia 的光栅化器没有这个 bug，所以 Skia 字号一律用 {@link #sizePx}。
-     */
-    private static final Map<Font, Float> cffScaleFactorCache = new HashMap<>();
-    private static final java.awt.image.BufferedImage cffMetricsImage =
-            new java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB);
-    private static final java.awt.Graphics2D cffMetricsGraphics =
-            (java.awt.Graphics2D) cffMetricsImage.getGraphics();
-
-    private static float cffScaleFactor(Font rawFont) {
-        Float cached = cffScaleFactorCache.get(rawFont);
-        if (cached != null) {
-            return cached;
-        }
-        java.awt.FontMetrics fm = cffMetricsGraphics.getFontMetrics(rawFont.deriveFont(100f));
-        float ratio = (fm.getAscent() + fm.getDescent()) / 100f;
-        // 正常字体 ascent+descent ≈ 1.2~1.5 em；CFF 被 Oracle JDK 放大后 ≈ 2.5 em
-        float factor = ratio > 2.0f ? 0.5f : 1.0f;
-        cffScaleFactorCache.put(rawFont, factor);
-        return factor;
-    }
-
     public CFontRenderer(Font font, float sizePx) {
         this(font, sizePx, new Font[0]);
     }
@@ -153,7 +128,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
 
         for (int i = 0; i < this.sourceFallbacks.length; i++) {
             this.fallBackFonts[i] = this.sourceFallbacks[i]
-                    .deriveFont(sizePx * 2 * cffScaleFactor(this.sourceFallbacks[i]));
+                    .deriveFont(sizePx * 2);
         }
 
         init(font, sizePx);
@@ -165,7 +140,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
     }
 
     private void init(Font font, float sizePx) {
-        this.font = font.deriveFont(sizePx * 2 * cffScaleFactor(font));
+        this.font = font.deriveFont(sizePx * 2);
         buildSkiaFonts();
     }
 
@@ -314,11 +289,11 @@ public class CFontRenderer implements Closeable, SharedConstants {
         this.emboldenMain = emboldenMain;
         this.lineBoxOverride = lockedLineBox > 0 ? lockedLineBox : -1;
 
-        this.font = main.deriveFont(this.sizePx * 2 * cffScaleFactor(main));
+        this.font = main.deriveFont(this.sizePx * 2);
         this.fallBackFonts = new Font[this.sourceFallbacks.length];
         for (int i = 0; i < this.sourceFallbacks.length; i++) {
             this.fallBackFonts[i] = this.sourceFallbacks[i]
-                    .deriveFont(this.sizePx * 2 * cffScaleFactor(this.sourceFallbacks[i]));
+                    .deriveFont(this.sizePx * 2);
         }
 
         buildSkiaFonts();
@@ -379,7 +354,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
         this.fallBackFonts = new Font[this.sourceFallbacks.length];
         for (int i = 0; i < this.sourceFallbacks.length; i++) {
             this.fallBackFonts[i] = this.sourceFallbacks[i]
-                    .deriveFont(this.sizePx * 2 * cffScaleFactor(this.sourceFallbacks[i]));
+                    .deriveFont(this.sizePx * 2);
         }
         buildSkiaFonts();
         return true;
@@ -411,7 +386,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
         this.fallBackFonts = new Font[this.sourceFallbacks.length];
         for (int i = 0; i < this.sourceFallbacks.length; i++) {
             this.fallBackFonts[i] = this.sourceFallbacks[i]
-                    .deriveFont(this.sizePx * 2 * cffScaleFactor(this.sourceFallbacks[i]));
+                    .deriveFont(this.sizePx * 2);
         }
         buildSkiaFonts();
         return true;
