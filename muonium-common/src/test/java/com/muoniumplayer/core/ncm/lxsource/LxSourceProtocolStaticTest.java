@@ -326,6 +326,27 @@ public class LxSourceProtocolStaticTest {
         assertTrue(java.contains("\"extraActions\""), "扩展开关没有落盘，重启就会忘");
     }
 
+    @Test
+    @DisplayName("内置源随 jar 携带：资源在、装配走 load()、空场才铺且不抢用户启用权")
+    public void builtinSourceIsShippedAndProvisionedOnlyIntoAnEmptyArchive() throws IOException {
+        String builtin = readResource(Path.of("muonium", "lx", "builtin_source.js").toString());
+        assertTrue(builtin.startsWith("/**"), "内置脚本缺头注释 —— LxScriptInfo.parse 会当场拒收");
+        assertTrue(builtin.contains("@name"), "内置脚本缺 @name，列表里显示不出名字");
+
+        String java = readJava(Path.of("com", "muoniumplayer", "core", "ncm",
+                "lxsource", "LxSourceStore.java").toString());
+        assertTrue(java.contains("\"/muonium/lx/builtin_source.js\""), "内置资源路径被改动");
+        assertTrue(java.contains("provisionBuiltin(true)") && java.contains("provisionBuiltin(false)"),
+                "首启与老存档必须分开对待：删过内置源的老存档不该被复活");
+        // 装配必须挂在 load() 里（init() 读 getActiveId 即触发），不能等 UI 才装
+        int loadAt = java.indexOf("private static void load()");
+        assertTrue(loadAt > 0, "找不到 load()");
+        assertTrue(java.indexOf("provisionBuiltin(", loadAt) > loadAt,
+                "装配没有接进 load() —— init() 走 getActiveId 时不会自动装上");
+        // 用户已导入脚本时整条跳过
+        assertTrue(java.contains("if (hasUserScript) return;"), "有用户脚本时还在动存档");
+    }
+
     // ════════════════════════════ 接线：入口必须真的接上 ════════════════════════════
 
     @Test
