@@ -1,24 +1,29 @@
-# mpparty-common —— 一起听(服务端房间)客户端
+# mpparty-common：一起听客户端与房间集成
 
-接入服务端 mod **MusicParty / mpsync** 的共用源码,五个版本工程都在 build.gradle 里挂载本目录:
+七棵版本树通过 sourceSets 挂载的共用源码，覆盖服务端房间客户端、直连和局域网集成；没有独立 Gradle 构建。
 
-```gradle
-sourceSets.main.java.srcDirs += ['../mpparty-common/src/main/java']
-```
+规范见[仓库总规范](../AGENTS.md)和[一起听共享层规范](AGENTS.md)。
 
-本目录**不允许出现任何 Minecraft 类型** —— 版本差异(通道 API、玩家 UUID、聊天)全部关在 `MpHost` 接口后面,由各树自己的 `party/net/MpNet.java` 实现。
+## 主要职责
 
-| 文件 | 职责 |
+| 组件 | 职责 |
 | --- | --- |
-| `MpProto` | 线协议:varint 分帧 + 一个 JSON 对象,须与服务端 `yun.shan.mpsync.net.Proto` 逐字节一致 |
-| `MpRoom` / `MpMember` / `MpTrack` | 房间快照的不可变客户端视图 |
-| `MpPartyClient` | 通道、房间状态、时钟、点歌上传、本地控制拦截 |
-| `MpPlayback` | 与播放器内核的桥接:起播、对齐、暂停、纠偏 |
-| `MpNetease` | 用播放器会话查歌曲详情、解取流链接 |
-| `MpLink` | 分享文案 / 短链 / 纯数字还原成歌曲 ID |
-| `MpHost` | 版本相关层的接口 |
-| `ui/MpPartyOverlay` | 房间面板(建房 / 加入 / 邀请 / 成员 / 歌单 / 传输控制) |
+| `MpProto` | 线协议：varint 分帧与 JSON 对象，保持与服务端协议兼容 |
+| `MpRoom` / `MpMember` / `MpTrack` | 客户端房间视图 |
+| `MpPartyClient` | 通道、房间状态、时钟、上传与控制拦截 |
+| `MpPlayback` | 起播、对齐、暂停和纠偏的播放器桥 |
+| `MpNetease` / `MpLink` | 曲目解析与分享链接解析 |
+| `MpHost` | 宿主操作接口，加载器通道由各树实现 |
+| `direct/` | 直连模式与宿主路由等集成 |
+| `lan/` | 集成服务器/局域网房间适配 |
+| `ui/MpPartyOverlay` | 房间与成员/歌单/控制界面 |
 
-播放控制(播放/暂停、进度跳转)必须走 `MpPartyClient` 的统一拦截路径,不得绕过 —— 否则会破坏房间的传输控制权。`ui/MpPartyOverlay` 依赖五树控件框架一致;哪天分叉了,就把它拆回各树 `screens/ncm` 下。
+## 必须保持的边界
 
-服务器没装 mpsync 时,以上全部空转。
+- 加载器注册与版本特有网络 API 留在各树外壳/适配层，本目录零加载器符号。
+- 协议与房间状态机保持中立；现有 `LanMpPlatform` 会使用 Minecraft 集成服务器类型，不能再宣称本目录完全没有 MC 类型。
+- 播放/暂停/跳转通过统一房间权限和控制路径，不从 UI 绕过。
+- `mpserver-core` 是服务端 core 的只读镜像，只走源仓修复与单向同步。
+- 服务器没有 mpsync 时，服务端房间路径应正确降级；直连/LAN 的可用性按各自模式判断，不能把全部功能一并视为空转。
+
+共用代码验证命令与七树双加载器验收要求见根规范。
