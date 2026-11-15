@@ -42,7 +42,7 @@ class HudSettingsTaxonomyStaticTest {
      * 只有 3D 歌词页 +1（30 → 31）；其余页不变。</p>
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(12, 22, 9, 28, 4, 33, 29, 22, 31, 4, 3);
+            Arrays.asList(12, 22, 10, 28, 4, 33, 29, 22, 31, 4, 3);
 
     /**
      * 「常用」页只在 26.3 起存在。
@@ -66,11 +66,11 @@ class HudSettingsTaxonomyStaticTest {
     private static List<Integer> expectedCounts() {
         return hasFavoritesPage()
                 ? COUNTS
-                : Arrays.asList(28, 31, 9, 25, 29, 22, 33, 6, 4, 3);
+                : Arrays.asList(28, 31, 10, 25, 29, 22, 33, 6, 4, 3);
     }
 
     private static int expectedTotal() {
-        return hasFavoritesPage() ? TOTAL : 190;
+        return hasFavoritesPage() ? TOTAL : 191;
     }
 
     private static String versionName() {
@@ -148,9 +148,12 @@ class HudSettingsTaxonomyStaticTest {
      *  动作仅在两个开关都打开时可见；值存同一 music_spin.json）—— 播放页 +2。
      *  同日七树「播放」页新增「语音广播」toggle（26.3 是独立组，其余六树接在
      *  「切出游戏时」组尾；状态存共享层 VoicechatBroadcast 自己的 voicechat_broadcast.json，
-     *  不经 HudConfig）—— 播放页 45 → 46 条，191 → 192；其余六树旧口径 184 → 185。 */
+     *  不经 HudConfig）—— 播放页 45 → 46 条，191 → 192；其余六树旧口径 184 → 185。
+     *  2026-11-08 「面板与卡片」页「样式与大小」组新增「桌面歌词对齐」choice（左靠 / 居中 / 右靠；
+     *  值存共享层 DesktopLyricSetting 自己的 desktop_lyrics.json，不经 HudConfig）——
+     *  面板与卡片 9 → 10，总数 197 → 198（其余六树 190 → 191）。 */
     // 独立模板预设栏目只增加四条 ACTION，不回搬各树原有分类或设置条目。
-    private static final int TOTAL = 197;
+    private static final int TOTAL = 198;
 
     @Test
     @DisplayName("分类顺序、每页条目数和独立模板栏目不许悄悄变")

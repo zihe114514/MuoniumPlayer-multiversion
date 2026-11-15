@@ -29,6 +29,7 @@ import com.muoniumplayer.core.screens.ncm.LyricDuetGroups;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
 import com.muoniumplayer.core.screens.ncm.LyricsPanelGeometry;
 import com.muoniumplayer.core.settings.ClientSettings;
+import com.muoniumplayer.core.settings.DesktopLyricSetting;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.utils.Tuple;
 import com.muoniumplayer.core.utils.WidgetWrapper;
@@ -104,6 +105,11 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         // 相同的响应式视口。在此保留 NumberValues 以保持包装器兼容性。
         this.addValues(alignMode, lyricHeight, lyricColor, currentLyricColor, shadow, singleLine, graceScroll, showRoman, dynIsland, preferAmllLyrics, preferQqQrcLyrics);
 
+        // 对齐的权威值在共享的 DesktopLyricSetting 里（设置页与旧 HUD 编辑器两边都能改）：
+        // 这里让 ModeValue 只做镜像，并在旧编辑器改它时把结果写回配置，避免两套状态打架。
+        alignMode.setValue(DesktopLyricSetting.modeName());
+        alignMode.setValueCallback(mode -> DesktopLyricSetting.set(DesktopLyricSetting.Align.ofMode(mode)));
+
         Tuple<ExtensionWidget, WidgetWrapper.WidgetPosSizeInterface> wrapped = WidgetWrapper.createWrapper(this, this::onRender);
         this.widget = wrapped.getA();
         this.wpsInterface = wrapped.getB();
@@ -116,6 +122,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         currentLyricColor.setValue(new Color(HudConfig.currentLyricColorRgb, true));
         width.setValue((double) HudConfig.lyricWidth);
         height.setValue((double) HudConfig.lyricHeight);
+        // 对齐不在 HudConfig 里（见 DesktopLyricSetting），但同样要在设置页改完后
+        // 让旧 HUD 编辑器面板上那个下拉框跟着变，否则它显示的还是旧值。
+        alignMode.setValue(DesktopLyricSetting.modeName());
     }
 
     /**
@@ -725,7 +734,10 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
 
     /** 本帧应当使用的对齐方式。 */
     private String activeAlignMode() {
-        return duetAlignOverride != null ? duetAlignOverride : this.alignMode.getValue();
+        // 对唱行仍然按段左右分列；其余行读用户在设置页选的「桌面歌词对齐」。
+        // 权威值在共享配置里而不是 alignMode 这个 ModeValue：设置页改的是配置，
+        // ModeValue 只在旧 HUD 编辑器里当镜像（见构造函数里的 setValueCallback）。
+        return duetAlignOverride != null ? duetAlignOverride : DesktopLyricSetting.modeName();
     }
 
     /**

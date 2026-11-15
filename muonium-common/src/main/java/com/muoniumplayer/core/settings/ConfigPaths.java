@@ -56,6 +56,15 @@ public final class ConfigPaths {
     public static final File TOUCH = new File(CONFIG_DIRECTORY, "touch.json");
 
     /**
+     * 桌面歌词的对齐方式（左靠 / 居中 / 右靠）。
+     *
+     * <p>同样刻意不塞进 {@link #HUD}：对齐的消费方是共享层的 {@code MusicLyricsWidget}，
+     * 而 HudConfig 是七棵版本树各自一份的 FORK——一个只在共享层生效的选项写进去，
+     * 等于为了一个 if 改七份配置类。参见 {@code DesktopLyricSetting}。</p>
+     */
+    public static final File DESKTOP_LYRIC = new File(CONFIG_DIRECTORY, "desktop_lyrics.json");
+
+    /**
      * 全屏歌词「Folia 背景」的独立配置。
      *
      * <p>刻意不塞进 {@link #HUD}：这一套参数按背景样式分组、字段多，而且与 QPlayer 那套流体
