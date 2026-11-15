@@ -214,7 +214,7 @@ public final class UpdateChecker {
         currentVersion = modVersion == null ? "" : modVersion.trim();
         mcVersion = minecraftVersion == null ? "" : minecraftVersion.trim();
         loaderId = loader == null ? "" : loader.trim();
-        // MuoniumConfig 伴随分发：每次启动游戏都在这里检查 mods/ 里装没装，没有就自动下载。
+        // 记录车道；仅选择 MuoniumConfig 时检查并下载，稍后切换时由 tick 触发。
         // beginCheck 是七树共用的初始化汇合点（每个客户端 init 都会调），MC 版本与加载器 id
         // 此刻都是登记过的权威值；ensureDownloaded 自己判重、自己起守护线程，这里只做一次
         // 非阻塞询问。会话内下载失败最多重试 3 次（间隔 30s），下次启动重新检查重试；

@@ -563,10 +563,7 @@ public final class HudConfig {
     /**
      * HUD 设置界面用哪一层：MuoniumConfig（默认）、OneConfig 或 ModernUI。
      *
-     * <p>内置自绘界面（{@link #HUD_EDITOR_UI_BUILTIN}）已不作为可选档位：本项目的路线是
-     * 「走魔改 OneConfig」，设置界面统一交给 MuoniumConfig。常量保留只为读档兼容 ——
-     * 老配置里存着 {@code "builtin"} 的人会被 {@link #normalizeHudEditorUi} 归到 MuoniumConfig，
-     * 不会因为找不到那个值而回退到什么奇怪的状态。</p>
+     * <p>保留玩家选择的内置界面；未知值回退到 MuoniumConfig。</p>
      */
     public static final String HUD_EDITOR_UI_BUILTIN = "builtin";
     /** 私有化的 OneConfig（MuoniumConfig），随本 mod 自动下载，界面默认由它渲染。 */
@@ -892,9 +889,10 @@ public final class HudConfig {
         animatedCoverEnabled = true;
     }
 
-    /** 加载已保存的设置；格式错误或超出范围的值安全回退。 */
+    /** 加载已保存的设置；格式错误或超出范围的值安全回退。若为首次运行（文件不存在），则写入默认配置。 */
     public static void load() {
         if (!FILE.exists()) {
+            save();
             return;
         }
         try {
@@ -1449,6 +1447,7 @@ public final class HudConfig {
      * 留着这个值会让人以为还能选回去。未知值同样归到 MuoniumConfig，因为它是默认档。</p>
      */
     private static String normalizeHudEditorUi(String value) {
+        if (HUD_EDITOR_UI_BUILTIN.equalsIgnoreCase(value)) return HUD_EDITOR_UI_BUILTIN;
         if (HUD_EDITOR_UI_ONECONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_ONECONFIG;
         if (HUD_EDITOR_UI_MODERNUI.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MODERNUI;
         return HUD_EDITOR_UI_MCONFIG;

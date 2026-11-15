@@ -887,9 +887,10 @@ public final class HudConfig {
         animatedCoverEnabled = true;
     }
 
-    /** 加载已保存的设置；格式错误或超出范围的值安全回退。 */
+    /** 加载已保存的设置；格式错误或超出范围的值安全回退。若为首次运行（文件不存在），则写入默认配置。 */
     public static void load() {
         if (!FILE.exists()) {
+            save();
             return;
         }
         try {
@@ -1438,6 +1439,7 @@ public final class HudConfig {
     }
 
     private static String normalizeHudEditorUi(String value) {
+        if (HUD_EDITOR_UI_BUILTIN.equalsIgnoreCase(value)) return HUD_EDITOR_UI_BUILTIN;
         if (HUD_EDITOR_UI_ONECONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_ONECONFIG;
         if (HUD_EDITOR_UI_MODERNUI.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MODERNUI;
         return HUD_EDITOR_UI_MCONFIG;

@@ -771,7 +771,7 @@ public final class MuoniumPlayerClient {
      * <p>默认走 MuoniumConfig（本项目魔改的 OneConfig，界面与条目统一在那边维护），由
      * {@link OneConfigHudBridge#open()} 打开它的 Compose 界面。它没装时——首次启动正在下载、
      * 或玩家手动删了——退回自绘界面，让玩家至少还能调 HUD，而不是按 H 没反应。
-     * 自绘界面只剩兜底这一条路径，不再是一个可选项。</p>
+     * 选择内置界面或其他界面不可用时使用自绘界面。</p>
      */
     private void openHudEditor(Minecraft mc) {
         if (HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)
@@ -780,7 +780,8 @@ public final class MuoniumPlayerClient {
         }
         // "oneconfig" 与 "mconfig" 都指向同一个界面：前者是玩家自己装的 OneConfig，
         // 后者是本项目魔改并自动下载的那一份，两者 API 相同，由 OneConfigHudBridge 统一接。
-        if (OneConfigHudBridge.open()) {
+        if (!HudConfig.HUD_EDITOR_UI_BUILTIN.equals(HudConfig.hudEditorUi)
+                && OneConfigHudBridge.open()) {
             return;
         }
         // MuoniumConfig 不在：兜底的自绘界面，只为了让玩家还能动 HUD

@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.muoniumplayer.core.settings.JsonConfigStorage;
+import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.update.SemVer;
 import com.muoniumplayer.core.update.UpdateChecker;
 import com.muoniumplayer.core.utils.network.HttpDownloadRace;
@@ -34,10 +35,10 @@ import java.util.Map;
  * <p>失败不阻挡进游戏：MuoniumConfig 只提供设置界面，下载失败时主体功能（听歌、HUD 绘制）
  * 照常运行，只少了那个界面。这与 Skija 缺原生库不同 —— 那个缺了渲染层整个起不来。</p>
  *
- * <h2>每次启动都查更新，而不是"只在没装时下载"</h2>
+ * <h2>选择 MuoniumConfig 时检查更新</h2>
  * 以前这里只做「mods/ 里没有就下一次」，于是 MuoniumConfig 的 bug 修复只能等玩家升级
  * 整个播放器 —— 客户端把版本号钉死在 {@link #BUILDS} 里，老客户端永远看不到新版。
- * 现在每次启动都读一次远端清单（{@link MuoniumConfigIndex}），比已装版本新才下载：
+ * 选择该界面时每次启动读一次远端清单（{@link MuoniumConfigIndex}），比已装版本新才下载：
  *
  * <ol>
  *   <li>清单优先，{@link #BUILDS} 只是<b>兜底</b>（断网 / 镜像全挂时退回内置值）；</li>
@@ -320,10 +321,10 @@ public final class MuoniumConfigDownload {
     }
 
     /**
-     * 每次启动游戏都查一遍：没装就装，装了但不是最新就更新。
+     * 记录车道；选中 MuoniumConfig 时检查，没装就装，装了但不是最新就更新。
      *
      * <p>调用点是七树共用的 {@code UpdateChecker.beginCheck} 与各加载器入口 —— 每个客户端
-     * init 都会走，所以「每次启动都查」由它们天然保证。判重靠 {@link #started}：一轮会话
+     * init 都会走；判重靠 {@link #started}：一轮会话
      * 只会真正跑一次。只判断就走，绝不在调用线程（通常是主线程）上等网络。</p>
      *
      * @param mcVersion 当前游戏的 MC 版本，例如 {@code "26.3"}
@@ -335,6 +336,7 @@ public final class MuoniumConfigDownload {
         String key = buildKey(mcVersion, loaderId);
         if (key.isEmpty()) return false;
         lane = key;
+        if (!wantsMuoniumConfig()) return false;
 
         // 这是「每次启动都查」的唯一闸：两处调用点（beginCheck 与加载器入口）都会进来，
         // 只有第一个能通过。失败后的会话内重试走 retry()，不走这里。
@@ -342,9 +344,10 @@ public final class MuoniumConfigDownload {
             if (started || inFlight) {
                 return false;
             }
+            if (!startWorker(key)) return false;
             started = true;
+            return true;
         }
-        return startWorker(key);
     }
 
     /**
@@ -357,7 +360,7 @@ public final class MuoniumConfigDownload {
      * @return 是否真的起了后台线程
      */
     private static boolean retry() {
-        if (!enabled()) return false;
+        if (!enabled() || !wantsMuoniumConfig()) return false;
         String key = lane;
         if (key == null || key.isEmpty()) return false;
         return startWorker(key);
@@ -370,7 +373,7 @@ public final class MuoniumConfigDownload {
      * 还是删不掉（文件被别的进程锁着），那种要靠用户动手，自动重试只会刷日志。</p>
      */
     public static boolean shouldRetry() {
-        if (!enabled() || restartRequired || inFlight) {
+        if (!enabled() || !wantsMuoniumConfig() || restartRequired || inFlight) {
             return false;
         }
         State current = state;
@@ -384,7 +387,18 @@ public final class MuoniumConfigDownload {
 
     /** 供宿主 tick 调用：该重试时起一轮。返回是否真的起了。 */
     public static boolean tick() {
+        if (!started && lane != null && !lane.isEmpty() && wantsMuoniumConfig()) {
+            int slash = lane.indexOf('/');
+            if (slash > 0) return ensureDownloaded(lane.substring(0, slash), lane.substring(slash + 1));
+        }
         return shouldRetry() && retry();
+    }
+
+    /** 判断是否该下载MuoniumConfig **/
+    private static boolean wantsMuoniumConfig() {
+        // OneConfig 存在时，MuoniumConfig 会与它冲突。
+        return !HudInitialSelection.isOneConfigInstalled()
+                && HudConfig.HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi);
     }
 
     /**
@@ -456,6 +470,11 @@ public final class MuoniumConfigDownload {
             if (entry == null || !entry.isUsable()) {
                 // 这个 MC 版本/加载器还没有对应构建：不下载，也不刷日志。
                 state = stuckState(stuck);
+                return;
+            }
+            if (!wantsMuoniumConfig()) {
+                state = stuckState(stuck);
+                synchronized (LOCK) { started = false; }
                 return;
             }
             target = entry;
@@ -809,6 +828,7 @@ public final class MuoniumConfigDownload {
      * （纯外观损失，常驻会变成骚扰），由各树渲染器自己管窗口。</p>
      */
     public static boolean noticeVisible() {
+        if (HudInitialSelection.noticeVisible()) return true;
         State current = state();
         if (current.phase() == Phase.DOWNLOADING || current.phase() == Phase.DONE) {
             return true;
@@ -831,6 +851,9 @@ public final class MuoniumConfigDownload {
      * 而它至少能解释为什么没动静。</p>
      */
     public static List<String> noticeLines() {
+        if (HudInitialSelection.noticeVisible()) {
+            return List.of("检测到已安装 OneConfig，为避免冲突", "已将 HUD 设置界面切换为内置界面，并且不下载MuoniumConfig");
+        }
         State current = state();
         List<String> lines = new ArrayList<>();
         switch (current.phase()) {

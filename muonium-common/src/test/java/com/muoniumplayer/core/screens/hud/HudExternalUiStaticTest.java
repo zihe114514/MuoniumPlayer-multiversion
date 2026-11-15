@@ -29,6 +29,20 @@ class HudExternalUiStaticTest {
     private static final Path SHARED_JAVA = ProjectPaths.sharedJava();
 
     @Test
+    @DisplayName("H 键尊重内置选择，ModernUI 不可用时仍尝试 OneConfig 桥")
+    void dispatchKeepsOneConfigFallback() throws IOException {
+        String client = read(ProjectPaths.sourceFile(Paths.get(
+                "com", "muoniumplayer", "MuoniumPlayerClient.java")));
+        int start = client.indexOf("private void openHudEditor(Minecraft mc)");
+        assertTrue(start >= 0, "缺少 H 键界面分派");
+        String dispatch = client.substring(start, client.indexOf("new GuiHudEditorPro()", start))
+                .replace("\r\n", "\n");
+        assertTrue(dispatch.contains("if (!HudConfig.HUD_EDITOR_UI_BUILTIN.equals(HudConfig.hudEditorUi)"
+                        + "\n                && OneConfigHudBridge.open())"),
+                "内置选择必须跳过 OneConfig 桥，ModernUI 未打开时仍应尝试该桥");
+    }
+
+    @Test
     @DisplayName("hudEditorUi 认 modernui / mconfig，未知值归到 mconfig（本项目默认就是它）")
     @Disabled("hotfix 2.4.2 先行：MuoniumConfig 主路径的 HudConfig/分派/模型段只在 26.3 收口，六树 compat 待移植后恢复")
     void configAcceptsModernUiLayer() throws IOException {
