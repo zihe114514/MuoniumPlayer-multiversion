@@ -126,6 +126,8 @@ class CineStaticTest {
             String fov = readTree("mixin", "CineFovMixin.java");
             assertTrue(fov.contains("getFov") && fov.contains("RETURN"),
                     "FOV punch 必须挂在 getFov 的返回值上");
+            assertTrue(fov.contains("@Inject(method = \"getFov\", at = @At(\"RETURN\"), cancellable = true)"),
+                    "修改 FOV 返回值的注入必须允许取消，否则 setReturnValue 会崩溃");
             if (!is26x()) {
                 assertTrue(fov.contains("GameRenderer.class"),
                         "旧世代 FOV 在 GameRenderer.getFov(Camera,float,boolean)");

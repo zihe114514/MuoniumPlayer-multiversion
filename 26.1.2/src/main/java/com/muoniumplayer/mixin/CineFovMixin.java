@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(Camera.class)
 abstract class CineFovMixin {
 
-    @Inject(method = "getFov", at = @At("RETURN"))
+    @Inject(method = "getFov", at = @At("RETURN"), cancellable = true)
     private void muonium$cineFovPunch(CallbackInfoReturnable<Float> cir) {
         if (!CineDirector.isActive()) return;
         float offset = CineDirector.fovOffsetDeg();
