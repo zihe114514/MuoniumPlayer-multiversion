@@ -58,7 +58,12 @@ public class OpenAPIImpl extends OpenAPI {
 
     @Override
     public void displayScreen(ExtensionScreen screen) {
-        Minecraft.getInstance().gui.setScreen(screen);
+        Minecraft mc = Minecraft.getInstance();
+        boolean returningFromPlayer = screen == null && mc.gui.screen() instanceof com.muoniumplayer.core.screens.ncm.NCMScreen;
+        mc.gui.setScreen(screen);
+        if (returningFromPlayer && mc.gui.screen() == null) {
+            com.muoniumplayer.core.utils.IMBlockerCompat.restoreGameIMEState();
+        }
     }
 
     @Override
