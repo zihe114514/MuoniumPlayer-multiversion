@@ -5,10 +5,8 @@ import com.muoniumplayer.core.management.UiFont;
 import com.muoniumplayer.core.management.UiFontLibrary;
 
 import java.io.File;
-import java.io.IOException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.nio.file.Files;
 
 /**
  * 让 MuoniumConfig 的设置界面跟随播放器当前选中的字体，并且**热切换**。
@@ -29,115 +27,124 @@ public final class MuoniumFontBridge {
     private static final String OVERRIDE_CLASS = "org.polyfrost.oneconfig.api.ui.v1.UiFontOverride";
     private static final String SOURCE_CLASS = OVERRIDE_CLASS + "$FontSource";
 
-    private static Boolean available;
-    private static boolean failed;
-    private static Object installedSource;
-    private static String installedId;
+    private static volatile Boolean available;
+    private static volatile Object installedSource;
+    private static volatile FontSnapshot snapshot;
+    private static String lastWarning;
+
+    private static final class FontSnapshot {
+        final String id;
+        final byte[] regular;
+        final byte[] bold;
+        final byte[] fallback;
+
+        FontSnapshot(String id, byte[] regular, byte[] bold, byte[] fallback) {
+            this.id = id;
+            this.regular = regular;
+            this.bold = bold;
+            this.fallback = fallback;
+        }
+
+        boolean matches(FontSnapshot other) {
+            return id.equals(other.id)
+                    && java.util.Arrays.equals(regular, other.regular)
+                    && java.util.Arrays.equals(bold, other.bold)
+                    && java.util.Arrays.equals(fallback, other.fallback);
+        }
+    }
 
     private MuoniumFontBridge() {
     }
 
     /** MuoniumConfig 的字体覆盖 API 是否存在。 */
     public static boolean isAvailable() {
-        if (available != null) return available;
+        if (Boolean.TRUE.equals(available)) return true;
         try {
             Class.forName(SOURCE_CLASS, false, MuoniumFontBridge.class.getClassLoader());
             available = Boolean.TRUE;
         } catch (Throwable absent) {
             available = Boolean.FALSE;
         }
-        return available;
+        return Boolean.TRUE.equals(available);
     }
 
     /**
-     * 按播放器当前字体刷新 MuoniumConfig 的界面字体。
-     *
-     * <p>在字体切换成功后调一次即可。</p>
-     *
-     * <p><b>只在启动时接管一次，之后不再跟随热切换</b>：MuoniumConfig 是个独立的 Compose 应用，
-     * 它的字体缓存以 identity 为键，每次热切换都要把整屏文字重新栅格化；而玩家在设置界面里
-     * 换字体时，屏幕正被那个界面占着 —— 换的那一帧字体表是空的，整屏变方块，且不一定会自己
-     * 恢复（实测就是这个现象）。设置界面不跟随换字体，比换字体时界面短暂变空白要好得多。</p>
-     *
-     * @return 是否成功接上（MuoniumConfig 不存在时返回 false，属于正常路径）
+     * Keeps one provider installed while resolving the currently selected font on demand.
+     * The host calls this after selection changes so Compose can invalidate its font families.
      */
     public static boolean sync() {
-        if (!isAvailable() || failed) return false;
+        if (!isAvailable()) return false;
         try {
-            // 已经接管过就不再动：见上面的说明，热切换会让设置界面在切换那一帧失去字形。
-            if (installedSource != null) return true;
-
             UiFont active = UiFontLibrary.getActive();
-            // 没有汉字的字体不接管：设置界面里几乎全是中文，换上去就是整屏方块。
-            // 让 MuoniumConfig 保持它自带的那份（同样含 CJK），界面照常可读。
-            if (active != null && !active.hasCjk()) {
+            String id = describe(active);
+            byte[] regular = FontManager.uiFontBytesForBridge(false);
+            byte[] bold = active != null && !active.isBuiltin() && !active.hasBold()
+                    ? null : FontManager.uiFontBytesForBridge(true);
+            boolean needsCjkFallback = active == null || active.isBuiltin() || !active.hasCjk();
+            byte[] fallback = needsCjkFallback ? FontManager.builtinUiFallbackBytes() : null;
+            if (!validFont(regular) || (needsCjkFallback && !validFont(fallback))) {
+                if (installedSource != null) {
+                    clearOverride("当前字体无法提供可读字节；设置界面退回主题默认字体");
+                    installedSource = null;
+                    snapshot = null;
+                } else {
+                    warnOnce("当前字体无法提供可读字节或缺少 CJK fallback；保留 MuoniumConfig 默认字体", null);
+                }
                 return false;
             }
-            install(active, describe(active));
+            FontSnapshot next = new FontSnapshot(id, regular, validFont(bold) ? bold : null, fallback);
+
+            if (installedSource != null) {
+                FontSnapshot current = snapshot;
+                if (current == null || !current.matches(next)) {
+                    snapshot = next;
+                    bumpRevision();
+                    lastWarning = null;
+                }
+                return true;
+            }
+
+            ClassLoader loader = MuoniumFontBridge.class.getClassLoader();
+            Class<?> sourceType = Class.forName(SOURCE_CLASS, true, loader);
+            Class<?> overrideType = Class.forName(OVERRIDE_CLASS, true, loader);
+            snapshot = next;
+            Object source = Proxy.newProxyInstance(sourceType.getClassLoader(), new Class<?>[]{sourceType},
+                    (proxy, method, args) -> answer(proxy, method, args));
+            overrideType.getMethod("set", sourceType).invoke(null, source);
+            installedSource = source;
+            lastWarning = null;
             return true;
         } catch (Throwable t) {
-            failed = true;
+            warnOnce("MuoniumConfig 字体桥安装失败；保留设置界面默认字体", t);
+            clearOverride(null);
+            installedSource = null;
+            snapshot = null;
             return false;
         }
     }
 
-    /** 把名字写进 id：换字体时 id 变化，MuoniumConfig 那边的缓存键随之失效。 */
-    private static String describe(UiFont font) {
-        if (font == null) return "builtin";
-        String name = font.getDisplayName();
-        if (name == null || name.isEmpty()) name = font.getId();
-        // 文件型字体带上最后修改时间：玩家原地替换同名文件时也能换掉
-        File file = font.getFile();
-        if (file != null && file.isFile()) {
-            return name + ":" + file.length() + ":" + file.lastModified();
-        }
-        return name;
-    }
-
-    private static void install(UiFont font, String id) throws Exception {
-        ClassLoader loader = MuoniumFontBridge.class.getClassLoader();
-        Class<?> sourceType = Class.forName(SOURCE_CLASS, true, loader);
-        Class<?> overrideType = Class.forName(OVERRIDE_CLASS, true, loader);
-
-        byte[] regular = readFontBytes(font, false);
-        if (regular == null) {
-            // 拿不到字节就别覆盖：保持 MuoniumConfig 自带字体，界面至少不会变豆腐块
-            return;
-        }
-        byte[] bold = readFontBytes(font, true);
-
-        Object source = Proxy.newProxyInstance(
-                sourceType.getClassLoader(),
-                new Class<?>[]{sourceType},
-                (proxy, method, args) -> answer(method, args, id, regular, bold));
-
-        Method set = overrideType.getMethod("set", sourceType);
-        set.invoke(null, source);
-
-        installedSource = source;
-        installedId = id;
-    }
-
-    private static Object answer(Method method, Object[] args, String id, byte[] regular, byte[] bold) {
+    private static Object answer(Object proxy, Method method, Object[] args) {
+        FontSnapshot current = snapshot;
         switch (method.getName()) {
             case "id":
-                return id;
+                return current == null ? "muonium:unavailable" : current.id;
             case "regular":
-                return regular;
+                return current == null ? null : current.regular;
             case "medium":
-                return regular;
+                return current == null ? null : current.regular;
             case "semibold":
-                return bold != null ? bold : regular;
+                return current == null ? null : current.bold;
             case "bold":
-                return bold != null ? bold : regular;
+                return current == null ? null : current.bold;
+            case "fallback":
+                return current == null ? null : current.fallback;
             case "hashCode":
-                return System.identityHashCode(id);
+                return System.identityHashCode(proxy);
             case "equals":
-                return args != null && args.length == 1 && id.equals(String.valueOf(args[0]));
+                return args != null && args.length == 1 && proxy == args[0];
             case "toString":
-                return "MuoniumFontSource[" + id + "]";
+                return "MuoniumFontSource[dynamic]";
             default:
-                // FontSource 上没有需要真跑的 default 方法：四个字重与 id() 都已显式返回
                 return null;
         }
     }
@@ -146,38 +153,71 @@ public final class MuoniumFontBridge {
         try {
             Class<?> overrideType = Class.forName(OVERRIDE_CLASS, true, MuoniumFontBridge.class.getClassLoader());
             overrideType.getMethod("bumpRevision").invoke(null);
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            warnOnce("MuoniumConfig 字体 revision 刷新失败", t);
         }
     }
 
-    /** 回到 MuoniumConfig 自带字体（播放器切回「内置字体」时用）。 */
-    public static void clear() {
-        installedSource = null;
-        installedId = null;
+    private static void clearOverride(String reason) {
+        snapshot = null;
         try {
             Class<?> overrideType = Class.forName(OVERRIDE_CLASS, true, MuoniumFontBridge.class.getClassLoader());
             overrideType.getMethod("clear").invoke(null);
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            if (reason != null) warnOnce(reason, t);
+        }
+        if (reason != null) warnOnce(reason, null);
+    }
+
+    private static void warnOnce(String message, Throwable cause) {
+        if (message.equals(lastWarning)) return;
+        lastWarning = message;
+        if (cause == null) System.out.println("[MuoniumPlayer/OneConfigFont] " + message);
+        else {
+            System.out.println("[MuoniumPlayer/OneConfigFont] " + message + ": " + cause);
+            cause.printStackTrace(System.out);
         }
     }
 
-    /**
-     * 读当前字体对应字重文件的字节。
-     *
-     * <p>文件型字体直接读；系统字体与内置字体用 AWT 定位能拿到的字体文件，拿不到就返回 null
-     * （调用方据此退回 MuoniumConfig 自带字体）。</p>
-     */
-    private static byte[] readFontBytes(UiFont font, boolean wantBold) {
-        try {
-            File direct = font != null ? font.getFile() : null;
-            if (direct != null && direct.isFile()) {
-                if (!wantBold) return Files.readAllBytes(direct.toPath());
-                // 单文件字体没有独立粗体，拿同一份让 UI 用合成粗体
-                return null;
-            }
-            return FontManager.fontBytesForUi(font, wantBold);
-        } catch (IOException | RuntimeException ignored) {
-            return null;
+    private static boolean validFont(byte[] bytes) {
+        if (bytes == null || bytes.length < 12) return false;
+        return (bytes[0] == 0 && bytes[1] == 1 && bytes[2] == 0 && bytes[3] == 0)
+                || (bytes[0] == 'O' && bytes[1] == 'T' && bytes[2] == 'T' && bytes[3] == 'O')
+                || (bytes[0] == 't' && bytes[1] == 'r' && bytes[2] == 'u' && bytes[3] == 'e')
+                || (bytes[0] == 't' && bytes[1] == 't' && bytes[2] == 'c' && bytes[3] == 'f');
+    }
+
+    private static String describe(UiFont font) {
+        if (font == null) return "builtin";
+        StringBuilder id = new StringBuilder(font.getId());
+        File file = font.getFile();
+        if (file != null) {
+            id.append(':').append(file.length()).append(':').append(file.lastModified());
+            File bold = boldCompanion(file);
+            if (bold != null) id.append(':').append(bold.length()).append(':').append(bold.lastModified());
         }
+        return id.toString();
+    }
+
+    private static File boldCompanion(File regular) {
+        String name = regular.getName();
+        int dot = name.lastIndexOf('.');
+        String stem = dot < 0 ? name : name.substring(0, dot);
+        String ext = dot < 0 ? "" : name.substring(dot);
+        String lower = stem.toLowerCase(java.util.Locale.ROOT);
+        String base = lower.endsWith("-regular") ? stem.substring(0, stem.length() - 8)
+                : lower.endsWith(" regular") ? stem.substring(0, stem.length() - 8) : stem;
+        File dir = regular.getParentFile();
+        if (dir == null) return null;
+        for (String candidate : new String[]{base + "-Bold" + ext, base + "-bold" + ext, base + " Bold" + ext, stem + "bd" + ext}) {
+            File file = new File(dir, candidate);
+            if (file.isFile() && !file.equals(regular)) return file;
+        }
+        return null;
+    }
+
+    public static void clear() {
+        clearOverride(null);
+        installedSource = null;
     }
 }

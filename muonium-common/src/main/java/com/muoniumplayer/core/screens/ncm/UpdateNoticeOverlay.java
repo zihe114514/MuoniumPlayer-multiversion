@@ -1,15 +1,17 @@
 package com.muoniumplayer.core.screens.ncm;
 
+import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.core.management.FontManager;
-import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.GlassLook;
+import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
+import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RectWidget;
-import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.update.UpdateChecker;
 import com.muoniumplayer.core.utils.KeyboardUtils;
+import com.muoniumplayer.party.ui.PartyIcons;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -17,171 +19,110 @@ import java.util.List;
 import java.util.function.BooleanSupplier;
 
 /**
- * 更新相关提示的界面本体，有两套内容：
+ * 主菜单更新提示的 Skija 本体；宿主只转发尺寸、输入与关闭结果。
  *
- * <ul>
- *   <li><b>有新版本</b>（{@link UpdateChecker#state()} 为 {@code STATE_OUTDATED}）—— 版本号、
- *       更新说明、前往下载；</li>
- *   <li><b>连不上服务器</b>（{@code STATE_CHECK_FAILED}）—— 连续多次启动都没拉到清单时提醒
- *       用户检查网络，并给一个「重试检查」。</li>
- * </ul>
- *
- * <p>与 {@link FfmpegNoticeOverlay} 同构，理由也一样：这个提示要在<b>主菜单</b>就弹出来，
- * 而主菜单上没有播放器界面可以承载浮层，所以做成一个能独立渲染的 {@link NCMPanel} ——
- * 宿主是个最薄的 {@code GuiUpdateNotice}，只负责开 Skija 帧、转发输入、收起后回到原界面。</p>
- *
- * <p><b>「先不更新」的额度只对关键更新生效</b>：这次提示<b>每次启动都会再弹</b>。普通更新
- * （清单里 {@code critical} 为 false）不限次数，随时可以收起，永不锁死；关键更新
- * 同一个新版本最多先不更新 {@link UpdateChecker#MAX_SKIP_COUNT} 次，每一次收起提示
- * （点「先不更新」或按 ESC）都用掉一格；用尽后 {@link UpdateChecker#mustUpdate()} 成立，
- * 界面上不再有任何绕过的出口 —— 「先不更新」按钮不再出现，ESC 与点卡片外面也失效，
- * 只剩「前往下载」（它此时只打开浏览器，不会收起提示，见下）。清单换成更新的版本时额度重新给满。</p>
- *
- * <p>点卡片外面刻意<b>不</b>算一次「先不更新」：关键更新的额度是有限资源，误触一下用掉一格太亏，
- * 想走就走按钮或 ESC。</p>
- *
- * <p><b>锁死状态下「前往下载」不收起提示</b> —— 这一点必须保住：提示一关用户就回到主菜单、
- * 也就能进游戏了，额度用尽等于白设。所以此时它只负责打开系统浏览器（打不开就把地址复制进
- * 剪贴板），提示留在屏幕上；用户下载、装好新版本、重启游戏之后自然就不再弹了。见
- * {@link #openDownloadPage()}。</p>
+ * <p>普通更新可无限暂缓；关键更新每个版本最多暂缓
+ * {@link UpdateChecker#MAX_SKIP_COUNT} 次。只有按钮与 ESC 消费一次额度，遮罩只吞点击。
+ * 额度用尽后只有下载主行动，打开浏览器或复制地址也不能收起提示。</p>
  */
 public final class UpdateNoticeOverlay extends NCMPanel {
 
-    /** 标题：两套内容各一份。 */
-    private static final String UPDATE_HEADING = "MuoniumPlayer 有新版本啦喵~";
-    private static final String FAILED_HEADING = "连不上更新服务器喵…";
+    private static final String UPDATE_HEADING = "新版本，准备就绪";
+    private static final String FAILED_HEADING = "暂时连不上更新服务";
     private static final String DOWNLOAD = "前往下载";
     private static final String COPY_LINK = "复制下载链接";
     private static final String COPY_PAGE_LINK = "复制更新页地址";
-    /** 「先不更新」＝ 收起提示。关键更新每次收起用掉一格额度；普通更新不限次。 */
     private static final String LATER = "先不更新";
     private static final String RETRY = "重试检查";
     private static final String OK = "我知道了";
-
-    /**
-     * 正文最多显示的行数；再长会在最后一行截断，卡片不允许长到顶出屏幕。
-     *
-     * <p>上限留得比较宽是因为正文本身含三段（当前/最新版本、次数/不强制说明、更新公告），
-     * 而公告一动就是上百字；行数压太紧会把最该看的公告截掉。</p>
-     */
-    private static final int MAX_BODY_LINES = 8;
-
-    /** 正文里的显式换行：次数说明与更新公告必须分成两行，见 {@link #buildBody()}。 */
     private static final String PARAGRAPH_BREAK = "\n";
 
-    /** 卡片左右留白，标题、正文、底板、按钮共用同一套内缩，任何一处改动都不会各自跑偏。 */
-    private static final double SIDE_INSET = 22.0;
-    /** 卡片宽度的下限与上限：太窄放不下按钮，太宽一行字读起来要来回扫。 */
-    private static final double CARD_MIN_WIDTH = 320.0;
-    private static final double CARD_MAX_WIDTH = 460.0;
-    /** 徽标与标题所在的高度带。 */
-    private static final double HEADER_CENTER_Y = 28.0;
-    /** 正文区上沿（正文文字的第一行基线所在处）。 */
-    private static final double BODY_TOP = 52.0;
-    /** 承载正文的圆角底板在文字四周留出的边距。 */
-    private static final double BODY_PAD = 7.0;
-    /** 按钮高度；下面那一行链接区的高度由字体决定。 */
-    private static final double BUTTON_HEIGHT = 26.0;
-    /** 分隔线到按钮之间的间距。 */
-    private static final double BUTTONS_TOP_GAP = 9.0;
-    /** 按钮与下面那行链接之间的间距。 */
-    private static final double LINK_GAP = 10.0;
-    private static final double CARD_BOTTOM_END_PAD = 12.0;
+    /** 只限制首屏的期望高度，不再截掉清单里的更新说明；其余内容可滚动。 */
+    private static final int MAX_BODY_LINES = 8;
+    private static final double SIDE_INSET = 24.0;
+    private static final double CARD_MAX_WIDTH = 636.0;
+    private static final double BODY_TOP = 148.0;
+    private static final double BODY_PAD = 16.0;
+    private static final double VERSION_HEIGHT = 108.0;
+    private static final double NOTES_TOP = 178.0;
+    private static final double POLICY_HEIGHT = 34.0;
+    private static final double STATUS_HEIGHT = 38.0;
+    private static final double LINK_HEIGHT = 30.0;
+    private static final double FOOTER_HEIGHT = POLICY_HEIGHT + 8 + STATUS_HEIGHT + 12
+            + NcmExpressive.BUTTON_HEIGHT + 6 + LINK_HEIGHT + 14;
 
-    /** 强调按钮（前往下载 / 重试检查）的底色，与「未安装分析模型」提示里的安装按钮同色。 */
-    private static final int PRIMARY_COLOR = 0xD2913A;
-    private static final int PRIMARY_HOVER_COLOR = 0xE5B24E;
-    /** 复制链接 / 打不开浏览器 / 重试失败等一行反馈的颜色。 */
-    private static final int STATUS_COLOR = 0xFFB74D;
-    /** 文字链接悬停时的颜色。 */
-    private static final int LINK_HOVER_COLOR = 0xFFD08A;
-    /** 徽标底色：有更新用信息蓝，连不上服务器用警告琥珀（与 ffmpeg 提示的警告色同一族）。 */
-    private static final int BADGE_INFO_COLOR = 0x3F7FBF;
-    private static final int BADGE_WARN_COLOR = 0xD2762F;
-
-    /** 本次提示是「连不上服务器」那一套（构造时定死：这个界面存在期间它不会变）。 */
+    /** 提示类型与锁定状态在这一实例存在期间不变，重试得到新结论时由宿主重建。 */
     private final boolean networkFailure;
-    /** 是否处于「跳过额度用尽 / 关键更新」的锁死状态，见类注释。 */
     private final boolean forcedUpdate;
-
-    private boolean closing;
-    /** 进出场那一条时钟，和 {@code NcmSheet} 那六个浮层共用同一个 {@link SheetClock}。 */
+    private final NcmExpressiveLayout layout = new NcmExpressiveLayout();
     private final SheetClock clock = new SheetClock();
-    /** 遮罩与卡片共同读的那一档进度（已经过缓动）。 */
     private double presentation;
+    private boolean closing;
     private boolean resolved;
-
-    /** 已经点了「重试检查」、正在等结论。 */
     private boolean retryPending;
-
-    /** 点了「复制下载链接」、浏览器打不开、或重试又失败时的一行反馈。 */
     private String status;
-    /** 按当前卡片宽度换行后的正文。 */
-    private String[] bodyLines = new String[0];
-    /** 上一次换行用的宽度；宽度没变就不重复换行（换行要逐字累加字形宽度）。 */
-    private double wrappedForWidth = -1.0;
-    /** 上一次换行用的原文。正文可能比界面晚到（检查在守护线程上跑），原文一变必须重排。 */
-    private String wrappedSource;
-    /** 上一次换行时字形是否已全部就绪；没就绪算出来的宽度是 0，必须下一帧重算。 */
-    private boolean wrappedWithLoadedGlyphs;
-    /** 标题是否已经降到小一号字体；只在需要变化时才换字体。 */
-    private boolean titleCompact;
 
     private Panel dialog;
-    private RoundedButtonWidget leftButton;
-    private RoundedButtonWidget rightButton;
-    /** 链接区的槽位，按加入顺序从左到右排；不出现的槽位每帧显式清掉尺寸。 */
-    private final List<LinkSlot> linkSlots = new ArrayList<LinkSlot>();
+    private Panel header;
+    private ScrollPanel bodyViewport;
+    private Panel bodyContent;
+    private Panel policyPanel;
+    private Panel statusPanel;
+    private final List<LabelWidget> bodyLabels = new ArrayList<>();
+    private final List<LinkSlot> linkSlots = new ArrayList<>();
+    private String[] bodyLines = new String[0];
+    private String[] policyLines = new String[0];
+    private String[] statusLines = new String[0];
+    private double wrappedForWidth = -1;
+    private String wrappedSource;
+    private boolean wrappedWithLoadedGlyphs;
+    private CFontRenderer wrappedFont;
+    private long wrappedFontRevision = -1;
+    private double captionWidth = -1;
+    private String captionPolicy;
+    private String captionStatus;
+    private CFontRenderer captionFont;
+    private long captionFontRevision = -1;
+    private boolean captionsWithLoadedGlyphs;
 
-    public UpdateNoticeOverlay() {
-        this.networkFailure = UpdateChecker.state() == UpdateChecker.STATE_CHECK_FAILED;
-        // 额度用尽这件事在界面存在期间不会变（跳过一次就收起了），所以只算一次。
-        this.forcedUpdate = !this.networkFailure && UpdateChecker.mustUpdate();
-    }
-
-    /** 链接区的一个槽位：标签本身 + 这个槽位此刻该不该出现。 */
     private static final class LinkSlot {
-
+        private final Panel hitArea;
         private final LabelWidget label;
         private final BooleanSupplier visible;
 
-        private LinkSlot(LabelWidget label, BooleanSupplier visible) {
+        private LinkSlot(Panel hitArea, LabelWidget label, BooleanSupplier visible) {
+            this.hitArea = hitArea;
             this.label = label;
             this.visible = visible;
         }
     }
 
-    /** 正在退场：还画得着，但 {@link NCMPanel} 会把它这一帧的输入整个吞掉。 */
+    public UpdateNoticeOverlay() {
+        networkFailure = UpdateChecker.state() == UpdateChecker.STATE_CHECK_FAILED;
+        forcedUpdate = !networkFailure && UpdateChecker.mustUpdate();
+    }
+
     @Override
     protected boolean isDismissing() {
         return closing;
     }
 
     public boolean shouldClose() {
-        // 退场播完才回收，理由见 createDialog 里那条遮罩。
         return clock.isGone();
     }
 
-    /** 收起提示，不记账。非锁死状态下「前往下载」、以及重试连上之后走这里。 */
+    /** 下载（未锁定时）与重试成功可以收起，不消费暂缓额度。 */
     public void cancel() {
-        if (resolved) return;
+        if (forcedUpdate || resolved) return;
         resolved = true;
         closing = true;
         clock.requestDismiss();
     }
 
-    /**
-     * 「先不更新」「我知道了」以及 ESC 都走这里：收起提示，关键更新在「有更新」那一套里扣掉一格额度
-     * （普通更新不限次，{@code noteSkippedOnce()} 里自己不记账）。
-     *
-     * <p>关键更新额度用尽时这里什么都不做 —— 那就是「必须更新」的落地点。弹不弹由宿主问
-     * {@link UpdateChecker#shouldShow()}，而那个判断不看额度：额度管的是「还能不能先不更新」。</p>
-     */
+    /** 包括退场期间重复 ESC 在内，一次收起请求最多扣一次额度。 */
     public void dismissForNow() {
-        if (forcedUpdate) return;
-        if (!networkFailure) {
-            UpdateChecker.noteSkippedOnce();
-        }
+        if (forcedUpdate || resolved) return;
+        if (!networkFailure) UpdateChecker.noteSkippedOnce();
         cancel();
     }
 
@@ -189,186 +130,119 @@ public final class UpdateNoticeOverlay extends NCMPanel {
         dismissForNow();
     }
 
-    /**
-     * 「必须更新」时任何关闭请求都该被拒绝。
-     *
-     * <p>宿主用它兜住其它关闭路径（原版 {@code Screen.onClose()}、别的代码直接调它）——
-     * 我们自己的 ESC 走 {@link #handleEscape()}，但「关不关得成」不该只由那一条路径决定。</p>
-     *
-     * <p><b>没有例外通道</b>：这里曾经留过一个「浏览器打不开就放开锁」的逃生阀，但它正好就是
-     * 用户绕开更新进游戏的出口，已经删掉。锁死时唯一的出路是把新版本装上。</p>
-     */
     public boolean blocksClosing() {
         return forcedUpdate;
     }
 
+    /**
+     * 独立宿主传入的滚轮量是 0，沿现有 compat 累加器读一次；未来宿主显式转发时不再读它。
+     * 控件树不分发同一格滚轮多次，退场时只清掉输入，不让它留给回到的主菜单。
+     */
+    @Override
+    public void renderWidget(double mouseX, double mouseY, int dWheel) {
+        int wheel = dWheel == 0 ? Mouse.getDWheel() : dWheel;
+        layout.render(this, mouseX, mouseY, wheel, (x, y, input) -> {
+            super.renderWidget(x, y, 0);
+            if (!closing && input != 0 && bodyViewport != null) bodyViewport.forwardWheel(input);
+        });
+    }
+
+    @Override
+    public void onMouseClickReceived(double mouseX, double mouseY, int button) {
+        layout.dispatch(this, mouseX, mouseY, button, (x, y, input) -> super.onMouseClickReceived(x, y, input));
+    }
+
+    @Override
+    public void onDWheelReceived(double mouseX, double mouseY, int dWheel) {
+        layout.dispatch(this, mouseX, mouseY, dWheel, (x, y, input) -> super.onDWheelReceived(x, y, input));
+    }
+
     @Override
     public void onInit() {
-        // 遮罩只压一半黑：底下就是主菜单，压太狠会让整屏发闷（这正是原实现的观感问题）。
         RectWidget mask = new RectWidget();
         addChild(mask);
-        mask.setClickable(false);
-        mask.setColor(0x000000);
-        // 遮罩跟着卡片同一条进度淡。写死 .45f 的话，卡片还没出现整屏已经先黑了，
-        // 关掉时又是卡片啪一下没了、遮罩还黑着。
+        mask.setClickable(false).setColor(0x000000);
         mask.setBeforeRenderCallback(() -> {
             mask.setMargin(0);
-            mask.setAlpha((float) (presentation * .45));
+            mask.setAlpha((float) (presentation * .48));
         });
-        // 时钟跑在根组件这一格：它先于所有子组件，遮罩和卡片于是读到同一个值。
         setBeforeRenderCallback(() -> presentation = TransitionCurveCache.MOTION.at(clock.tick()));
-
-        // 点在卡片外面只是被这里吃掉（防止点到下层的原版界面）：额度是有限资源，
-        // 误触一下就用掉一格太亏，想收起提示请走「先不更新」或 ESC。
-        setOnClickCallback((x, y, button) -> button == 0);
+        // 遮罩绝不收起、绝不记账，也不把点击传给下层主菜单。
+        setOnClickCallback((x, y, button) -> true);
 
         dialog = new Panel();
         addChild(dialog);
         dialog.setOnClickCallback((x, y, button) -> true);
-        // 高度由正文行数决定，所以尺寸每帧在渲染前重算：窗口变窄会让正文多一行，卡片必须跟着
-        // 长高，否则按钮会压在正文上。重试的结论也在这里轮询。
-        dialog.setBeforeRenderCallback(() -> layoutDialog());
-
-        RoundedRectWidget background = new RoundedRectWidget();
-        dialog.addChild(background);
-        background.setClickable(false);
-        background.setRadius(11);
-        background.setColor(getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
-        background.setBeforeRenderCallback(() -> background.setMargin(0));
+        dialog.setBeforeRenderCallback(this::layoutDialog);
+        RoundedRectWidget background = NcmExpressive.surface(dialog, 0, 0,
+                dialog::getWidth, dialog::getHeight, NcmExpressive.DIALOG_RADIUS,
+                () -> NcmExpressivePalette.live().surface());
         background.setGlassSheet(GlassLook.Surface.PLAYER);
-        // 底板自己那层深色压薄：不压的话刚贴上去的糊背景仍然在它底下，弹窗读起来就是一块实色板。
-        background.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-
-        RoundedRectWidget badge = new RoundedRectWidget();
-        dialog.addChild(badge);
-        badge.setClickable(false);
-        badge.setRadius(12);
-        badge.setColor(networkFailure ? BADGE_WARN_COLOR : BADGE_INFO_COLOR);
-        badge.setBeforeRenderCallback(() -> badge.setBounds(SIDE_INSET, 16, 24, 24));
-
-        // Fontello 的字形随播放器内置，避免半角符号在缺字形时退化成方框。
-        LabelWidget badgeIcon = new LabelWidget(
-                networkFailure ? FontelloIcons.WARNING : FontelloIcons.LINK, FontManager.fontello18);
-        dialog.addChild(badgeIcon);
-        badgeIcon.setClickable(false);
-        badgeIcon.setBeforeRenderCallback(() -> {
-            badgeIcon.setColor(0xFFFFFF);
-            badgeIcon.setPosition(SIDE_INSET + 12 - badgeIcon.getWidth() * .5,
-                    HEADER_CENTER_Y - badgeIcon.getHeight() * .5 + 1);
+        background.setBeforeRenderCallback(() -> {
+            background.setMargin(0);
+            background.setColor(NcmExpressivePalette.live().surface());
+            background.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1));
         });
 
-        LabelWidget headingLabel = new LabelWidget(networkFailure ? FAILED_HEADING : UPDATE_HEADING,
-                FontManager.pf18bold);
-        dialog.addChild(headingLabel);
-        headingLabel.setClickable(false);
-        headingLabel.setBeforeRenderCallback(() -> {
-            String heading = networkFailure ? FAILED_HEADING : UPDATE_HEADING;
-            double maxWidth = Math.max(1, dialog.getWidth() - SIDE_INSET - 52);
-            // 窄窗口下宁可降一号字也不截断：标题就是这次提示的主语，看不全等于没提示。
-            boolean compact = FontManager.pf18bold != null
-                    && FontManager.pf18bold.getStringWidthD(heading) > maxWidth;
-            if (compact != titleCompact) {
-                titleCompact = compact;
-                headingLabel.setFont(compact ? FontManager.pf14bold : FontManager.pf18bold);
-            }
-            headingLabel.setColor(getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            headingLabel.setMaxWidth(maxWidth);
-            headingLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            headingLabel.setPosition(SIDE_INSET + 40, HEADER_CENTER_Y - headingLabel.getHeight() * .5);
-        });
+        header = new Panel();
+        dialog.addChild(header);
+        header.setClickable(false);
+        NcmExpressive.header(header, networkFailure ? PartyIcons.CLOUD_OFF : PartyIcons.SYNC,
+                () -> networkFailure ? "更新检查" : "MuoniumPlayer 更新",
+                () -> networkFailure ? FAILED_HEADING : UPDATE_HEADING, null);
 
-        // 正文底板：整块圆角矩形垫在文字下面。它比正文标签先加入，所以画在文字下面。
-        RoundedRectWidget bodySurface = new RoundedRectWidget();
-        dialog.addChild(bodySurface);
-        bodySurface.setClickable(false);
-        bodySurface.setRadius(6);
-        bodySurface.setBeforeRenderCallback(() -> {
-            bodySurface.setBounds(SIDE_INSET, BODY_TOP - BODY_PAD,
-                    Math.max(1, dialog.getWidth() - SIDE_INSET * 2), bodyBlockHeight() + BODY_PAD * 2);
-            bodySurface.setColor(getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-        });
+        bodyViewport = new ScrollPanel();
+        dialog.addChild(bodyViewport);
+        bodyViewport.setAlignment(ScrollPanel.Alignment.VERTICAL).setSpacing(0)
+                .setScrollStrength(34).setIndicatorInsideViewport();
+        bodyContent = new Panel();
+        bodyViewport.addChild(bodyContent);
+        bodyContent.setClickable(false);
+        if (!networkFailure) createVersionCard();
 
-        // 正文每行一个 Label：这套字体渲染器没有多行绘制，换行结果由 wrapBody 每次布局时算好。
-        // 用不到的行取空字符串而不是 setHidden —— 被隐藏的组件不再执行自己的回调，就再也显示不回来。
-        for (int index = 0; index < MAX_BODY_LINES; index++) {
-            final int lineIndex = index;
-            LabelWidget bodyLabel = new LabelWidget(
-                    () -> lineIndex < bodyLines.length ? bodyLines[lineIndex] : "", FontManager.pf14);
-            dialog.addChild(bodyLabel);
-            bodyLabel.setClickable(false);
-            bodyLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            bodyLabel.setBeforeRenderCallback(() -> {
-                // 宽度必须在渲染前从已经定过尺寸的卡片上取：onInit() 时卡片宽度还是 0，
-                // 那时算出来的上限会被夹成 1px，而 TRIM_TO_WIDTH 在 1px 内连省略号都
-                // 放不下，于是整行文字静默地什么都不画。
-                bodyLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2 - BODY_PAD * 2));
-                bodyLabel.setColor(getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-                bodyLabel.setPosition(SIDE_INSET + BODY_PAD, BODY_TOP + lineIndex * lineHeight());
-            });
+        NcmExpressive.surface(bodyContent, () -> 0, () -> networkFailure ? 0 : notesTop(),
+                bodyViewport::getWidth, () -> bodyBlockHeight() + BODY_PAD * 2,
+                NcmExpressive.CARD_RADIUS, () -> NcmExpressivePalette.live().container());
+
+        // 页脚不随正文滚动。两行反馈恒预留，不因复制/重试结果到达而移动按钮。
+        policyPanel = new Panel();
+        dialog.addChild(policyPanel);
+        policyPanel.setClickable(false).setTooltip(this::buildPolicy);
+        for (int index = 0; index < 2; index++) {
+            final int line = index;
+            NcmExpressive.label(policyPanel,
+                    () -> line < policyLines.length ? policyLines[line] : "", NcmExpressive::captionFont,
+                    () -> 0, () -> 8 + line * 17,
+                    this::contentWidth, this::policyInk);
+        }
+        statusPanel = new Panel();
+        dialog.addChild(statusPanel);
+        statusPanel.setClickable(false);
+        statusPanel.setTooltip(() -> status == null ? "" : status);
+        NcmExpressive.surface(statusPanel, 0, 0, statusPanel::getWidth, statusPanel::getHeight, 12,
+                this::statusSurface);
+        NcmExpressive.icon(statusPanel, PartyIcons.INFO, NcmSheet.ICON_S,
+                () -> 16, () -> STATUS_HEIGHT * .5, this::statusInk);
+        for (int index = 0; index < 2; index++) {
+            final int line = index;
+            NcmExpressive.label(statusPanel,
+                    () -> line < statusLines.length ? statusLines[line] : "", NcmExpressive::captionFont,
+                    () -> 32, () -> 10 + line * 17, () -> Math.max(1, statusPanel.getWidth() - 44),
+                    this::statusInk);
         }
 
-        // 复制链接 / 打不开浏览器 / 重试失败时的一行说明。这一行的高度恒被预留：否则它会一边长出来
-        // 一边把按钮往下推，用户正要点按钮的时候按钮跑了。
-        LabelWidget statusLabel = new LabelWidget(() -> status == null ? "" : status, FontManager.pf14);
-        dialog.addChild(statusLabel);
-        statusLabel.setClickable(false);
-        statusLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-        statusLabel.setBeforeRenderCallback(() -> {
-            statusLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2 - BODY_PAD * 2));
-            statusLabel.setColor(STATUS_COLOR);
-            statusLabel.setPosition(SIDE_INSET + BODY_PAD, statusTop());
-        });
+        if (!forcedUpdate) {
+            NcmExpressive.action(dialog, "", () -> networkFailure ? OK : LATER,
+                    NcmExpressive.ActionStyle.TONAL, () -> SIDE_INSET, this::buttonsTop,
+                    this::secondaryActionWidth, () -> NcmExpressive.BUTTON_HEIGHT, this::dismissForNow);
+        }
+        NcmExpressive.action(dialog, networkFailure ? PartyIcons.SYNC : PartyIcons.LINK,
+                () -> networkFailure ? (retryPending ? "正在检查…" : RETRY) : DOWNLOAD,
+                NcmExpressive.ActionStyle.PRIMARY,
+                () -> dialog.getWidth() - SIDE_INSET - primaryActionWidth(), this::primaryActionTop,
+                this::primaryActionWidth, () -> NcmExpressive.BUTTON_HEIGHT,
+                () -> { if (networkFailure) beginRetry(); else openDownloadPage(); });
 
-        RectWidget divider = new RectWidget();
-        dialog.addChild(divider);
-        divider.setClickable(false);
-        divider.setBeforeRenderCallback(() -> {
-            divider.setBounds(SIDE_INSET, actionsTop(),
-                    Math.max(1, dialog.getWidth() - SIDE_INSET * 2), .5);
-            divider.setColor(getColor(NCMScreen.ColorType.BORDER));
-        });
-
-        leftButton = new RoundedButtonWidget(networkFailure ? OK : LATER, FontManager.pf12bold);
-        dialog.addChild(leftButton);
-        leftButton.setRadius(6);
-        leftButton.setGlassRim(GlassLook.Surface.PLAYER);
-        rightButton = new RoundedButtonWidget(networkFailure ? RETRY : DOWNLOAD, FontManager.pf12bold);
-        dialog.addChild(rightButton);
-        rightButton.setRadius(6);
-        rightButton.setGlassRim(GlassLook.Surface.PLAYER);
-
-        // 两个按钮共用一次宽度计算，保证左右对齐、中间间隙一致。
-        leftButton.setBeforeRenderCallback(() -> {
-            layoutActions();
-            leftButton.setColor(leftButton.isHovering()
-                    ? getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            leftButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            leftButton.setTextColor(getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-        });
-        leftButton.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            dismissForNow();
-            return true;
-        });
-
-        rightButton.setBeforeRenderCallback(() -> {
-            layoutActions();
-            rightButton.setColor(rightButton.isHovering() ? PRIMARY_HOVER_COLOR : PRIMARY_COLOR);
-            rightButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            rightButton.setTextColor(0xFFFFFF);
-        });
-        rightButton.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            if (networkFailure) {
-                beginRetry();
-            } else {
-                openDownloadPage();
-            }
-            return true;
-        });
-
-        // 链接区。两套内容共用一个槽位列表：不出现的槽位宽度与命中区每帧都被清零。
         if (networkFailure) {
             addLink(COPY_PAGE_LINK, () -> true, () -> copyToClipboard(
                     UpdateChecker.DOWNLOAD_PAGE, "更新页地址已复制到剪贴板："));
@@ -378,30 +252,291 @@ public final class UpdateNoticeOverlay extends NCMPanel {
         }
     }
 
-    /**
-     * 往链接区加一个槽位。
-     *
-     * @param text    标签文字
-     * @param visible 这个槽位此刻该不该出现（每帧问一次）
-     * @param action  左键点击动作
-     */
+    private void createVersionCard() {
+        NcmExpressive.surface(bodyContent, 0, 0, bodyViewport::getWidth, this::versionHeight,
+                NcmExpressive.CARD_RADIUS, () -> NcmExpressivePalette.live().container());
+        NcmExpressive.label(bodyContent, () -> "当前版本", NcmExpressive::captionFont,
+                () -> 20, () -> 25, this::versionColumnWidth,
+                () -> NcmExpressivePalette.live().muted());
+        LabelWidget current = NcmExpressive.label(bodyContent,
+                () -> versionText(UpdateChecker.currentVersion()), NcmExpressive::titleFont,
+                () -> 20, () -> 68, this::versionColumnWidth,
+                () -> NcmExpressivePalette.live().containerInk());
+        current.setTooltip(UpdateChecker::currentVersion);
+        NcmExpressive.icon(bodyContent, () -> stackVersions() ? "" : PartyIcons.CHEVRON_RIGHT, NcmSheet.ICON_L,
+                () -> bodyViewport.getWidth() * .5, () -> 62,
+                () -> NcmExpressivePalette.live().primary());
+        NcmExpressive.label(bodyContent, () -> UpdateChecker.isCritical() ? "关键更新" : "最新版本",
+                NcmExpressive::captionFont, () -> stackVersions() ? 20 : bodyViewport.getWidth() * .5 + 30,
+                () -> stackVersions() ? 117 : 25, this::versionColumnWidth,
+                () -> NcmExpressivePalette.live().muted());
+        LabelWidget latest = NcmExpressive.label(bodyContent,
+                () -> versionText(UpdateChecker.latestVersion()), NcmExpressive::titleFont,
+                () -> stackVersions() ? 20 : bodyViewport.getWidth() * .5 + 30,
+                () -> stackVersions() ? 158 : 68, this::versionColumnWidth,
+                () -> NcmExpressivePalette.live().containerInk());
+        latest.setTooltip(UpdateChecker::latestVersion);
+        NcmExpressive.label(bodyContent, () -> "当前渠道 · " + UpdateChecker.channel(),
+                NcmExpressive::captionFont, () -> 2, () -> versionHeight() + 20,
+                () -> Math.max(1, bodyViewport.getWidth() - 12), () -> NcmExpressivePalette.live().muted());
+        NcmExpressive.label(bodyContent, () -> "更新说明", NcmExpressive::labelFont,
+                () -> 2, () -> versionHeight() + 50, bodyViewport::getWidth, () -> NcmExpressivePalette.live().text());
+    }
+
+    private static String versionText(String version) {
+        return version == null || version.isEmpty() ? "获取中…" : version;
+    }
+
     private void addLink(String text, BooleanSupplier visible, Runnable action) {
-        LabelWidget label = new LabelWidget(text, FontManager.pf12);
-        dialog.addChild(label);
-        label.setShouldOverrideMouseCursor(true);
-        LinkSlot slot = new LinkSlot(label, visible);
-        linkSlots.add(slot);
-        label.setBeforeRenderCallback(() -> {
-            layoutLinks();
-            label.setColor(label.isHovering()
-                    ? LINK_HOVER_COLOR
-                    : getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-        });
-        label.setOnClickCallback((x, y, button) -> {
+        Panel hitArea = new Panel();
+        dialog.addChild(hitArea);
+        hitArea.setShouldOverrideMouseCursor(true);
+        LabelWidget label = NcmExpressive.label(hitArea, () -> text, NcmExpressive::captionFont,
+                () -> 14, () -> LINK_HEIGHT * .5,
+                () -> Math.max(1, hitArea.getWidth() - 28), () -> {
+                    NcmExpressivePalette palette = NcmExpressivePalette.live();
+                    return NcmExpressivePalette.readableColor(
+                            hitArea.isHovering() ? palette.primaryHover() : palette.primary(), palette.surface());
+                });
+        linkSlots.add(new LinkSlot(hitArea, label, visible));
+        hitArea.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
             action.run();
             return true;
         });
+    }
+
+    private void layoutDialog() {
+        pollRetry();
+        double width = NcmExpressive.dialogWidth(this, CARD_MAX_WIDTH);
+        wrapBody(Math.max(1, width - SIDE_INSET * 2 - BODY_PAD * 2 - 8));
+        wrapCaptions(Math.max(1, width - SIDE_INSET * 2));
+        double preferredBody = (networkFailure ? 0 : notesTop(Math.max(1, width - SIDE_INSET * 2))) + BODY_PAD * 2
+                + Math.max(lineHeight(), Math.min(MAX_BODY_LINES, bodyLines.length) * lineHeight());
+        double preferredFooter = footerHeight(Math.max(1, width - SIDE_INSET * 2));
+        double height = NcmExpressive.dialogHeight(this,
+                BODY_TOP + preferredBody + 12 + preferredFooter);
+        dialog.setBounds(width, height);
+        dialog.center();
+        dialog.setPosition(dialog.getRelativeX(), dialog.getRelativeY() + (1 - presentation) * 12);
+        dialog.setAlpha((float) presentation);
+
+        // 极矮窗口先让出页眉，保住底部操作；正常尺寸保持探针的分类页眉与独立标题。
+        header.setBounds(width, height);
+        double headerHeight = NcmExpressive.headerHeight(header);
+        boolean showHeader = height >= headerHeight + 8 + preferredFooter + 32;
+        header.setHidden(!showHeader);
+        header.setPosition(0, 0);
+        double top = showHeader ? headerHeight + 8 : 8;
+        bodyViewport.setBounds(contentWidth(), Math.max(0, footerTop() - top - 12));
+        bodyViewport.setPosition(SIDE_INSET, top);
+        // 行高在 ScrollPanel 排版前就定好，首帧与字形/原文重排都不会沿用上一帧的滚动范围。
+        bodyContent.setBounds(contentWidth(), (networkFailure ? 0 : notesTop())
+                + bodyBlockHeight() + BODY_PAD * 2);
+        policyPanel.setBounds(contentWidth(), POLICY_HEIGHT);
+        policyPanel.setPosition(SIDE_INSET, footerTop());
+        boolean showPolicy = buttonsTop() >= footerTop() + POLICY_HEIGHT + 8;
+        policyPanel.setHidden(!showPolicy);
+        statusPanel.setBounds(contentWidth(), STATUS_HEIGHT);
+        statusPanel.setPosition(SIDE_INSET, footerTop() + POLICY_HEIGHT + 8);
+        statusPanel.setHidden(status == null || status.isEmpty()
+                || buttonsTop() < statusPanel.getRelativeY() + STATUS_HEIGHT + 12);
+        layoutLinks();
+    }
+
+    private void layoutLinks() {
+        double left = SIDE_INSET;
+        for (LinkSlot slot : linkSlots) {
+            boolean visible = slot.visible.getAsBoolean();
+            slot.hitArea.setHidden(!visible);
+            if (!visible) {
+                slot.hitArea.setBounds(0, 0);
+                slot.label.setBounds(0, 0);
+                continue;
+            }
+            // 每帧按真实 caption 字宽定命中区，不依赖上一帧 LabelWidget 的边界。
+            CFontRenderer font = NcmExpressive.captionFont();
+            double width = Math.min(contentWidth(), font == null ? 140 : font.getStringWidthD(slot.label.getLabel()) + 28);
+            slot.hitArea.setBounds(width, LINK_HEIGHT);
+            slot.hitArea.setPosition(Math.max(left, (dialog.getWidth() - width) * .5), linkTop());
+            left += width + 12;
+        }
+    }
+
+    private double contentWidth() {
+        return Math.max(1, dialog.getWidth() - SIDE_INSET * 2);
+    }
+
+    private boolean stackVersions() {
+        return bodyViewport.getWidth() < 360;
+    }
+
+    private double versionHeight() {
+        return stackVersions() ? 198 : VERSION_HEIGHT;
+    }
+
+    private static double notesTop(double width) {
+        return NOTES_TOP + (width < 360 ? 90 : 0);
+    }
+
+    private double notesTop() {
+        return notesTop(bodyViewport.getWidth());
+    }
+
+    private double versionColumnWidth() {
+        return Math.max(1, stackVersions() ? bodyViewport.getWidth() - 40 : bodyViewport.getWidth() * .5 - 50);
+    }
+
+    private double footerTop() {
+        return Math.max(8, dialog.getHeight() - footerHeight(contentWidth()));
+    }
+
+    private double footerHeight(double width) {
+        return FOOTER_HEIGHT + (stackActions(width) ? NcmExpressive.BUTTON_HEIGHT + 8 : 0);
+    }
+
+    private boolean stackActions(double width) {
+        return !forcedUpdate && width < 320;
+    }
+
+    private double buttonsTop() {
+        // 窄窗口主次按钮纵排，保持真实字级；极矮时先舍弃正文/反馈而不是盖在动作上。
+        double extra = stackActions(contentWidth()) ? NcmExpressive.BUTTON_HEIGHT + 8 : 0;
+        return Math.max(0, dialog.getHeight() - 14 - LINK_HEIGHT - 6
+                - NcmExpressive.BUTTON_HEIGHT - extra);
+    }
+
+    private double primaryActionTop() {
+        return buttonsTop() + (stackActions(contentWidth()) ? NcmExpressive.BUTTON_HEIGHT + 8 : 0);
+    }
+
+    private double linkTop() {
+        return primaryActionTop() + NcmExpressive.BUTTON_HEIGHT + 6;
+    }
+
+    private double secondaryActionWidth() {
+        return stackActions(contentWidth()) ? contentWidth()
+                : Math.min(156, Math.max(0, (contentWidth() - 12) * .5));
+    }
+
+    private double primaryActionWidth() {
+        return forcedUpdate || stackActions(contentWidth()) ? contentWidth()
+                : Math.min(196, Math.max(0, contentWidth() - secondaryActionWidth() - 12));
+    }
+
+    private static double lineHeight() {
+        return Math.max(20, FontManager.pf32 == null ? 20 : FontManager.pf32.getFontHeight() + 8);
+    }
+
+    private double bodyBlockHeight() {
+        return Math.max(lineHeight(), bodyLines.length * lineHeight());
+    }
+
+    private int policyInk() {
+        NcmExpressivePalette palette = NcmExpressivePalette.live();
+        return !networkFailure && UpdateChecker.isCritical() ? palette.warning() : palette.muted();
+    }
+
+    private int statusSurface() {
+        NcmExpressivePalette palette = NcmExpressivePalette.live();
+        return NcmExpressivePalette.mix(palette.surface(), networkFailure ? palette.warning() : palette.primary(), .08);
+    }
+
+    private int statusInk() {
+        NcmExpressivePalette palette = NcmExpressivePalette.live();
+        return NcmExpressivePalette.readableColor(palette.muted(), statusSurface());
+    }
+
+    /** 版本、渠道与策略有独立层级；正文只放真实清单说明，显式段落分别折行。 */
+    private String buildBody() {
+        if (networkFailure) {
+            return "已经连续 " + UpdateChecker.failureCount() + " 次启动都没能获取版本清单。"
+                    + PARAGRAPH_BREAK + "通常是网络、代理或 DNS 的问题，检查一下再点「重试检查」喵。";
+        }
+        String notes = UpdateChecker.releaseNotes();
+        return notes == null || notes.trim().isEmpty() ? "这个版本暂未提供更新说明。" : notes;
+    }
+
+    private String buildPolicy() {
+        if (networkFailure) return "更新检查暂时失败，不会改变当前安装的版本。你可以稍后重试。";
+        if (forcedUpdate) {
+            return "关键更新 · 已先不更新 " + UpdateChecker.usedSkips()
+                    + " 次，额度已用完。装好新版本再进游戏。";
+        }
+        if (UpdateChecker.isCritical()) {
+            return "关键更新 · 这个版本还可以先不更新 " + UpdateChecker.remainingSkips() + " 次。";
+        }
+        return "普通更新 · 这次更新不强制，可以稍后安装。";
+    }
+
+    /** 原文、宽度、字形就绪与字体度量共同作键；异步清单与换字体都能立即重排。 */
+    private void wrapBody(double contentWidth) {
+        String source = buildBody();
+        CFontRenderer font = NcmExpressive.bodyFont();
+        boolean glyphsReady = font != null && font.areGlyphsLoaded(source);
+        long revision = font == null ? -1 : font.metricsRevision();
+        if (!wrappedWithLoadedGlyphs || glyphsReady != wrappedWithLoadedGlyphs
+                || !source.equals(wrappedSource) || Math.abs(contentWidth - wrappedForWidth) >= .5
+                || font != wrappedFont || revision != wrappedFontRevision) {
+            wrappedForWidth = contentWidth;
+            wrappedSource = source;
+            wrappedWithLoadedGlyphs = glyphsReady;
+            wrappedFont = font;
+            wrappedFontRevision = revision;
+            bodyLines = wrapParagraphs(source, contentWidth);
+            while (bodyLabels.size() < bodyLines.length) {
+                final int line = bodyLabels.size();
+                LabelWidget label = NcmExpressive.label(bodyContent,
+                        () -> line < bodyLines.length ? bodyLines[line] : "", NcmExpressive::bodyFont,
+                        () -> BODY_PAD,
+                        () -> (networkFailure ? 0 : notesTop()) + BODY_PAD + (line + .5) * lineHeight(),
+                        () -> Math.max(1, bodyViewport.getWidth() - BODY_PAD * 2 - 8),
+                        () -> NcmExpressivePalette.live().containerInk());
+                bodyLabels.add(label);
+            }
+        }
+    }
+
+    private void wrapCaptions(double width) {
+        String policy = buildPolicy();
+        String feedback = status == null ? "" : status;
+        CFontRenderer font = NcmExpressive.captionFont();
+        boolean ready = font != null && font.areGlyphsLoaded(policy) && font.areGlyphsLoaded(feedback);
+        long revision = font == null ? -1 : font.metricsRevision();
+        if (!captionsWithLoadedGlyphs || ready != captionsWithLoadedGlyphs
+                || !policy.equals(captionPolicy) || !feedback.equals(captionStatus)
+                || Math.abs(width - captionWidth) >= .5 || font != captionFont || revision != captionFontRevision) {
+            captionWidth = width;
+            captionPolicy = policy;
+            captionStatus = feedback;
+            captionFont = font;
+            captionFontRevision = revision;
+            captionsWithLoadedGlyphs = ready;
+            policyLines = captionLines(policy, width, font);
+            statusLines = captionLines(feedback, Math.max(1, width - 44), font);
+        }
+    }
+
+    private static String[] captionLines(String source, double width, CFontRenderer font) {
+        String[] lines = wrapParagraphs(source, width, font);
+        if (lines.length <= 2) return lines;
+        return new String[]{lines[0], font == null ? lines[1] : font.trim(lines[1] + "…", width)};
+    }
+
+    private static String[] wrapParagraphs(String source, double contentWidth) {
+        return wrapParagraphs(source, contentWidth, NcmExpressive.bodyFont());
+    }
+
+    private static String[] wrapParagraphs(String source, double contentWidth, CFontRenderer font) {
+        List<String> lines = new ArrayList<>();
+        for (String paragraph : source.split(PARAGRAPH_BREAK, -1)) {
+            String text = paragraph.trim();
+            if (text.isEmpty()) continue;
+            String[] wrapped = NcmExpressive.wrap(font, text, Math.max(1, contentWidth));
+            if (wrapped.length == 0) lines.add(text);
+            else for (String line : wrapped) lines.add(line);
+        }
+        return lines.toArray(new String[0]);
     }
 
     private void copyToClipboard(String text, String message) {
@@ -409,9 +544,10 @@ public final class UpdateNoticeOverlay extends NCMPanel {
         status = message + text;
     }
 
-    /** 「重试检查」：再拉一次清单。已经在跑时只提示，不叠线程。 */
+    /** 重试只有 UpdateChecker 的判重入口能发起；等待期间不叠检查线程。 */
     private void beginRetry() {
-        if (!UpdateChecker.retryCheck()) {
+        if (resolved) return;
+        if (retryPending || !UpdateChecker.retryCheck()) {
             status = "上一次检查还在跑，稍等一下喵…";
             return;
         }
@@ -419,15 +555,8 @@ public final class UpdateNoticeOverlay extends NCMPanel {
         status = "正在重新检查…";
     }
 
-    /**
-     * 轮询重试的结论。
-     *
-     * <p>三种落点：还在跑（不动）、又失败（留在界面上把结论写出来）、连上了（收起提示）。
-     * 最后一种要顺手把「本次启动已弹过」放开 —— 重试可能查到新版本，而当前这套组件是
-     * 「连不上」那一套，装不下版本号与更新说明，得让宿主用新结论再弹一次。</p>
-     */
     private void pollRetry() {
-        if (!retryPending) return;
+        if (!retryPending || resolved) return;
         int now = UpdateChecker.state();
         if (now == UpdateChecker.STATE_UNKNOWN) return;
         if (now == UpdateChecker.STATE_CHECK_FAILED) {
@@ -435,204 +564,12 @@ public final class UpdateNoticeOverlay extends NCMPanel {
             status = "还是连不上喵…检查一下网络、代理或 DNS 设置吧。";
             return;
         }
+        retryPending = false;
         UpdateChecker.allowNoticeAgain();
         cancel();
     }
 
-    private void layoutDialog() {
-        pollRetry();
-        double width = Math.max(CARD_MIN_WIDTH, Math.min(CARD_MAX_WIDTH, getWidth() - 32));
-        // 先按这个宽度把正文换行，再由行数决定卡片高度。
-        wrapBody(Math.max(1, width - SIDE_INSET * 2 - BODY_PAD * 2));
-        // 上限用「屏幕高度 - 28」而不是写死的数：这样卡片一定落在屏幕内。正常窗口下这个上限
-        // 根本不会生效，只有极小的窗口才会压到正文行数。
-        dialog.setBounds(width, Math.min(Math.max(170.0, contentHeight()),
-                Math.max(170.0, getHeight() - 28)));
-        dialog.center();
-        dialog.setPosition(dialog.getRelativeX(), dialog.getRelativeY() + (1.0 - presentation) * 10.0);
-        dialog.setAlpha((float) presentation);
-    }
-
-    private void layoutActions() {
-        double total = Math.max(1, dialog.getWidth() - SIDE_INSET * 2);
-        double top = buttonsTop();
-        if (forcedUpdate) {
-            // 跳过额度用尽的锁死状态：只留「前往下载」，按钮占满整行 —— 界面上没有别的出口。
-            leftButton.setBounds(0, 0);
-            rightButton.setBounds(total, BUTTON_HEIGHT);
-            rightButton.setPosition(SIDE_INSET, top);
-            return;
-        }
-        double gap = 8;
-        double rightWidth = Math.max(104, Math.min(140, total * .56));
-        double leftWidth = Math.max(1, total - gap - rightWidth);
-        // 次要动作在左、主行动在右：读起来是「先看主行动」，鼠标也正好停在惯用一侧。
-        leftButton.setBounds(leftWidth, BUTTON_HEIGHT);
-        leftButton.setPosition(SIDE_INSET, top);
-        rightButton.setBounds(rightWidth, BUTTON_HEIGHT);
-        rightButton.setPosition(SIDE_INSET + leftWidth + gap, top);
-    }
-
-    /** 链接并排居中；不出现的槽位宽度按 0 算，自然就让开了。 */
-    private void layoutLinks() {
-        double available = Math.max(1, dialog.getWidth() - SIDE_INSET * 2);
-        int visible = 0;
-        double total = 0;
-        for (LinkSlot slot : linkSlots) {
-            if (!slot.visible.getAsBoolean()) continue;
-            visible++;
-            total += Math.max(0, slot.label.getWidth());
-        }
-        double spacing = 16;
-        if (visible > 1 && total + spacing * (visible - 1) > available) {
-            // 窄窗口下先压间距，再挤下去就只能重叠了。
-            spacing = 8;
-        }
-        double width = total + spacing * Math.max(0, visible - 1);
-        double left = Math.max(SIDE_INSET, dialog.getWidth() * .5 - width * .5);
-        double y = linkTop();
-        for (LinkSlot slot : linkSlots) {
-            if (!slot.visible.getAsBoolean()) {
-                // 出现过的链接会被上一次的边界留着，收起来时必须显式清掉，否则还能点到。
-                slot.label.setBounds(0, 0);
-                continue;
-            }
-            slot.label.setPosition(left, y);
-            left += Math.max(0, slot.label.getWidth()) + spacing;
-        }
-    }
-
-    private static double lineHeight() {
-        return (FontManager.pf14 == null ? 13.0 : FontManager.pf14.getFontHeight()) + 3.0;
-    }
-
-    private double bodyBlockHeight() {
-        return Math.max(lineHeight(), bodyLines.length * lineHeight());
-    }
-
-    /** 兜底说明那一行的高度恒被预留，见 statusLabel 的注释。 */
-    private double statusTop() {
-        return BODY_TOP + bodyBlockHeight() + BODY_PAD + 3.0;
-    }
-
-    private double actionsTop() {
-        return statusTop() + lineHeight() + 4.0;
-    }
-
-    private double buttonsTop() {
-        return actionsTop() + BUTTONS_TOP_GAP;
-    }
-
-    private double linkTop() {
-        return buttonsTop() + BUTTON_HEIGHT + LINK_GAP;
-    }
-
-    /** 卡片为了装下正文、兜底说明、按钮与链接所需的高度。 */
-    private double contentHeight() {
-        return linkTop() + lineHeight() + CARD_BOTTOM_END_PAD;
-    }
-
-    /**
-     * 正文：两套内容各写各的。
-     *
-     * <p>「有更新」那套按 critical 分三档：锁死（关键更新额度用尽）解释为什么必须更新，
-     * 关键更新报还剩几次额度，普通更新直接说不强制。</p>
-     */
-    private String buildBody() {
-        if (networkFailure) {
-            return "已经连续 " + UpdateChecker.failureCount() + " 次启动都没能获取版本清单。"
-                    + "通常是网络、代理或 DNS 的问题，检查一下再点「重试检查」喵。";
-        }
-        StringBuilder body = new StringBuilder();
-        body.append("当前 ").append(UpdateChecker.currentVersion())
-                .append("，最新 ").append(UpdateChecker.latestVersion())
-                .append("（").append(UpdateChecker.channel()).append("）。");
-        if (forcedUpdate) {
-            // 能走到锁死的只有关键更新（普通更新不限次），把原因说清楚。
-            body.append("这是关键更新喵，这个版本已经先不更新 ").append(UpdateChecker.usedSkips())
-                    .append(" 次啦，这一次必须更新才能继续。");
-        } else if (UpdateChecker.isCritical()) {
-            body.append("这是关键更新喵，这个版本还可以先不更新 ").append(UpdateChecker.remainingSkips())
-                    .append(" 次。");
-        } else {
-            body.append("这次更新不强制，随时可以先不更新喵。");
-        }
-        String notes = UpdateChecker.releaseNotes();
-        if (notes != null && !notes.isEmpty()) {
-            // 公告另起一行：它是独立的一段信息，接在「还能先不更新几次」后面会被读成同一句话，
-            // 更长的那一段（公告）反而容易被看漏。
-            body.append(PARAGRAPH_BREAK).append(notes);
-        }
-        return body.toString();
-    }
-
-    /**
-     * 把正文按给定宽度换行。
-     *
-     * <p>与 {@link FfmpegNoticeOverlay} 一样按「宽度 + 是否已就绪」缓存，但这里多带一个原文：
-     * 版本清单是在守护线程上拉的，界面有可能先弹出来、正文后到，只按宽度缓存会把第一次的
-     * 空版本号一直留在屏幕上。</p>
-     */
-    private void wrapBody(double contentWidth) {
-        String source = buildBody();
-        boolean glyphsReady = FontManager.pf14 != null && FontManager.pf14.areGlyphsLoaded(source);
-        if (!wrappedWithLoadedGlyphs || !source.equals(wrappedSource)
-                || Math.abs(contentWidth - wrappedForWidth) >= .5) {
-            wrappedForWidth = contentWidth;
-            wrappedSource = source;
-            wrappedWithLoadedGlyphs = glyphsReady;
-            bodyLines = wrapParagraphs(source, contentWidth);
-        }
-    }
-
-    /**
-     * 折行：先按显式换行 {@link #PARAGRAPH_BREAK} 切成段落，每段各自按宽度折，再拼成行表。
-     *
-     * <p>必须自己切，不能把带换行符的整段丢给字体渲染器的 {@code fitWidth} —— 它的断点表里
-     * 只有空白与标点，换行符会当成普通字符留在行里画出来（末尾多一个看不见的空位，
-     * 公告也不会真的另起一行）。段落内部的折行仍然由它负责。</p>
-     */
-    private static String[] wrapParagraphs(String source, double contentWidth) {
-        List<String> lines = new ArrayList<String>();
-        for (String paragraph : source.split(PARAGRAPH_BREAK, -1)) {
-            String text = paragraph.trim();
-            if (text.isEmpty()) continue;
-            String[] wrapped;
-            try {
-                wrapped = FontManager.pf14.fitWidth(text, contentWidth);
-            } catch (Throwable ignored) {
-                // 换行只是排版，任何异常都不该让一个提示窗打不开。
-                wrapped = new String[]{text};
-            }
-            if (wrapped == null || wrapped.length == 0) wrapped = new String[]{text};
-            for (String line : wrapped) {
-                lines.add(line);
-            }
-        }
-        if (lines.isEmpty()) {
-            lines.add(source);
-        }
-        if (lines.size() > MAX_BODY_LINES) {
-            // 超长时截断最后一行：卡片高度有上限，宁可少显示也不能顶出屏幕。
-            List<String> limited = new ArrayList<String>(lines.subList(0, MAX_BODY_LINES));
-            limited.set(MAX_BODY_LINES - 1, FontManager.pf14.trim(
-                    limited.get(MAX_BODY_LINES - 1), Math.max(1, contentWidth - 8)) + "…");
-            lines = limited;
-        }
-        return lines.toArray(new String[0]);
-    }
-
-    /**
-     * 「前往下载」：先尝试打开系统浏览器，打不开就把地址放进剪贴板并把说明显示出来。
-     *
-     * <p>先用反射走 {@code java.awt.Desktop}（和原版 {@code GuiScreen.openWebLink} 同一条路：
-     * 反射是为了不在错误的时机把 AWT 类加载进来），失败再退到 LWJGL 的 {@code Sys.openURL}。
-     * 地址一定在 {@link UpdateChecker#isAllowedPage(String)} 的白名单里，不会被清单牵去任意站点。</p>
-     *
-     * <p>锁死状态下<b>只打开浏览器，绝不收起提示</b>：提示一关用户就回到主菜单、也就能进游戏了，
-     * 那样「额度用尽」形同虚设。浏览器打不开时把地址复制进剪贴板，同样留在界面上 —— 用户照样能
-     * 自己粘到浏览器里下载。</p>
-     */
+    /** 打开浏览器失败时复制白名单地址；锁定状态无论成功失败都留在当前提示。 */
     private void openDownloadPage() {
         String page = UpdateChecker.downloadPage();
         if (isAllowedAndBrowsable(page)) {
@@ -649,10 +586,9 @@ public final class UpdateNoticeOverlay extends NCMPanel {
                 : "打不开浏览器喵…地址已复制到剪贴板，去浏览器里粘一下吧：" + page;
     }
 
+    /** 沿用已有浏览器兼容链路，不引入新的宿主或加载器调用。 */
     private static boolean isAllowedAndBrowsable(String page) {
-        if (!UpdateChecker.isAllowedPage(page)) {
-            return false;
-        }
+        if (!UpdateChecker.isAllowedPage(page)) return false;
         try {
             Class<?> desktopClass = Class.forName("java.awt.Desktop");
             Object desktop = desktopClass.getMethod("getDesktop").invoke(null);

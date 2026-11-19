@@ -80,6 +80,7 @@ final class AutomixPlanner {
     /** 低于此值时退出曲目过短，重叠只能是硬切。 */
     private static final long MIN_OUTGOING_MILLIS = 12_000L;
     private static final long MIN_INCOMING_MILLIS = 8_000L;
+    static final double MIN_PLAYED_FRACTION = 5.0 / 7.0;
     /**
      * 退出曲目尾声可拿出多少，换一个更早、更有音乐性的混音退出。在
      * 结构性 outro 处混音退出，正是让过渡听起来像有意为之的关键，但砍掉歌曲结尾
@@ -172,6 +173,13 @@ final class AutomixPlanner {
         return planClassic(outgoing, incoming, lastVocalEndMillis);
     }
 
+    static long minimumPlayedMillis(long durationMillis) {
+        if (durationMillis <= 0L) return 0L;
+        long whole = durationMillis / 7L;
+        long remainder = durationMillis % 7L;
+        return whole * 5L + (remainder * 5L + 6L) / 7L;
+    }
+
     /**
      * 只用内置信号处理规划一次交接，<b>不</b>走 Folia 模型。
      *
@@ -200,6 +208,12 @@ final class AutomixPlanner {
         overlap = Math.min(overlap, outgoingMillis / 4L);
         overlap = Math.min(overlap, incomingMillis / 2L);
         if (overlap < 800L) return null;
+
+        long earliestFire = Math.max(minimumPlayedMillis(outgoingMillis),
+                Math.max((long) (outgoingMillis * MIN_TRIM_POSITION), outgoingMillis - MAX_TRIM_MILLIS));
+        long availableOverlap = outgoingMillis - earliestFire;
+        if (availableOverlap < 800L) return null;
+        overlap = Math.min(overlap, availableOverlap);
 
         // 分析用自己的句柄读取已解码缓存文件，绝不读取实时
         // JSyn 采样：那些采样经由一个共享滑动窗口流出，在音频
@@ -256,9 +270,12 @@ final class AutomixPlanner {
             if (AutomixSettings.isSkipIntroEnabled()) {
                 cue = introEnd;
                 if (beatAlign && usableGrid(incomingGrid)) {
-                    long snapped = cue + (long) incomingGrid.barPhaseMillis;
-                    // 仅当对齐之后身后仍留有完整的音频重叠时，才接受该对齐。
-                    if (snapped + overlap < incomingMillis) cue = snapped;
+                    long snapped = nextBarAtOrAfter(cue, incomingGrid, incomingGridOrigin);
+                    long introLimit = Math.min(MAX_INTRO_SKIP_MILLIS,
+                            (long) (incomingMillis * MAX_INTRO_SKIP_FRACTION));
+                    if (snapped >= cue && snapped <= introLimit && snapped + overlap < incomingMillis) {
+                        cue = snapped;
+                    }
                 }
             }
             // 否则 cue 保持 0。下面的残余相位数学把每个网格折到其自身
@@ -267,10 +284,10 @@ final class AutomixPlanner {
         }
 
         // -- 退出方：在歌唱完处混音退出，而不是文件结束处。 --
+        long earliestFire = Math.max(minimumPlayedMillis(outgoingMillis),
+                Math.max((long) (outgoingMillis * MIN_TRIM_POSITION), outgoingMillis - MAX_TRIM_MILLIS));
         long latestFire = outgoingMillis - overlap;
-        long earliestFire = Math.max((long) (outgoingMillis * MIN_TRIM_POSITION),
-                outgoingMillis - MAX_TRIM_MILLIS);
-        if (earliestFire > latestFire) earliestFire = latestFire;
+        if (earliestFire > latestFire) return null;
 
         long preferredFire = -1L;
         String mixOutReason = "尾部混出";
@@ -494,6 +511,38 @@ final class AutomixPlanner {
     }
 
     /** 到最近的 {@code period} 整数倍的有符号距离，范围 [-period/2, period/2]。 */
+    static long nextBarAtOrAfter(long position, AutomixAnalyzer.BeatGrid grid, long origin) {
+        if (grid == null || !Float.isFinite(grid.bpm) || grid.bpm <= 1f
+                || !Float.isFinite(grid.barPhaseMillis)) return position;
+        double period = grid.barPeriodMillis();
+        if (!Double.isFinite(period) || period <= 0.0) return position;
+        double anchor = origin + grid.barPhaseMillis;
+        double index = Math.ceil((position - anchor) / period);
+        return Math.round(anchor + index * period);
+    }
+
+    static long nearestBarWithin(long position, long minimum, long maximum, long origin,
+                                 AutomixAnalyzer.BeatGrid grid) {
+        if (grid == null || !Float.isFinite(grid.bpm) || grid.bpm <= 1f
+                || !Float.isFinite(grid.barPhaseMillis)) return -1L;
+        double period = grid.barPeriodMillis();
+        if (!Double.isFinite(period) || period <= 0.0) return -1L;
+        double anchor = origin + grid.barPhaseMillis;
+        long nearest = Math.round((position - anchor) / period);
+        long best = -1L;
+        double distance = Double.POSITIVE_INFINITY;
+        for (long index = nearest - 2L; index <= nearest + 2L; index++) {
+            long candidate = Math.round(anchor + index * period);
+            if (candidate < minimum || candidate > maximum || candidate <= 0L) continue;
+            double delta = Math.abs(candidate - position);
+            if (delta < distance) {
+                best = candidate;
+                distance = delta;
+            }
+        }
+        return best;
+    }
+
     private static double wrapSigned(double value, double period) {
         if (period <= 0.0 || Double.isNaN(value)) return 0.0;
         double wrapped = value % period;

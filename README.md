@@ -451,9 +451,11 @@ Windows 开箱即用；Linux 与安卓首次启动自动补齐组件，按提示
 
 **<a href="https://afdian.com/a/xinshibaobao">afdian.com/a/xinshibaobao</a>**
 
-<a href="https://afdian.com/a/xinshibaobao"><img src="assets/sponsor-qr.jpg" width="300" alt="爱发电 · 心事抱抱"></a>
+<a href="https://afdian.com/a/xinshibaobao">打开爱发电赞助页</a> · <a href="https://melodifymc.cc.cd/sponsor.html#wechat">微信赞赏说明</a>
 
-<sub>扫码或点开链接 —— 由作者 <b>心事抱抱</b> 的发电页统一接收</sub>
+<img src="assets/sponsor-qr.jpg" width="300" alt="微信赞赏码 · 心事抱抱">
+
+<sub>爱发电页面或微信赞赏码 —— 由作者 <b>心事抱抱</b> 接收；赞助完全自愿</sub>
 
 </div>
 
@@ -465,7 +467,7 @@ MuoniumPlayer 由**四位开发者**共同维护：心事抱抱、云杉、N0ne�
 
 关于渠道，有三点要说明：
 
-- **只认爱发电这一个入口。** 除上面的爱发电页面外，我们没有开通、也不会授权任何其他收款方式。任何以本项目名义在别处收钱的，都与我们无关
+- **官方赞助入口是上面的爱发电页面与微信赞赏码。** 请核对收款方为心事抱抱；其他未经确认的收款链接不代表本项目
 - **赞助不换取特权。** 不设付费版、不解锁功能、不进入更新优先队列 —— 赞助就是单纯的支持
 - **高速下载与赞助是两件事。** 需要高速通道请走官网下载页的流程，请不要把上面的赞赏码当作解锁入口
 

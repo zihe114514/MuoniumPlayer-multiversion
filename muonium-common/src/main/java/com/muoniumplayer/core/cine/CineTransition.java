@@ -18,10 +18,8 @@ import io.github.humbleui.skija.Canvas;
  * </ol>
  *
  * <h3>渲染路径</h3>
- * <p>照 {@code AutomixTransitionAnimation} 的帧末合成路子：树侧 HUD 回调
- * （{@code MuoniumPlayerEventHandler.onRender2D}）里调 {@link #render()}，
- * 经 {@code SkijaHost.deferPostCompositeOverlay} 推迟到 Skija 离屏合成时画——
- * 盖在世界之上、GUI 之下，与灵动岛同一条链。</p>
+ * <p>树侧 {@code CineHudMixin} 在 HUD 隐藏闸门外提交帧末合成任务，经
+ * {@code SkijaHost.deferPostCompositeOverlay} 在最终合成时调用本类。</p>
  *
  * <p>遮罩时钟全在 {@link CineDirector}（单消费者），本类只做无状态绘制。</p>
  */

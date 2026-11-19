@@ -9,6 +9,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FoliaAutomixNumericTest {
 
     @Test
+    void outgoingCutFloorUsesCeilingRoundedFiveSevenths() {
+        assertEquals(0L, FoliaAutomixPlanner.minimumPlayedMillis(0L));
+        assertEquals(71_429L, FoliaAutomixPlanner.minimumPlayedMillis(100_000L));
+        assertEquals(85_715L, FoliaAutomixPlanner.minimumPlayedMillis(120_000L));
+        assertEquals(FoliaAutomixPlanner.minimumPlayedMillis(120_000L),
+                AutomixAutoCue.earliestCutMillis(120_000L, 0L));
+        assertEquals(90_000L, AutomixAutoCue.earliestCutMillis(120_000L, 90_000L));
+    }
+
+    @Test
+    void barQuantisationUsesMeasuredWindowOriginAndChoosesNearestLegalBar() {
+        AutomixAnalyzer.BeatGrid grid = new AutomixAnalyzer.BeatGrid(120f, 0f, 500f, .9f);
+        assertEquals(91_500L, FoliaAutomixPlanner.nearestBarWithin(92_000L, 90_000L, 95_000L,
+                7_000L, grid));
+        assertEquals(-1L, FoliaAutomixPlanner.nearestBarWithin(92_000L, 92_000L, 92_500L,
+                7_000L, grid));
+        assertEquals(4_500L, FoliaAutomixPlanner.nextBarAtOrAfter(4_000L, grid, 0L));
+        assertEquals(4_000L, FoliaAutomixPlanner.nextBarAtOrAfter(4_000L, null, 0L));
+        assertEquals(-1L, FoliaAutomixPlanner.nearestBarWithin(4_000L, 0L, 8_000L, 0L, null));
+    }
+
+    @Test
     void analysisEdgesAreReportedInMilliseconds() {
         int rate = 44_100;
         float[] audio = new float[rate * 4];

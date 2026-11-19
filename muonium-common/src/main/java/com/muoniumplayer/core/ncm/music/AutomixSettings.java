@@ -136,19 +136,14 @@ public final class AutomixSettings {
     private static boolean skipIntro = true;
     private static boolean performanceMode = false;
     /**
-     * 进阶模式：整套「先算再切」的增强，出厂关闭。
+     * 进阶模式：额外的队列排列与双侧人声让路，出厂关闭。
      *
-     * <p>它一次打开三件事——整曲包络扫描 + 出口×入口候选配对打分（{@link AutomixAutoCue}）、
-     * 队列一键排列（{@link AutomixFlowPlanner}）、以及按实测人声证据决定的<b>双侧</b>人声让路
-     * （{@code AutomixPlan#outgoingVocalDepth}）。关掉时这三件事一件都不发生：不扫包络、不起
-     * 线程、不排队列，交接退回到 {@link FoliaAutomixPlanner} 原本的启发式路径，规划器读到的
-     * 每个默认值都与「这个功能不存在」时逐位相同。</p>
-     *
-     * <p>之所以要一个总开关而不是三个独立开关：这三件事共用同一份整曲包络缓存，也共用同一条
-     * 「预备期算不完就推迟」的时间预算。单独关其中一件，剩下两件仍要为它维护缓存与降级分支，
-     * 而那只会让「这次为什么没 blend」更难解释。</p>
+     * <p>Folia 的整曲包络配对选点属于普通交接策略，默认即启用；这里仅控制用户显式选择的
+     * 队列一键排列和出场侧人声让路曲线。关闭时不影响默认 AutoCue，也不改变普通进场侧处理。</p>
      */
     private static boolean advancedMode = false;
+    /** 过渡期间是否启用 qplayer-next 风格的 3 段动态 EQ。 */
+    private static boolean learnedEq = false;
     private static boolean transitionAnimation = true;
     /** 过渡动画视觉样式：圆环保留原有极简模式，曲线舞台展示真实音频控制曲线。 */
     public enum TransitionAnimationStyle {
@@ -234,10 +229,24 @@ public final class AutomixSettings {
         }
     }
 
-    /**
-     * 进阶模式是否打开。见 {@link #advancedMode} 的字段注释：它是三件事的总闸，
-     * 关闭时这三件事一次都不发生。
-     */
+    /** 过渡期间是否启用 qplayer-next 风格的 3 段动态 EQ。 */
+    public static boolean isLearnedEqEnabled() {
+        load();
+        synchronized (LOCK) {
+            return learnedEq;
+        }
+    }
+
+    public static void setLearnedEqEnabled(boolean value) {
+        load();
+        synchronized (LOCK) {
+            if (learnedEq == value) return;
+            learnedEq = value;
+            saveLocked();
+        }
+    }
+
+    /** 额外队列排列与出场侧人声处理是否开启。 */
     public static boolean isAdvancedModeEnabled() {
         load();
         synchronized (LOCK) {
@@ -603,6 +612,9 @@ public final class AutomixSettings {
                 if (root.has("advancedMode") && !root.get("advancedMode").isJsonNull()) {
                     advancedMode = root.get("advancedMode").getAsBoolean();
                 }
+                if (root.has("learnedEq") && !root.get("learnedEq").isJsonNull()) {
+                    learnedEq = root.get("learnedEq").getAsBoolean();
+                }
                 if (root.has("transitionAnimation") && !root.get("transitionAnimation").isJsonNull()) {
                     transitionAnimation = root.get("transitionAnimation").getAsBoolean();
                 }
@@ -638,6 +650,7 @@ public final class AutomixSettings {
             root.addProperty("engine", engine.name());
             root.addProperty("performanceMode", performanceMode);
             root.addProperty("advancedMode", advancedMode);
+            root.addProperty("learnedEq", learnedEq);
             root.addProperty("transitionAnimation", transitionAnimation);
             root.addProperty("transitionAnimationStyle", transitionAnimationStyle.name());
             root.addProperty("cueMarker", cueMarker);

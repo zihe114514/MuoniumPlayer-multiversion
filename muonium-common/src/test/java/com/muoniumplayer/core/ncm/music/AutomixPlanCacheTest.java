@@ -177,6 +177,23 @@ class AutomixPlanCacheTest {
     }
 
     @Test
+    @DisplayName("策略缓存升版后，旧版本号的计划当未命中")
+    void oldPlanFormatIsTreatedAsMiss() throws IOException {
+        AutomixPlanCache.store(outgoing, incoming, 120_000L, plan(178_400L, 9_700L, 2_150L));
+        File[] written = sandbox.toFile().listFiles((dir, name) -> name.endsWith(".json"));
+        assertNotNull(written);
+        assertEquals(1, written.length);
+        String text = new String(Files.readAllBytes(written[0].toPath()), StandardCharsets.UTF_8)
+                // 把版本号改成任何一个不等于当前 FORMAT_VERSION 的值：守卫的是
+                // 「版本不符即未命中」这条规则本身。不写死源版本号——实现侧
+                // FORMAT_VERSION 已从 3 升到 4，写死会让替换悄悄失效、用例假通过。
+                .replaceAll("\"version\"\\s*:\\s*\\d+", "\"version\":2");
+        Files.write(written[0].toPath(), text.getBytes(StandardCharsets.UTF_8));
+        AutomixPlanCache.useDirectory(sandbox.toFile());
+        assertNull(AutomixPlanCache.load(outgoing, incoming, 120_000L));
+    }
+
+    @Test
     @DisplayName("文件损坏当未命中并顺手删掉，不会每次交接都踩一次")
     void corruptFileIsTreatedAsMissAndRemoved() throws IOException {
         AutomixPlanCache.store(outgoing, incoming, 120_000L, plan(178_400L, 9_700L, 2_150L));

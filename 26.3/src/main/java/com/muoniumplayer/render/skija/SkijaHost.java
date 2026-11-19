@@ -1206,12 +1206,34 @@ public final class SkijaHost {
         return canvas;
     }
 
+    /**
+     * 截取当前离屏目标已合成内容的 ROI；bounds 使用离屏像素坐标（非 GUI 单位）。
+     *
+     * <p>只在有效离屏帧内接受非空、未越界的区域，否则返回 null；这不是独立 page 层。
+     * 返回的 Image 归调用者所有，必须在渲染线程持有、使用并释放，且先于 DirectContext 关闭。
+     * 本接缝不做 GPU 回读、不替换 canvas，也不承诺 zero-copy。
+     */
+    public static Image snapshotContent(io.github.humbleui.types.IRect bounds) {
+        if (!inFrame || DEBUG_DRAW_DIRECT || disabled || context == null
+                || offscreen == null || canvas == null || bounds == null) {
+            return null;
+        }
+        if (bounds.getLeft() < 0 || bounds.getTop() < 0
+                || bounds.getRight() > offscreenWidth || bounds.getBottom() > offscreenHeight
+                || bounds.getRight() <= bounds.getLeft() || bounds.getBottom() <= bounds.getTop()) {
+            return null;
+        }
+        return offscreen.makeImageSnapshot(bounds);
+    }
+
     public static boolean inFrame() {
         return inFrame;
     }
 
     /** 游戏关闭 / 渲染层重载时释放 GPU 资源。 */
     public static void shutdown() {
+        // 过渡内容快照必须在离屏目标与 DirectContext 释放前关闭；调用方仍须接线退出/重载。
+        com.muoniumplayer.core.screens.ncm.PlayerTransitionContentCache.clearAll();
         // 背景采集与折射各自持有一个绑在<b>当前</b> GL 上下文 / DirectContext 上的对象：
         // 上下文没了之后那些 id 就是别人的了，必须在这里一起丢掉（GL 还是 current 的，
         // 所以现在删才删得掉）。丢掉之后 broken 也复位，重载完成的那一帧会重新建。

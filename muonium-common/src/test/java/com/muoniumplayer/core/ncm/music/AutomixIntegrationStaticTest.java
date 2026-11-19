@@ -36,6 +36,8 @@ class AutomixIntegrationStaticTest {
                 "出厂默认引擎必须是智能混音");
         assertTrue(settings.contains("private static Engine engine = DEFAULT_ENGINE;"),
                 "未选择引擎时必须落到 DEFAULT_ENGINE，而不是写死另一个枚举常量");
+        assertTrue(read(music("AutomixPlanCache.java")).contains("FORMAT_VERSION = 4"),
+                "选点算法语义变更后，旧的持久化计划必须失效并重算");
         assertTrue(settings.contains("boolean migrateEngine = !root.has(\"engine\")"),
                 "旧配置缺少 engine 时必须进入迁移路径");
         assertTrue(settings.contains("engine = DEFAULT_ENGINE;"),

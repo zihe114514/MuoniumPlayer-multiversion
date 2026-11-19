@@ -1,6 +1,9 @@
 package com.muoniumplayer.core.preset.domain;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
+import com.muoniumplayer.core.rendering.DownloadDynamicIsland.DynamicIslandStyle;
 import com.muoniumplayer.core.preset.HudPresetStateSync;
 import com.muoniumplayer.core.preset.model.CompatReport;
 import com.muoniumplayer.core.preset.model.Facet;
@@ -40,7 +43,8 @@ public final class HudPresetDomain implements PresetDomain {
                     "dynamicIslandCollapseSpeed", "dynamicIslandContentSpeed", "dynamicIslandEntranceDuration", "dynamicIslandOvershoot",
                     "dynamicIslandSpinnerSpeed", "dynamicIslandAlwaysOn", "dynamicIslandAmbientFps", "dynamicIslandAmbientPing", "dynamicIslandAmbientClock",
                     "dynamicIslandAmbientNowPlaying", "dynamicIslandAmbientRotate", "dynamicIslandAmbientStatusSeconds", "dynamicIslandAmbientNowPlayingSeconds",
-                    "islandSearchEnabled", "islandMiniCardScale", "islandMusicShowsLyric", "islandHoverExpand")
+                    "islandSearchEnabled", "islandMiniCardScale", "islandMusicShowsLyric", "islandHoverExpand", "islandExpandTrigger",
+                    "islandMusicCapsuleMaxWidth")
             .facet(Facet.PANEL, "blossomBackdropBlur", "blossomPanelOpacity", "blossomVisibleLines", "blossomRhythmBorder", "blossomBorderStrength",
                     "glassSurfacePlayer", "glassSurfaceIsland", "glassSurfaceDesktopLyric", "glassSurfaceEditors", "glassBlurSigma", "glassBlurPlayer",
                     "glassBlurIsland", "glassBlurDesktopLyric", "glassBlurEditors", "glassBloom", "glassFusion", "glassTintStrength", "glassEdgeGlow",
@@ -51,6 +55,7 @@ public final class HudPresetDomain implements PresetDomain {
             .facet(Facet.LAYOUT, "infoX", "infoY", "infoScale", "lyricX", "lyricY", "lyricScale", "lyricWidth", "lyricHeight", "dynamicIslandY", "lyricSearchUiScale")
             .facet(Facet.PERFORMANCE, "glassBackdropScale", "glassRealtimeCapture", "worldLyricsQualityTier", "worldLyricsGlowTier", "worldLyricsHudDraw", "fullscreenLyricFluidStatic")
             .exclude("HUD 设置界面自己的状态，不是分享外观", "hudEditorUi", "hudEditorPanelX", "hudEditorPanelY", "hudEditorLastCategory", "hudEditorPanelScaleW", "hudEditorPanelScaleH")
+            .exclude("辅助通知是本机偏好，不随分享外观预设覆盖", "islandAuxiliaryNotices")
             .exclude("材质迁移标记由原配置维护", "glassMaterialVersion")
             .exclude("设备级实验 opt-in 不能被外来预设打开", "glassMobileExperimental")
             .exclude("播放态来源取决于本地播放器环境", "playbackFeed")
@@ -62,6 +67,7 @@ public final class HudPresetDomain implements PresetDomain {
             .enumMax("fullscreenLyricFluidStyle", () -> HudConfig.FULLSCREEN_LYRIC_FLUID_STYLE_MAX)
             .enumMax("osdLyricStyle", () -> HudConfig.OSD_LYRIC_STYLE_MAX)
             .enumMax("dynamicIslandStyle", () -> HudConfig.DYNAMIC_ISLAND_STYLE_MAX)
+            .enumMax("islandExpandTrigger", () -> HudConfig.ISLAND_EXPAND_TRIGGER_MAX)
             .enumMax("infoCardBackdrop", () -> HudConfig.INFO_CARD_BACKDROP_MAX)
             .enumMax("worldLyricsGlowMode", () -> 1)
             .enumMax("worldLyricsGlowColorMode", () -> 1)
@@ -122,7 +128,9 @@ public final class HudPresetDomain implements PresetDomain {
             /* 157 */ "lyricHeight", "dynamicIslandY", "lyricSearchUiScale", "glassBackdropScale",
             /* 161 */ "glassRealtimeCapture", "worldLyricsQualityTier", "worldLyricsGlowTier", "worldLyricsHudDraw",
             /* 165 */ "fullscreenLyricFluidStatic", "worldLyricsGlowMode",
-            /* 167 */ "islandMiniCardScale", "islandMusicShowsLyric", "islandHoverExpand"));
+            /* 167 */ "islandMiniCardScale", "islandMusicShowsLyric", "islandHoverExpand",
+            /* 170 */ "islandExpandTrigger",
+            /* 171 */ "islandMusicCapsuleMaxWidth"));
     public String id() { return ID; }
     public String displayName() { return "HUD 与歌词"; }
     public int fragmentVersion() { return 1; }
@@ -132,6 +140,14 @@ public final class HudPresetDomain implements PresetDomain {
     public static KeyPolicy staticPolicy() { return POLICY; }
     public JsonObject snapshot() { return HudConfig.toJson(); }
     public JsonObject defaults() { return HudConfig.defaultsJson(); }
+    public JsonElement sanitize(String key, JsonElement value, CompatReport report) {
+        if (!"dynamicIslandStyle".equals(key)) return value;
+        int id = value.getAsInt();
+        int normalized = DynamicIslandStyle.fromId(id).getId();
+        if (normalized == id) return value;
+        report.warn("预设中的灵动岛样式已移除，已改用紧凑状态");
+        return new JsonPrimitive(normalized);
+    }
     public void apply(JsonObject state, CompatReport report) {
         HudConfig.applyJson(state);
         HudPresetStateSync.sync();

@@ -124,10 +124,17 @@ class VocalMaterialStaticTest {
     @DisplayName("素材只给进场侧写，且缓存有上限")
     void materialIsWrittenForIncomingOnlyAndCapped() throws Exception {
         String profiler = read(music("FoliaTrackProfiler.java"));
+        String profileModel = read(music("FoliaTrackProfile.java"));
         assertTrue(profiler.contains("outgoing ? null : stemFile(profileKey)"),
                 "出场侧只要时间戳，那份素材没人读，别为它占 5 MB");
         assertTrue(profiler.contains("private static final long MATERIAL_CACHE_BYTES"),
                 "素材是这份缓存里唯一大的东西，不封顶就等于往配置目录里塞几个 G");
+        assertTrue(profiler.contains("cacheKey(source, outgoing)"),
+                "头窗和尾窗 profile 不能共享同一个缓存键");
+        assertTrue(profiler.contains("String role = outgoing ? \"outro\" : \"intro\""),
+                "profile 缓存键必须明确区分分析角色");
+        assertTrue(profileModel.contains("VERSION = 5"),
+                "profile 新增角色语义后必须拒绝旧格式");
         String trim = between(profiler, "private static void trimVocalMaterial()", "private static boolean hasBeatModel()");
         assertTrue(trim.contains(".voc.f32") && trim.contains("file.delete()"), "按最旧的先删");
 

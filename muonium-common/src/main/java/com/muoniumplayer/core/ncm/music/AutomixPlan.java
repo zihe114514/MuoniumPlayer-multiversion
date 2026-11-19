@@ -153,6 +153,9 @@ final class AutomixPlan {
     final double vocalReleaseAt;
     /** 手动切歌的轻量频谱交接，不借用自动规划的节拍、分轨或变速参数。 */
     final boolean manualQuickMix;
+    /** 模型预测的 3 段 EQ 控制点：低/中/高频各 4 个，空值表示不启用。 */
+    final float[] learnedEqControls;
+    final boolean learnedEqEnabled;
     final String summary;
 
     static AutomixPlan manualQuickMix(long overlapMillis) {
@@ -162,7 +165,7 @@ final class AutomixPlan {
     static AutomixPlan manualQuickMix(long overlapMillis, boolean processing) {
         return new AutomixPlan(0L, overlapMillis, 0L, 1f, false, processing, 1f, false,
                 0L, 0f, processing ? "manual spectral mix" : "manual plain mix", null, 0f, 0f, false,
-                .42, .42, .45, false, 500.0, 0f, 0.0, processing);
+                .42, .42, .45, false, 500.0, 0f, 0.0, processing, null);
     }
 
     AutomixPlan(long fireMillis, long overlapMillis, long incomingCueMillis, float matchGain,
@@ -194,7 +197,21 @@ final class AutomixPlan {
         this(fireMillis, overlapMillis, incomingCueMillis, matchGain, barAligned, bassSwap,
                 tempoRatio, pitchShift, phaseErrorMillis, vocalDuckDepth, summary, style,
                 midTiltDb, highTiltDb, echoThrow, drumHandoverAt, bassHandoverAt, vocalEntryAt,
-                stemDriven, animationPeriodMillis, outgoingVocalDuckDepth, vocalReleaseAt, false);
+                stemDriven, animationPeriodMillis, outgoingVocalDuckDepth, vocalReleaseAt, false, null);
+    }
+
+    AutomixPlan(long fireMillis, long overlapMillis, long incomingCueMillis, float matchGain,
+                boolean barAligned, boolean bassSwap, float tempoRatio, boolean pitchShift,
+                long phaseErrorMillis, float vocalDuckDepth, String summary,
+                FoliaTransitionStyle style, float midTiltDb, float highTiltDb, boolean echoThrow,
+                double drumHandoverAt, double bassHandoverAt, double vocalEntryAt, boolean stemDriven,
+                double animationPeriodMillis, float outgoingVocalDuckDepth, double vocalReleaseAt,
+                float[] learnedEqControls) {
+        this(fireMillis, overlapMillis, incomingCueMillis, matchGain, barAligned, bassSwap,
+                tempoRatio, pitchShift, phaseErrorMillis, vocalDuckDepth, summary, style,
+                midTiltDb, highTiltDb, echoThrow, drumHandoverAt, bassHandoverAt, vocalEntryAt,
+                stemDriven, animationPeriodMillis, outgoingVocalDuckDepth, vocalReleaseAt,
+                false, learnedEqControls);
     }
 
     private AutomixPlan(long fireMillis, long overlapMillis, long incomingCueMillis, float matchGain,
@@ -203,8 +220,10 @@ final class AutomixPlan {
                         FoliaTransitionStyle style, float midTiltDb, float highTiltDb, boolean echoThrow,
                         double drumHandoverAt, double bassHandoverAt, double vocalEntryAt, boolean stemDriven,
                         double animationPeriodMillis, float outgoingVocalDuckDepth, double vocalReleaseAt,
-                        boolean manualQuickMix) {
+                        boolean manualQuickMix, float[] learnedEqControls) {
         this.manualQuickMix = manualQuickMix;
+        this.learnedEqControls = sanitizeEqControls(learnedEqControls);
+        this.learnedEqEnabled = this.learnedEqControls != null;
         this.pitchShift = pitchShift;
         this.fireMillis = fireMillis;
         this.overlapMillis = overlapMillis;
@@ -233,6 +252,40 @@ final class AutomixPlan {
         // 0 或负数是「没有包络证据」，不是「在第 0 帧释放」——后者会让进场方一进来就开人声。
         this.vocalReleaseAt = Double.isFinite(vocalReleaseAt) && vocalReleaseAt > 0.0
                 ? Math.max(.20, Math.min(.85, vocalReleaseAt)) : 0.0;
+    }
+
+    private static float[] sanitizeEqControls(float[] controls) {
+        if (controls == null || controls.length < AutomixLearnedEq.OUT) return null;
+        float[] copy = new float[AutomixLearnedEq.OUT];
+        for (int i = 0; i < copy.length; i++) {
+            float value = controls[i];
+            if (!Float.isFinite(value)) return null;
+            copy[i] = Math.max(0f, Math.min(1f, value));
+        }
+        for (int band = 0; band < 3; band++) copy[band * 4 + 3] = 1f;
+        return copy;
+    }
+
+    /** 进场方动态 EQ 的低/中/高频控制增益，叠加在已有的静态过渡 EQ 上。 */
+    float incomingLearnedEqDb(int band, double progress) {
+        if (!learnedEqEnabled || band < 0 || band >= 3) return 0f;
+        int offset = band * 4;
+        double p = clamp(progress);
+        if (p >= 1.0) return 0f;
+        double scaled = p * 3.0;
+        int left = Math.min(2, (int) Math.floor(scaled));
+        int right = Math.min(3, left + 1);
+        double fraction = scaled - left;
+        double control = learnedEqControls[offset + left]
+                + (learnedEqControls[offset + right] - learnedEqControls[offset + left]) * fraction;
+        // qplayer-next 的输出是 [0, 1]，其 EQ 由 0 到负 dB 衰减；限制到现有链路的安全范围。
+        double maxDb = -12.0;
+        return (float) (maxDb * (1.0 - control));
+    }
+
+    /** 动态 EQ 只在交叠中生效，交接结束后控制点必须回到单位增益。 */
+    float incomingLearnedEqDb(double progress) {
+        return incomingLearnedEqDb(0, progress);
     }
 
     /** Folia 只降低混音中段，并让两端保持精确单位增益。 */
@@ -326,19 +379,26 @@ final class AutomixPlan {
      */
     float incomingBassDb(double progress) {
         if (manualQuickMix) return manualEntry(-9f, progress, .28, .78);
-        if (!bassSwap) return 0f;
+        if (!bassSwap) return incomingLearnedEqDb(0, progress);
         double p = clamp(progress);
+        float base;
         if (stemDriven) {
-            if (p <= bassHandoverAt) return AutomixSettings.BASS_ENTRY_CUT_DB;
-            double complete = Math.min(.94, bassHandoverAt + .14);
-            if (p >= complete) return 0f;
-            double share = (p - bassHandoverAt) / Math.max(.01, complete - bassHandoverAt);
-            return (float) (AutomixSettings.BASS_ENTRY_CUT_DB * (1.0 - smoothstep(share)));
+            if (p <= bassHandoverAt) base = AutomixSettings.BASS_ENTRY_CUT_DB;
+            else {
+                double complete = Math.min(.94, bassHandoverAt + .14);
+                if (p >= complete) base = 0f;
+                else {
+                    double share = (p - bassHandoverAt) / Math.max(.01, complete - bassHandoverAt);
+                    base = (float) (AutomixSettings.BASS_ENTRY_CUT_DB * (1.0 - smoothstep(share)));
+                }
+            }
+        } else if (p <= BASS_ENTRY_START) base = AutomixSettings.BASS_ENTRY_CUT_DB;
+        else if (p >= BASS_ENTRY_COMPLETE) base = 0f;
+        else {
+            double share = (p - BASS_ENTRY_START) / (BASS_ENTRY_COMPLETE - BASS_ENTRY_START);
+            base = (float) (AutomixSettings.BASS_ENTRY_CUT_DB * (1.0 - share));
         }
-        if (p <= BASS_ENTRY_START) return AutomixSettings.BASS_ENTRY_CUT_DB;
-        if (p >= BASS_ENTRY_COMPLETE) return 0f;
-        double share = (p - BASS_ENTRY_START) / (BASS_ENTRY_COMPLETE - BASS_ENTRY_START);
-        return (float) (AutomixSettings.BASS_ENTRY_CUT_DB * (1.0 - share));
+        return clampBassDb(base + incomingLearnedEqDb(0, p));
     }
 
     /** 旧歌让出主体和明亮度；自动规划仍保留原来的出场音色。 */
@@ -368,13 +428,26 @@ final class AutomixPlan {
     /** 接入方 deck 的中频补偿，在混音结束前缓回平直。 */
     float incomingMidDb(double progress) {
         if (manualQuickMix) return manualEntry(-1f, progress, .20, .75);
-        return toneEntry(midTiltDb, progress, stemDriven ? drumHandoverAt : .85);
+        double p = clamp(progress);
+        return clampDb(toneEntry(midTiltDb, p, stemDriven ? drumHandoverAt : .85)
+                + incomingLearnedEqDb(1, p));
     }
 
     /** 接入方 deck 的高频补偿，在混音结束前缓回平直。 */
     float incomingHighDb(double progress) {
         if (manualQuickMix) return manualEntry(-2f, progress, .15, .85);
-        return toneEntry(highTiltDb, progress, .85);
+        double p = clamp(progress);
+        return clampDb(toneEntry(highTiltDb, p, .85) + incomingLearnedEqDb(2, p));
+    }
+
+    private static float clampBassDb(double value) {
+        if (!Double.isFinite(value)) return 0f;
+        return (float) Math.max(-40.0, Math.min(12.0, value));
+    }
+
+    private static float clampDb(double value) {
+        if (!Double.isFinite(value)) return 0f;
+        return (float) Math.max(-12.0, Math.min(3.0, value));
     }
 
     /**

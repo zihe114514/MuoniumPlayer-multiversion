@@ -99,11 +99,46 @@ public class SmtcWatcherSourceStaticTest {
         assertTrue(source.contains("ownExplicitAumid"), "排除键是显式 AUMID");
         // 浮窗应用名来自 AppUserModelId 注册表键；没有它显示「未知应用」。
         assertTrue(source.contains("SetCurrentProcessExplicitAppUserModelID"), "进程显式 AUMID");
-        assertTrue(source.contains("AppUserModelId\\\\") || source.contains("AppUserModelId\\"),
-                "注册表键路径");
+        assertTrue(source.contains("AppUserModelId\\\\"), "注册表键路径");
         assertTrue(source.contains("DisplayName"), "浮窗显示名");
         // 发布会话全系统只能一条：命名互斥锁 + 第二实例明确拒绝。
         assertTrue(source.contains("MuoniumSmtcWatcher.Publisher"), "发布独占锁名");
         assertTrue(source.contains("already_running"), "第二实例的拒绝码");
+    }
+
+    /**
+     * 2.5.2 冻结事故的结构性防线：读循环必须只收行入队，命令处理不得在读线程上
+     * 串行执行（poll/cmd/vol 的 WinRT 往返最坏秒级，期间不消费 stdin → Java 侧
+     * 管道写满 → 渲染线程等锁冻结）。这些标记改丢任何一个，事故形态就会回来。
+     */
+    @Test
+    public void stdinReadingNeverRunsCommandWorkOnTheReaderThread() throws Exception {
+        String code = stripComments(source());
+        // 读循环里只允许出现 ReadLine/Trim/exit/Enqueue：出现 Handle/State/Command
+        // 任何一个就说明有命令处理被搬回了读线程。
+        int readLoopStart = code.indexOf("private static void ReadLoop");
+        assertTrue(readLoopStart > 0, "读线程入口必须存在");
+        int readLoopEnd = code.indexOf("private static", readLoopStart + 1);
+        String readLoopBody = code.substring(readLoopStart, readLoopEnd);
+        assertTrue(readLoopBody.contains("reader.ReadLine()"), "读线程的本职是读行");
+        assertTrue(readLoopBody.contains("Enqueue(line)"), "读线程把行交给队列");
+        assertFalse(readLoopBody.contains("State()"), "读线程不得做 poll 处理");
+        assertFalse(readLoopBody.contains("Command("), "读线程不得做命令处理");
+        assertFalse(readLoopBody.contains("Volume("), "读线程不得做音量处理");
+        // 工作线程与有界队列必须存在，且处理集中在这条线程上。
+        assertTrue(code.contains("ProcessLoop"), "专职处理线程");
+        assertTrue(code.contains("InboundCapacity"), "有界队列（无界 = 内存风险）");
+        assertTrue(code.contains("DropOldestFor"), "队满丢弃策略");
+        assertTrue(code.contains("Monitor.Wait(InboundLock)"), "工作线程等队列的唤醒点");
+        // Handle 是工作线程的处理入口：所有命令分发都在里面（它是文件末尾的方法，
+        // 边界用「下一个方法」找不到时收在文件尾）。
+        int handleStart = code.indexOf("private static void Handle");
+        assertTrue(handleStart > 0, "处理入口必须存在");
+        int handleEnd = code.indexOf("private static", handleStart + 1);
+        String handleBody = handleEnd > handleStart
+                ? code.substring(handleStart, handleEnd) : code.substring(handleStart);
+        assertTrue(handleBody.contains("State()") && handleBody.contains("Command(")
+                && handleBody.contains("Volume(") && handleBody.contains("Publish(line)"),
+                "poll/cmd/vol/pub 的分发都在工作线程上");
     }
 }

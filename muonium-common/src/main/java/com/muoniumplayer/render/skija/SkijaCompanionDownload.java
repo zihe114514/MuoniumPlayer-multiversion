@@ -183,6 +183,10 @@ final class SkijaCompanionDownload {
         return state;
     }
 
+    public static State catalogState() {
+        return state;
+    }
+
     /** 本机平台对应的伴生包；表里没有的平台（如 Skija 没出包的 windows/arm64）返回 null。 */
     static Pack packFor(String mappedPlatform) {
         for (Pack pack : PACKS) {

@@ -1,85 +1,183 @@
 package com.muoniumplayer.core.viper;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 import com.muoniumplayer.core.settings.ConfigPaths;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.Consumer;
 
 /**
- * 预设参数编辑器：把 {@link ViperPresetSchema} 当表单元数据用，对一份归一化预设做
- * 「逐组逐字段」的类型化读写，写完立即落盘并让音频链生效。
+ * Schema 驱动的预设工作副本。Quiet 写入只编辑内存；checked 保存成功后才调用生效钩子。
  *
- * <p><b>编辑目标</b>：{@link #overActive()} 以当前选中的预设为底稿（没有选中就等价于
- * 一份全默认的「自定义」底稿）。所有修改都写在内存里的工作副本上；{@link #persist()}
- * 把它经过解析器做一次归一化 + 钳位后写回目标预设文件——「自定义」底稿第一次落盘时会
- * 自动被选中，让改动立刻可以被听见。{@link #saveAs(String)} 另存为新预设并切换编辑目标、
- * 同时选中它。</p>
- *
- * <p><b>与音频链的关系</b>：每次 {@link #persist()} 后调 {@link ViperRuntime#reload()}，
- * 参数在下一个音频缓冲生效——与官方 App「调完即听」的行为一致。拖动中的连续修改请用
- * quiet 写入（{@link #setNumberQuiet}），拖完再 {@link #persist()} 一次，避免每帧写盘。</p>
- *
- * <p><b>钳位</b>：写入即按 schema 量程钳位（{@code min > max} 的字段不钳）；落盘时的
- * 解析器往返再做第二道保险。数组字段本版不开放编辑（界面只读），随预设原样保留。</p>
+ * <p>编辑器是线程独占的：界面拖动时用 quiet API，松手时在界面线程取得 {@link #copy()}，
+ * 再把独立副本交给串行后台保存。后台不能读写界面正在使用的编辑器；保存回执可以通过
+ * {@link #acknowledgeCommit(ViperPresetEditor)} 确认首次保存，不覆盖更晚的 quiet 修改。</p>
  */
 public final class ViperPresetEditor {
 
-    /** 没有选中任何预设时的编辑底稿名。 */
     public static final String SCRATCH_NAME = "自定义";
 
-    private static final ViperPresetStore STORE = new ViperPresetStore(ConfigPaths.VIPER_PRESETS);
+    // 测试注入和纯内存 copy 不应因类初始化触发 ConfigPaths 的历史文件迁移。
+    private static final class DefaultStore {
+        private static final ViperPresetStore INSTANCE = new ViperPresetStore(ConfigPaths.VIPER_PRESETS);
+    }
+
+    /** 只有保存侧使用；同一新建会话的多个独立副本共享文件所有权，不共享 JSON。 */
+    private static final class ScratchSession {
+        private final boolean collisionSafe;
+        private String lastSavedText;
+        private boolean selected;
+
+        private ScratchSession(boolean collisionSafe) {
+            this.collisionSafe = collisionSafe;
+        }
+    }
 
     private ViperPreset preset;
-    private ViperPresetStore store;
+    private final ViperPresetStore store;
     private String targetName;
-    /** 「自定义」底稿是否已经落盘并被选中（第一次 persist 时置位并选中）。 */
+    private boolean scratchTarget;
     private boolean scratchSelected;
+    private ScratchSession scratchSession;
 
-    /** 落盘后的生效钩子；生产路径 = 重载运行时，测试替换为空操作以免碰全局引擎/配置。 */
     private Runnable reloadHook = ViperRuntime::reload;
-    /** 选中预设的钩子；生产路径 = 写 settings 并重载。 */
-    private java.util.function.Consumer<String> selectHook = ViperRuntime::selectPreset;
+    private Consumer<String> selectHook = ViperRuntime::selectPreset;
 
-    /** 测试专用：替换生效/选中钩子（生产代码不要调）。 */
-    void hooksForTest(Runnable reload, java.util.function.Consumer<String> select) {
-        this.reloadHook = reload;
-        this.selectHook = select;
+    /**
+     * 选择 checked 设置发布路径；仅替换钩子，不读取配置、不写盘、不启动音频引擎。
+     * 工作台在后台加载/新建后显式调用，其它调用方保留原默认行为。
+     */
+    public void useCheckedRuntimeHooks() {
+        selectHook = name -> ViperRuntime.applyState(ViperRuntime.isEnabled(), name);
+        reloadHook = () -> ViperRuntime.applyState(ViperRuntime.isEnabled(), ViperRuntime.activePresetName());
     }
 
-    private ViperPresetEditor(ViperPreset preset, String targetName, ViperPresetStore store) {
-        this.preset = preset;
-        this.targetName = targetName;
-        this.store = store;
+    /** 测试专用：不触碰全局引擎/配置。 */
+    void hooksForTest(Runnable reload, Consumer<String> select) {
+        this.reloadHook = Objects.requireNonNull(reload, "reload");
+        this.selectHook = Objects.requireNonNull(select, "select");
     }
 
-    /** 以当前选中的预设为底稿；没有选中或加载失败时回退到全默认的「自定义」。 */
+    private ViperPresetEditor(ViperPreset preset, String targetName, ViperPresetStore store,
+                              boolean scratchTarget, ScratchSession scratchSession) {
+        this.targetName = ViperPresetStore.sanitizeName(targetName);
+        this.preset = normalizedCopy(Objects.requireNonNull(preset, "preset"), this.targetName);
+        this.store = Objects.requireNonNull(store, "store");
+        this.scratchTarget = scratchTarget;
+        this.scratchSession = scratchSession;
+    }
+
+    /** 后台加载入口；未选中或加载失败时使用不会覆盖既有预设的新底稿。 */
     public static ViperPresetEditor overActive() {
+        ViperPresetStore store = DefaultStore.INSTANCE;
         String active = ViperRuntime.activePresetName();
-        ViperPreset base = active == null ? null : STORE.load(active);
+        ViperPreset base = active == null ? null : store.load(active);
         if (base != null) {
-            return new ViperPresetEditor(base, active, STORE);
+            return new ViperPresetEditor(base, active, store, false, null);
         }
-        return overDefaults();
+        return newScratch(store);
     }
 
-    /** 以全默认值（schema 2.1 缺省）为底稿，目标名为「自定义」。 */
+    /** 兼容旧入口：固定以「自定义」为目标；新建界面应优先使用 {@link #newScratch()}。 */
     public static ViperPresetEditor overDefaults() {
-        ViperPreset defaults = ViperPresetParser.parse("{\"schemaVersion\":2.1}", SCRATCH_NAME);
-        return new ViperPresetEditor(defaults, SCRATCH_NAME, STORE);
+        return new ViperPresetEditor(defaultPreset(SCRATCH_NAME), SCRATCH_NAME, DefaultStore.INSTANCE,
+                true, new ScratchSession(false));
     }
 
-    /** 测试注入：指定底稿与目标目录。 */
+    /**
+     * 新建底稿，扫描目录选择空缺名（自定义、自定义（2）……）；应在后台调用。
+     * 首存不覆盖后来占用此名称的文件，同一会话后续副本可继续保存自己创建的文件。
+     */
+    public static ViperPresetEditor newScratch() {
+        return newScratch(DefaultStore.INSTANCE);
+    }
+
+    /** 测试注入：扫描只发生在给定目录。 */
+    static ViperPresetEditor newScratch(ViperPresetStore store) {
+        Objects.requireNonNull(store, "store");
+        File directory = store.directory();
+        Set<String> occupied = new HashSet<>();
+        if (directory.exists()) {
+            File[] entries = directory.listFiles();
+            if (entries == null) {
+                throw new IllegalStateException("无法扫描预设目录：" + directory);
+            }
+            for (File entry : entries) {
+                String name = entry.getName().toLowerCase(Locale.ROOT);
+                if (name.endsWith(".json") || name.endsWith(".xml")) {
+                    occupied.add(name.substring(0, name.lastIndexOf('.')));
+                }
+            }
+        }
+        String name = SCRATCH_NAME;
+        for (int suffix = 2; occupied.contains(name.toLowerCase(Locale.ROOT)); suffix++) {
+            name = SCRATCH_NAME + "（" + suffix + "）";
+        }
+        return new ViperPresetEditor(defaultPreset(name), name, store, true, new ScratchSession(true));
+    }
+
+    /** 测试注入；构造只归一化独立 JSON，不读取目标目录或配置。 */
     static ViperPresetEditor over(ViperPreset preset, String targetName, ViperPresetStore store) {
-        return new ViperPresetEditor(preset, targetName, store);
+        boolean scratch = SCRATCH_NAME.equals(ViperPresetStore.sanitizeName(targetName));
+        return new ViperPresetEditor(preset, targetName, store, scratch,
+                scratch ? new ScratchSession(false) : null);
     }
 
-    // ──────────────────────────── 枚举（给表单用） ────────────────────────────
+    /** 归一化、深复制工作副本和目标/钩子状态；不读取任何配置或文件。 */
+    public ViperPresetEditor copy() {
+        ViperPresetEditor copy = new ViperPresetEditor(preset, targetName, store, scratchTarget, scratchSession);
+        copy.scratchSelected = scratchSelected;
+        copy.reloadHook = reloadHook;
+        copy.selectHook = selectHook;
+        return copy;
+    }
 
-    /** 分组数（schema 顺序，与官方 App 的组序一致）。 */
+    /** 只确认同目标的成功首次保存；保留本编辑器更晚的 quiet 修改。 */
+    public void acknowledgeCommit(ViperPresetEditor committed) {
+        Objects.requireNonNull(committed, "committed");
+        if (targetName.equals(committed.targetName) && committed.scratchSelected) {
+            scratchSelected = true;
+        }
+    }
+
+    // ──────────────────────────── 元数据 ────────────────────────────
+
     public int groupCount() {
         return ViperPresetSchema.groups().size();
+    }
+
+    /** 找不到（包括 null）返回 -1。 */
+    public int groupIndex(String key) {
+        for (int index = 0; index < groupCount(); index++) {
+            if (groupKey(index).equals(key)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    /** 找不到或分组下标无效返回 -1。 */
+    public int fieldIndex(int groupIndex, String key) {
+        if (groupIndex < 0 || groupIndex >= groupCount()) {
+            return -1;
+        }
+        for (int index = 0; index < fieldCount(groupIndex); index++) {
+            if (fieldKey(groupIndex, index).equals(key)) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     public String groupKey(int groupIndex) {
@@ -94,17 +192,14 @@ public final class ViperPresetEditor {
         return ViperPresetSchema.groups().get(groupIndex).fields.size();
     }
 
-    /** 字段键。 */
     public String fieldKey(int groupIndex, int fieldIndex) {
         return field(groupIndex, fieldIndex).key;
     }
 
-    /** 字段类型（BOOL / INT / FLOAT / STRING / 数组…）。 */
     public ViperFieldKind fieldKind(int groupIndex, int fieldIndex) {
         return ViperFieldKind.of(field(groupIndex, fieldIndex).kind);
     }
 
-    /** 是否有量程（INT/FLOAT 专用）。 */
     public boolean fieldRanged(int groupIndex, int fieldIndex) {
         return field(groupIndex, fieldIndex).ranged();
     }
@@ -117,28 +212,23 @@ public final class ViperPresetEditor {
         return field(groupIndex, fieldIndex).max;
     }
 
-    /** 字段显示名（目录未收录时回退键名）。 */
     public String fieldDisplayName(int groupIndex, int fieldIndex) {
         return ViperTuningCatalog.fieldDisplayName(groupKey(groupIndex), fieldKey(groupIndex, fieldIndex));
     }
 
-    /** 档位型整型字段的离散取值；未收录返回 {@code null}。 */
     public int[] fieldIntChoices(int groupIndex, int fieldIndex) {
         return ViperTuningCatalog.intChoices(groupKey(groupIndex), fieldKey(groupIndex, fieldIndex));
     }
 
-    /** 档位取值的可读名（如 JamesDSP 混响预设名）；无名字时返回 {@code null}。 */
     public String fieldIntChoiceName(int groupIndex, int fieldIndex, int value) {
-        return ViperTuningCatalog.intChoiceName(
-                groupKey(groupIndex), fieldKey(groupIndex, fieldIndex), value);
+        return ViperTuningCatalog.intChoiceName(groupKey(groupIndex), fieldKey(groupIndex, fieldIndex), value);
     }
 
-    /** 是否为官方遗留、映射器不消费的字段（界面只读展示）。 */
     public boolean fieldUnused(int groupIndex, int fieldIndex) {
         return ViperTuningCatalog.isUnusedField(groupKey(groupIndex), fieldKey(groupIndex, fieldIndex));
     }
 
-    // ──────────────────────────── 读 ────────────────────────────
+    // ──────────────────────────── 内存读取 ────────────────────────────
 
     public boolean getBoolean(int groupIndex, int fieldIndex, boolean fallback) {
         ViperPresetSchema.Field field = field(groupIndex, fieldIndex);
@@ -165,108 +255,257 @@ public final class ViperPresetEditor {
         return preset.text(groupKey(groupIndex), fieldKey(groupIndex, fieldIndex), fallback);
     }
 
-    // ──────────────────────────── 写 ────────────────────────────
+    /** 数值数组的独立副本；BOOL_ARRAY 请使用 {@link #getBooleanArray(int, int)}。 */
+    public double[] getArray(int groupIndex, int fieldIndex) {
+        ViperPresetSchema.Field field = numericArrayField(groupIndex, fieldIndex);
+        JsonArray array = arrayBody(groupIndex, field);
+        double[] values = new double[array.size()];
+        for (int index = 0; index < values.length; index++) {
+            JsonElement element = array.get(index);
+            if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isNumber()) {
+                throw new IllegalStateException("数组包含非数值：" + field.key + "[" + index + "]");
+            }
+            double value = element.getAsDouble();
+            requireFinite(value);
+            if (field.kind == ViperPresetSchema.Kind.INT_ARRAY
+                    && (value != Math.rint(value) || value < Integer.MIN_VALUE || value > Integer.MAX_VALUE)) {
+                throw new IllegalStateException("数组包含非整型值：" + field.key + "[" + index + "]");
+            }
+            values[index] = value;
+        }
+        return values;
+    }
 
-    /** 写布尔：立即落盘并重载。 */
+    public boolean[] getBooleanArray(int groupIndex, int fieldIndex) {
+        ViperPresetSchema.Field field = requireKind(groupIndex, fieldIndex, ViperPresetSchema.Kind.BOOL_ARRAY);
+        JsonArray array = arrayBody(groupIndex, field);
+        boolean[] values = new boolean[array.size()];
+        for (int index = 0; index < values.length; index++) {
+            JsonElement element = array.get(index);
+            if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isBoolean()) {
+                throw new IllegalStateException("数组包含非布尔值：" + field.key + "[" + index + "]");
+            }
+            values[index] = element.getAsBoolean();
+        }
+        return values;
+    }
+
+    // ──────────────────────────── 类型化写入 ────────────────────────────
+
     public void setBoolean(int groupIndex, int fieldIndex, boolean value) {
-        setRaw(groupIndex, fieldIndex, value);
+        setBooleanQuiet(groupIndex, fieldIndex, value);
         persist();
     }
 
-    /** 写数值（int/float 通用，按字段类型取整/钳位）：立即落盘并重载。 */
+    public void setBooleanQuiet(int groupIndex, int fieldIndex, boolean value) {
+        ViperPresetSchema.Field field = requireKind(groupIndex, fieldIndex, ViperPresetSchema.Kind.BOOL);
+        groupBody(groupKey(groupIndex)).addProperty(field.key, value);
+    }
+
     public void setNumber(int groupIndex, int fieldIndex, double value) {
         setNumberQuiet(groupIndex, fieldIndex, value);
         persist();
     }
 
-    /** 拖动中的静默写入：只改工作副本，不落盘（拖完调 {@link #persist()}）。 */
+    /** INT/FLOAT/可空整数的数值写入；非有限输入拒绝，不修改工作副本。 */
     public void setNumberQuiet(int groupIndex, int fieldIndex, double value) {
-        setRaw(groupIndex, fieldIndex, value);
-    }
-
-    /** 写字符串：立即落盘并重载。 */
-    public void setString(int groupIndex, int fieldIndex, String value) {
-        setRaw(groupIndex, fieldIndex, value);
-        persist();
-    }
-
-    /** 把一组恢复为 schema 默认值：立即落盘并重载。 */
-    public void resetGroup(int groupIndex) {
-        ViperPresetSchema.Group group = ViperPresetSchema.groups().get(groupIndex);
-        JsonObject body = groupBody(groupKey(groupIndex));
-        for (ViperPresetSchema.Field field : group.fields) {
-            writeDefault(body, field);
+        ViperPresetSchema.Field field = field(groupIndex, fieldIndex);
+        if (field.kind != ViperPresetSchema.Kind.INT && field.kind != ViperPresetSchema.Kind.FLOAT
+                && field.kind != ViperPresetSchema.Kind.NULLABLE_LONG) {
+            throw wrongKind(field, "数值标量");
         }
+        Number normalized = numericValue(field, value);
+        groupBody(groupKey(groupIndex)).addProperty(field.key, normalized);
+    }
+
+    public void setString(int groupIndex, int fieldIndex, String value) {
+        setStringQuiet(groupIndex, fieldIndex, value);
         persist();
     }
 
-    // ──────────────────────────── 目标与落盘 ────────────────────────────
+    public void setStringQuiet(int groupIndex, int fieldIndex, String value) {
+        ViperPresetSchema.Field field = requireKind(groupIndex, fieldIndex, ViperPresetSchema.Kind.STRING);
+        if (value == null) {
+            throw new IllegalArgumentException("字符串不可为 null：" + field.key);
+        }
+        groupBody(groupKey(groupIndex)).addProperty(field.key, value);
+    }
 
-    /** 当前编辑目标（保存到的预设名）。 */
+    /** 先验证、逐元素钳位整个数组，再一次替换；不保存输入数组引用。 */
+    public void setArrayQuiet(int groupIndex, int fieldIndex, double[] values) {
+        ViperPresetSchema.Field field = numericArrayField(groupIndex, fieldIndex);
+        if (values == null) {
+            throw new IllegalArgumentException("数组不可为 null：" + field.key);
+        }
+        JsonArray array = new JsonArray(values.length);
+        for (double value : values) {
+            array.add(numericValue(field, value));
+        }
+        groupBody(groupKey(groupIndex)).add(field.key, array);
+    }
+
+    public void setArrayElementQuiet(int groupIndex, int fieldIndex, int elementIndex, double value) {
+        numericArrayField(groupIndex, fieldIndex);
+        requireFinite(value);
+        double[] values = getArray(groupIndex, fieldIndex);
+        checkElementIndex(elementIndex, values.length);
+        values[elementIndex] = value;
+        setArrayQuiet(groupIndex, fieldIndex, values);
+    }
+
+    public void setBooleanArrayQuiet(int groupIndex, int fieldIndex, boolean[] values) {
+        ViperPresetSchema.Field field = requireKind(groupIndex, fieldIndex, ViperPresetSchema.Kind.BOOL_ARRAY);
+        if (values == null) {
+            throw new IllegalArgumentException("数组不可为 null：" + field.key);
+        }
+        JsonArray array = new JsonArray(values.length);
+        for (boolean value : values) {
+            array.add(value);
+        }
+        groupBody(groupKey(groupIndex)).add(field.key, array);
+    }
+
+    public void setBooleanArrayElementQuiet(int groupIndex, int fieldIndex, int elementIndex, boolean value) {
+        boolean[] values = getBooleanArray(groupIndex, fieldIndex);
+        checkElementIndex(elementIndex, values.length);
+        values[elementIndex] = value;
+        setBooleanArrayQuiet(groupIndex, fieldIndex, values);
+    }
+
+    public void setNullQuiet(int groupIndex, int fieldIndex) {
+        ViperPresetSchema.Field field = requireKind(groupIndex, fieldIndex, ViperPresetSchema.Kind.NULLABLE_LONG);
+        groupBody(groupKey(groupIndex)).add(field.key, JsonNull.INSTANCE);
+    }
+
+    /** 包括数组、布尔数组与 null；schema 的默认数组不会与工作副本共享。 */
+    public void resetFieldQuiet(int groupIndex, int fieldIndex) {
+        ViperPresetSchema.Field field = field(groupIndex, fieldIndex);
+        groupBody(groupKey(groupIndex)).add(field.key, defaultElement(field));
+    }
+
+    /** 重置本组全部已知字段，保留未知字段。 */
+    public void resetGroupQuiet(int groupIndex) {
+        for (int index = 0; index < fieldCount(groupIndex); index++) {
+            resetFieldQuiet(groupIndex, index);
+        }
+    }
+
+    public void resetGroup(int groupIndex) {
+        resetGroupQuiet(groupIndex);
+        persist();
+    }
+
+    // ──────────────────────────── 目标与后台保存 ────────────────────────────
+
     public String targetName() {
         return targetName;
     }
 
-    /** 是否为「自定义」底稿（尚未与任何既有预设绑定）。 */
     public boolean isScratch() {
-        return SCRATCH_NAME.equals(targetName) && !scratchSelected;
+        return scratchTarget && !scratchSelected;
     }
 
-    /**
-     * 落盘并让音频链生效。目标为「自定义」底稿的第一次落盘会同时选中它——
-     * 调参立刻可听；其余情况只重载当前选中预设。
-     */
+    /** 兼容入口：记录失败；需要向界面回报失败的调用方使用 checked 版本。 */
     public void persist() {
         try {
-            ViperPreset normalized = ViperPresetParser.parse(
-                    ViperPresetParser.toJsonText(preset), targetName);
-            store.save(new ViperPreset(targetName, normalized.json()));
-        } catch (RuntimeException failure) {
+            persistChecked();
+        } catch (IOException | RuntimeException failure) {
             System.out.println("[MuoniumPlayer/ViPER] 调参保存失败（" + targetName + "）：" + failure);
-            return;
         }
-        if (isScratch()) {
-            selectHook.accept(targetName);
-            scratchSelected = true;
-            return;
-        }
-        reloadHook.run();
     }
 
-    /**
-     * 另存为新预设：切换编辑目标、落盘并选中它（调参立刻可听）。失败时保持原目标。
-     *
-     * @return 实际使用的预设名（经文件基名净化）
-     */
+    /** 保存成功后更新归一化工作副本，再选择新底稿或重载；失败不调用钩子。 */
+    public void persistChecked() throws IOException {
+        ViperPreset normalized = normalizedCopy(preset, targetName);
+        ScratchSession session = scratchSession;
+        if (session != null) {
+            synchronized (session) {
+                if (session.collisionSafe) {
+                    session.lastSavedText = session.lastSavedText == null
+                            ? store.saveNewChecked(normalized)
+                            : store.saveIfUnchangedChecked(normalized, session.lastSavedText);
+                } else {
+                    store.saveChecked(normalized);
+                }
+                preset = normalized;
+                if (!session.selected) {
+                    selectHook.accept(targetName);
+                    session.selected = true;
+                } else {
+                    reloadHook.run();
+                }
+                scratchSelected = true;
+            }
+        } else {
+            store.saveChecked(normalized);
+            preset = normalized;
+            reloadHook.run();
+        }
+    }
+
+    /** 兼容入口，失败记录错误并返回原目标名。 */
     public String saveAs(String rawName) {
-        String name = ViperPresetStore.sanitizeName(rawName);
-        if (name.isEmpty()) {
-            return targetName;
-        }
-        String previous = targetName;
-        targetName = name;
         try {
-            ViperPreset normalized = ViperPresetParser.parse(
-                    ViperPresetParser.toJsonText(preset), name);
-            store.save(new ViperPreset(name, normalized.json()));
-        } catch (RuntimeException failure) {
-            targetName = previous;
-            System.out.println("[MuoniumPlayer/ViPER] 另存预设失败（" + name + "）：" + failure);
+            return saveAsChecked(rawName);
+        } catch (IOException | RuntimeException failure) {
+            System.out.println("[MuoniumPlayer/ViPER] 另存预设失败（" + rawName + "）：" + failure);
             return targetName;
         }
-        scratchSelected = true;
+    }
+
+    /** 另存成功才切换编辑目标并选中；文件名和内嵌 JSON name 一致。 */
+    public String saveAsChecked(String rawName) throws IOException {
+        if (rawName == null || rawName.trim().isEmpty()) {
+            throw new IllegalArgumentException("预设名不能为空");
+        }
+        String name = ViperPresetStore.sanitizeName(rawName);
+        if (name.equals(targetName) && scratchSession != null) {
+            persistChecked();
+            return name;
+        }
+        ViperPreset normalized = normalizedCopy(preset, name);
+        store.saveChecked(normalized);
+        preset = normalized;
+        targetName = name;
+        scratchTarget = false;
+        scratchSession = null;
         selectHook.accept(name);
+        scratchSelected = true;
         return name;
     }
 
-    // ──────────────────────────── 文件清单（选择器数据源） ────────────────────────────
+    /**
+     * 不覆盖同名预设的另存：已有 JSON/XML（包括目录和大小写变体）时明确失败。
+     * 文件写入和选用钩子均成功后才切换工作副本/目标；选用失败保留原稿，新文件留存并报告。
+     */
+    public String saveAsNewChecked(String rawName) throws IOException {
+        if (rawName == null || rawName.trim().isEmpty()) {
+            throw new IllegalArgumentException("预设名不能为空");
+        }
+        String name = ViperPresetStore.sanitizeName(rawName);
+        ViperPreset normalized = normalizedCopy(preset, name);
+        ScratchSession session = new ScratchSession(true);
+        session.lastSavedText = store.saveNewChecked(normalized);
+        try {
+            selectHook.accept(name);
+        } catch (RuntimeException failure) {
+            throw new IllegalStateException("新预设「" + name + "」已保存，但选用失败；原编辑目标保持不变", failure);
+        }
+        session.selected = true;
+        preset = normalized;
+        targetName = name;
+        scratchTarget = false;
+        scratchSession = session;
+        scratchSelected = true;
+        return name;
+    }
 
-    /** 内核目录里可用的脉冲响应文件（.irs / .wav，按名排序）。 */
+    // ──────────────────────────── 后台文件选择器 ────────────────────────────
+
     public List<String> kernelFiles() {
         return listFiles("kernels", new String[] {".irs", ".wav"});
     }
 
-    /** DDC 目录里可用的系数设备名（.vdc 去扩展名，按名排序）。 */
     public List<String> ddcDevices() {
         List<String> names = new ArrayList<>();
         File dir = new File(ConfigPaths.VIPER_DIR, "ddc");
@@ -274,7 +513,7 @@ public final class ViperPresetEditor {
         if (files != null) {
             for (File file : files) {
                 String name = file.getName();
-                if (file.isFile() && name.toLowerCase().endsWith(".vdc")) {
+                if (file.isFile() && name.toLowerCase(Locale.ROOT).endsWith(".vdc")) {
                     names.add(name.substring(0, name.length() - 4));
                 }
             }
@@ -292,7 +531,7 @@ public final class ViperPresetEditor {
                 if (!file.isFile()) {
                     continue;
                 }
-                String lower = file.getName().toLowerCase();
+                String lower = file.getName().toLowerCase(Locale.ROOT);
                 for (String extension : extensions) {
                     if (lower.endsWith(extension)) {
                         names.add(file.getName());
@@ -307,13 +546,43 @@ public final class ViperPresetEditor {
 
     // ──────────────────────────── 内部 ────────────────────────────
 
+    /** 历史只读视图；不得把此活动 JSON 交给后台保存线程。 */
+    public JsonObject presetGroup(String groupKey) {
+        return preset.group(groupKey);
+    }
+
     private ViperPresetSchema.Field field(int groupIndex, int fieldIndex) {
         return ViperPresetSchema.groups().get(groupIndex).fields.get(fieldIndex);
     }
 
-    /** 底稿里的一个分组体（界面读数组长度等只读信息用）；不存在返回 {@code null}。 */
-    public JsonObject presetGroup(String groupKey) {
-        return preset.group(groupKey);
+    private ViperPresetSchema.Field requireKind(int groupIndex, int fieldIndex, ViperPresetSchema.Kind kind) {
+        ViperPresetSchema.Field field = field(groupIndex, fieldIndex);
+        if (field.kind != kind) {
+            throw wrongKind(field, kind.toString());
+        }
+        return field;
+    }
+
+    private ViperPresetSchema.Field numericArrayField(int groupIndex, int fieldIndex) {
+        ViperPresetSchema.Field field = field(groupIndex, fieldIndex);
+        if (field.kind != ViperPresetSchema.Kind.INT_ARRAY && field.kind != ViperPresetSchema.Kind.FLOAT_ARRAY
+                && field.kind != ViperPresetSchema.Kind.DOUBLE_ARRAY) {
+            throw wrongKind(field, "数值数组（不含布尔数组）");
+        }
+        return field;
+    }
+
+    private static IllegalArgumentException wrongKind(ViperPresetSchema.Field field, String expected) {
+        return new IllegalArgumentException("字段 " + field.key + " 是 " + field.kind + "，需要 " + expected);
+    }
+
+    private JsonArray arrayBody(int groupIndex, ViperPresetSchema.Field field) {
+        JsonObject group = preset.group(groupKey(groupIndex));
+        JsonElement value = group == null ? null : group.get(field.key);
+        if (value == null || !value.isJsonArray()) {
+            throw new IllegalStateException("字段不是有效数组：" + field.key);
+        }
+        return value.getAsJsonArray();
     }
 
     private JsonObject groupBody(String groupKey) {
@@ -325,35 +594,84 @@ public final class ViperPresetEditor {
         return group;
     }
 
-    private void setRaw(int groupIndex, int fieldIndex, Object value) {
-        ViperPresetSchema.Field field = field(groupIndex, fieldIndex);
-        JsonObject group = groupBody(groupKey(groupIndex));
-        if (field.ranged() && value instanceof Double) {
-            double clamped = Math.max(field.min, Math.min(field.max, (Double) value));
-            value = field.kind == ViperPresetSchema.Kind.INT ? (int) Math.round(clamped) : clamped;
-        }
-        if (value instanceof Boolean) {
-            group.addProperty(field.key, (Boolean) value);
-        } else if (value instanceof Integer) {
-            group.addProperty(field.key, (Number) value);
-        } else if (value instanceof Double) {
-            group.addProperty(field.key, (Number) value);
-        } else {
-            group.addProperty(field.key, String.valueOf(value));
+    private static void requireFinite(double value) {
+        if (!Double.isFinite(value)) {
+            throw new IllegalArgumentException("数值必须有限，不能为 NaN/Infinity");
         }
     }
 
-    private void writeDefault(JsonObject body, ViperPresetSchema.Field field) {
-        Object value = field.defaultValue;
-        if (value instanceof Boolean) {
-            body.addProperty(field.key, (Boolean) value);
-        } else if (value instanceof Integer) {
-            body.addProperty(field.key, (Number) value);
-        } else if (value instanceof Double) {
-            body.addProperty(field.key, (Number) value);
-        } else if (value instanceof String) {
-            body.addProperty(field.key, (String) value);
+    private static void checkElementIndex(int index, int length) {
+        if (index < 0 || index >= length) {
+            throw new IndexOutOfBoundsException("数组下标 " + index + "，长度 " + length);
         }
-        // 数组 / 可空字段的默认值不在本版编辑范围，保持原样。
+    }
+
+    private static Number numericValue(ViperPresetSchema.Field field, double value) {
+        requireFinite(value);
+        double clamped = field.ranged() ? Math.max(field.min, Math.min(field.max, value)) : value;
+        if (field.kind == ViperPresetSchema.Kind.INT || field.kind == ViperPresetSchema.Kind.INT_ARRAY) {
+            long rounded = Math.round(clamped);
+            if (rounded < Integer.MIN_VALUE || rounded > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException("整型数值越界：" + field.key);
+            }
+            return (int) rounded;
+        }
+        if (field.kind == ViperPresetSchema.Kind.NULLABLE_LONG) {
+            if (clamped < 0.0 || clamped >= 0x1.0p63) {
+                throw new IllegalArgumentException("可空整数必须为非负 long：" + field.key);
+            }
+            return Math.round(clamped);
+        }
+        return clamped;
+    }
+
+    private static JsonElement defaultElement(ViperPresetSchema.Field field) {
+        Object value = field.defaultValue;
+        switch (field.kind) {
+            case BOOL:
+                return new JsonPrimitive((Boolean) value);
+            case INT:
+            case FLOAT:
+                return new JsonPrimitive((Number) value);
+            case STRING:
+                return new JsonPrimitive((String) value);
+            case NULLABLE_LONG:
+                return JsonNull.INSTANCE;
+            case INT_ARRAY: {
+                JsonArray array = new JsonArray();
+                for (int element : (int[]) value) {
+                    array.add(element);
+                }
+                return array;
+            }
+            case FLOAT_ARRAY:
+            case DOUBLE_ARRAY: {
+                JsonArray array = new JsonArray();
+                for (double element : (double[]) value) {
+                    array.add(element);
+                }
+                return array;
+            }
+            case BOOL_ARRAY: {
+                JsonArray array = new JsonArray();
+                for (boolean element : (boolean[]) value) {
+                    array.add(element);
+                }
+                return array;
+            }
+            default:
+                throw new IllegalStateException("未知 schema 类型：" + field.kind);
+        }
+    }
+
+    private static ViperPreset defaultPreset(String name) {
+        return ViperPresetParser.parse("{\"schemaVersion\":2.1}", name);
+    }
+
+    private static ViperPreset normalizedCopy(ViperPreset source, String name) {
+        JsonObject body = source.json().deepCopy();
+        body.addProperty(ViperPreset.KEY_NAME, name);
+        // JsonObject.toString 保留未知 null；Parser.toJsonText 的兼容序列化器会省略 null。
+        return ViperPresetParser.parse(body.toString(), name);
     }
 }

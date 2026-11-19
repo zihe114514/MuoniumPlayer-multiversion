@@ -13,18 +13,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Guards delayed-GUI glass sampling and island compositing order on every deferred port. */
 class PostCompositeOverlayStaticTest {
+    private static final String EMPTY_SUPPRESSED_OVERLAY_GUARD =
+            "if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()\n"
+                    + "                && !DownloadDynamicIsland.needsChatOverlay()\n"
+                    + "                && !DownloadDynamicIsland.needsTrackNoticeOverlay()) return;";
+
     @Test
     void deferredScreenRegistrationDoesNotOpenAnEmptySkijaFrame() throws Exception {
         Path repository = ProjectPaths.repoRoot();
         for (String port : DELAYED_PORTS) {
             Path client = repository.resolve(port).resolve(Path.of("src", "main", "java",
                     "com", "muoniumplayer", "MuoniumPlayerClient.java"));
-            String source = Files.readString(client, StandardCharsets.UTF_8);
+            String source = Files.readString(client, StandardCharsets.UTF_8).replace("\r\n", "\n");
             int start = source.indexOf("public void onScreenRendered(Screen screen)");
             String overlay = source.substring(start);
             assertFalse(overlay.contains("inSkijaFrame(() -> onScreenRenderedUnguarded(screen))"),
                     port + ": registering a deferred task must not open a drawing frame");
-            assertTrue(overlay.contains("if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()) return;"),
+            assertTrue(overlay.contains(EMPTY_SUPPRESSED_OVERLAY_GUARD),
                     port + ": empty suppressed overlays must not be scheduled");
             assertTrue(overlay.contains("if (!SkijaHost.deferPostCompositeOverlay(islandOverlay)) inSkijaFrame(islandOverlay);"),
                     port + ": immediate fallback must still have paired begin/end");
@@ -37,9 +42,9 @@ class PostCompositeOverlayStaticTest {
         for (String port : List.of("1.20.1 recode", "1.21.1")) {
             Path client = repository.resolve(port).resolve(Path.of("src", "main", "java",
                     "com", "muoniumplayer", "MuoniumPlayerClient.java"));
-            String source = Files.readString(client, StandardCharsets.UTF_8);
+            String source = Files.readString(client, StandardCharsets.UTF_8).replace("\r\n", "\n");
             String overlay = source.substring(source.indexOf("public void onScreenRendered(Screen screen)"));
-            int guard = overlay.indexOf("if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()) return;");
+            int guard = overlay.indexOf(EMPTY_SUPPRESSED_OVERLAY_GUARD);
             int frame = overlay.indexOf("inSkijaFrame(() -> onScreenRenderedUnguarded(screen));");
             assertTrue(guard >= 0 && frame > guard, port + ": reject no-op before snapshot/clear/composite");
         }
@@ -51,7 +56,7 @@ class PostCompositeOverlayStaticTest {
                 "1.21.11 recode", "26.1.2", "26.2", "26.3")) {
             Path client = ProjectPaths.repoRoot().resolve(port).resolve(Path.of("src", "main", "java",
                     "com", "muoniumplayer", "MuoniumPlayerClient.java"));
-            String source = Files.readString(client, StandardCharsets.UTF_8);
+            String source = Files.readString(client, StandardCharsets.UTF_8).replace("\r\n", "\n");
             String overlay = source.substring(source.indexOf("public void onScreenRendered(Screen screen)"));
             int guard = overlay.indexOf("!DownloadDynamicIsland.needsScreenOverlay()");
             int frame = overlay.indexOf(DELAYED_PORTS.contains(port)

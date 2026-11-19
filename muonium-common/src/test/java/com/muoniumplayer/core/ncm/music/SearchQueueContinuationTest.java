@@ -101,23 +101,29 @@ class SearchQueueContinuationTest {
         String island = read(ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "core", "rendering", "DownloadDynamicIsland.java")));
         String card = region(island, "public static void showQueuedNext(String trackName, int pending)",
-                "搜索结果起播后");
+                "已接入最近播放");
         assertTrue(card.contains("当前这首之后第"),
                 "位次是相对当前播放那一首算的（插入点在待播段末尾），写成行号会让人永远差一格");
     }
 
     @Test
-    @DisplayName("那张解释性卡片带时效，排队排太久就作废而不是迟到弹出")
-    void continuationNoticeCarriesTtl() throws IOException {
+    @DisplayName("主动插入下一首仍保留一次简短反馈")
+    void explicitQueueActionKeepsConfirmation() throws IOException {
+        String island = read(ProjectPaths.sourceFile(Paths.get(
+                "com", "muoniumplayer", "core", "rendering", "DownloadDynamicIsland.java")));
+        String notice = region(island, "public static void showQueuedNext(String trackName, int pending)",
+                "已接入最近播放");
+        assertTrue(notice.contains("publishNotice("), "用户主动插歌要有操作确认");
+    }
+
+    @Test
+    @DisplayName("搜索结果接入最近播放保持静默，不再占用灵动岛通知队列")
+    void continuationNoticeIsSilent() throws IOException {
         String island = read(ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "core", "rendering", "DownloadDynamicIsland.java")));
         String notice = region(island, "public static void showSearchQueueFromRecentPlays(int count)",
-                "私人 FM 已经把下一首推荐预备进队列的提示");
-        assertTrue(notice.contains("SEARCH_QUEUE_NOTICE_TTL_MILLIS"),
-                "publishNotice 少传了时效参数，卡片就会在任何一次排队之后迟到弹出");
-        long ttl = longLiteral(island, "SEARCH_QUEUE_NOTICE_TTL_MILLIS = ");
-        assertTrue(ttl > 0L, "时效必须是正数");
-        assertTrue(ttl <= 15_000L, "时效超过十五秒就已经不是「解释刚才那一下」了");
+                "私人 FM 的后台预取");
+        assertFalse(notice.contains("publishNotice("), "后台队列接续不应弹出通知卡");
     }
 
     @Test

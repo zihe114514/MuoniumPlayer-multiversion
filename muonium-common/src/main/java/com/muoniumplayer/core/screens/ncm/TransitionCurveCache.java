@@ -20,6 +20,9 @@ public final class TransitionCurveCache {
     /** Material 3 emphasized。承担绝大多数位移与不透明度通道。 */
     public static final CachedBezier MOTION = new CachedBezier(0.2, 0.0, 0.0, 1.0);
 
+    /** ColorOS media-card layout curve: quick lift with a long, quiet settle. */
+    public static final CachedBezier MUSIC_CARD = new CachedBezier(0.26, 0.26, 0.0, 1.0);
+
     /** Material 2 standard。只承担水平轴的滞后通道。 */
     public static final CachedBezier MOTION_LAGGING = new CachedBezier(0.4, 0.0, 0.2, 1.0);
 
@@ -66,6 +69,20 @@ public final class TransitionCurveCache {
 
             double fraction = position - index;
             return values[index] + (values[index + 1] - values[index]) * fraction;
+        }
+
+        public double inverse(double value) {
+            if (value <= values[0]) return 0.0;
+            if (value >= values[SAMPLES - 1]) return 1.0;
+            int low = 0, high = SAMPLES - 1;
+            while (low + 1 < high) {
+                int mid = (low + high) >>> 1;
+                if (values[mid] < value) low = mid;
+                else high = mid;
+            }
+            double span = values[high] - values[low];
+            double fraction = span <= 1.0e-9 ? 0.0 : (value - values[low]) / span;
+            return (low + fraction) / (SAMPLES - 1.0);
         }
 
         private static double axis(double a, double b, double u) {

@@ -225,6 +225,23 @@ class FdnTailTest {
     }
 
     @Test
+    @DisplayName("flush 紧跟脉冲也清掉左右 HPF 历史,不会把滤波尾重新灌回网络")
+    void flushClearsBothInputFiltersImmediately() {
+        final FdnTail fdn = new FdnTail();
+        fdn.rebuild(RATE);
+        fdn.update(1.2, 1.0, 0.8);
+        final float[] out = new float[2];
+        fdn.process(0.8f, -0.3f, out);
+        fdn.flush();
+        double residue = 0;
+        for (int i = 0; i < RATE; i++) {
+            fdn.process(0, 0, out);
+            residue = Math.max(residue, Math.abs(out[0]) + Math.abs(out[1]));
+        }
+        assertTrue(residue < 1e-7, "清态不能留单耳滤波余音: " + residue);
+    }
+
+    @Test
     @DisplayName("flush 清空:清后网络静默")
     void flushSilences() {
         final FdnTail fdn = new FdnTail();

@@ -56,7 +56,7 @@ public final class VocalMaterialSample extends FloatSample {
     private volatile Material material;
     private volatile double level = 1.0;
 
-    VocalMaterialSample(FloatSample inner) {
+    public VocalMaterialSample(FloatSample inner) {
         this.inner = inner;
         // 与 WsolaStretchSample 同一套字段写法：setNumFrames() 会被 allocate() 留下的
         // maxFrames 夹成 0，而 AudioSample 又遮住了 numFrames 字段，只有直接写字段能被读到。
@@ -64,6 +64,11 @@ public final class VocalMaterialSample extends FloatSample {
         this.numFrames = inner.getNumFrames();
         setChannelsPerFrame(inner.getChannelsPerFrame());
         setFrameRate(inner.getFrameRate());
+    }
+
+    /** 内层样本（本类是逐采样装饰器）。供 SoundFile#primeWindowAt 的预热旁路按实际类型穿透。 */
+    public FloatSample innerSample() {
+        return this.inner;
     }
 
     /**

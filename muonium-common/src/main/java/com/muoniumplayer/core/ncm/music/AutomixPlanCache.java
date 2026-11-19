@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class AutomixPlanCache {
 
     /** 缓存格式版本。任何字段语义变化都要 +1，旧版本会被当成未命中。 */
-    private static final int FORMAT_VERSION = 1;
+    private static final int FORMAT_VERSION = 4;
 
     /** 落盘条目上限。一份计划约 1 KB，2000 条约 2 MB。 */
     private static final int MAX_ENTRIES = 2000;
@@ -246,7 +246,8 @@ final class AutomixPlanCache {
                     + "," + AutomixSettings.isPitchMatchEnabled()
                     + "," + AutomixSettings.isSkipIntroEnabled()
                     + "," + AutomixSettings.isPerformanceModeEnabled()
-                    + "," + AutomixSettings.isAdvancedModeEnabled();
+                    + "," + AutomixSettings.isAdvancedModeEnabled()
+                    + "," + AutomixSettings.isLearnedEqEnabled();
         } catch (Throwable unavailable) {
             // 设置读不到就不给键：缓存整个失效，比拿一份「不知道按什么设置算的」计划安全。
             return "";

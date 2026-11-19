@@ -133,7 +133,8 @@ final class FdnTail {
         hpfA2 = (1.0 - alpha) / a0;
         hpfX1 = hpfX2 = hpfY1 = hpfY2 = 0.0;
         hpfX1R = hpfX2R = hpfY1R = hpfY2R = 0.0;
-        sideBuf = new float[1]; // 下次 sideDelay 按 rate 重建
+        sideBuf = new float[Math.max(4, (int) (SIDE_DELAY_SEC * Math.max(8000, rate)) + 1)];
+        sidePos = 0;
         for (int i = 0; i < LINES; i++) {
             final int loop = Math.max(8, (int) Math.round(LOOP_DELAYS_SEC[i] * rate));
             final int ap = Math.max(2, (int) Math.round(AP_DELAYS_SEC[i] * rate));
@@ -343,10 +344,6 @@ final class FdnTail {
 
     /** side 差量的互质延迟(7ms):输入去相关的最小件。 */
     private float sideDelay(float side) {
-        if (sideBuf.length < 2) {
-            sideBuf = new float[Math.max(4, (int) (SIDE_DELAY_SEC * Math.max(8000, ownedRate)) + 1)];
-            sidePos = 0;
-        }
         final float delayed = sideBuf[sidePos];
         sideBuf[sidePos] = side;
         sidePos = sidePos + 1 == sideBuf.length ? 0 : sidePos + 1;
@@ -375,8 +372,10 @@ final class FdnTail {
 
     /** 清空全部延迟线与滤波状态(曲目切换)。 */
     void flush() {
+        hpfX1 = hpfX2 = hpfY1 = hpfY2 = 0.0;
         hpfX1R = hpfX2R = hpfY1R = hpfY2R = 0.0;
         if (sideBuf != null) java.util.Arrays.fill(sideBuf, 0f);
+        sidePos = 0;
         for (int i = 0; i < LINES; i++) {
             if (buf[i] != null) {
                 java.util.Arrays.fill(buf[i], 0f);

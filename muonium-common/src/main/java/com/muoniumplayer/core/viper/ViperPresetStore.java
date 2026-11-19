@@ -1,13 +1,24 @@
 package com.muoniumplayer.core.viper;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * ViPER 预设的文件仓库（默认目录 {@code config/muonium/viper/presets/}）。
@@ -27,10 +38,13 @@ public final class ViperPresetStore {
     /** 目录扫描与按名加载时认可的扩展名（顺序即优先级）。 */
     private static final String[] EXTENSIONS = {".json", ".xml"};
 
+    private static final Gson SAVE_JSON = new GsonBuilder()
+            .setPrettyPrinting().disableHtmlEscaping().serializeNulls().create();
+
     private final File directory;
 
     public ViperPresetStore(File directory) {
-        this.directory = directory;
+        this.directory = Objects.requireNonNull(directory, "directory");
     }
 
     public File directory() {
@@ -138,16 +152,136 @@ public final class ViperPresetStore {
         return name;
     }
 
-    /** 把一份预设写为 {@code <名>.json}（覆盖同名文件）。 */
+    /** 把一份预设写为 {@code <名>.json}；兼容入口只记录失败。 */
     public void save(ViperPreset preset) {
-        String name = sanitizeName(preset.name());
         try {
-            Files.createDirectories(directory.toPath());
-            File target = new File(directory, name + ".json");
-            Files.write(target.toPath(),
-                    ViperPresetParser.toJsonText(preset).getBytes(StandardCharsets.UTF_8));
-        } catch (Throwable failure) {
+            saveChecked(preset);
+        } catch (IOException | RuntimeException failure) {
+            String name = preset == null ? "null" : sanitizeName(preset.name());
             System.out.println("[MuoniumPlayer/ViPER] 预设写入失败（" + name + "）：" + failure);
+        }
+    }
+
+    /**
+     * Checked 保存：先完整写入同目录临时文件，再替换目标；支持时使用原子移动。
+     * 序列化/写入/替换失败均向调用方抛出，不先截断旧文件，文件内嵌 name 与净化文件名一致。
+     */
+    public void saveChecked(ViperPreset preset) throws IOException {
+        String text = saveText(preset);
+        replaceChecked(targetPath(preset), text);
+    }
+
+    /** 新建会话的首存：先以 CREATE_NEW 占位；已有 JSON/XML 或目录均视为名称冲突。 */
+    String saveNewChecked(ViperPreset preset) throws IOException {
+        String text = saveText(preset);
+        Path target = targetPath(preset);
+        Files.createDirectories(target.getParent());
+        String candidateName = sanitizeName(preset.name());
+        File[] entries = directory.listFiles();
+        if (entries == null) {
+            throw new IOException("无法扫描预设目录：" + directory);
+        }
+        for (File entry : entries) {
+            if (hasRecognizedExtension(entry.getName())
+                    && baseName(entry.getName()).equalsIgnoreCase(candidateName)) {
+                throw new FileAlreadyExistsException(target.toString());
+            }
+        }
+        // Atomic move 在一些文件系统上会无视 no-replace，故先原子占位以保护外部同名文件。
+        Files.createFile(target);
+        try {
+            replaceChecked(target, text);
+        } catch (IOException | RuntimeException failure) {
+            try {
+                if (Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) && Files.size(target) == 0L) {
+                    Files.deleteIfExists(target);
+                }
+            } catch (IOException | RuntimeException cleanup) {
+                failure.addSuppressed(cleanup);
+            }
+            throw failure;
+        }
+        return text;
+    }
+
+    /** 同一新建会话继续保存：文件内容已被外部替换/修改则失败，不冒认其所有权。 */
+    String saveIfUnchangedChecked(ViperPreset preset, String previousText) throws IOException {
+        String text = saveText(preset);
+        Path target = targetPath(preset);
+        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
+                || !Files.readString(target, StandardCharsets.UTF_8).equals(previousText)) {
+            throw new IOException("新建预设已被外部更改，拒绝覆盖：" + target.getFileName());
+        }
+        replaceChecked(target, text);
+        return text;
+    }
+
+    private Path targetPath(ViperPreset preset) {
+        return directory.toPath().toAbsolutePath().resolve(sanitizeName(preset.name()) + ".json");
+    }
+
+    private static String saveText(ViperPreset preset) {
+        Objects.requireNonNull(preset, "preset");
+        JsonObject body = preset.json().deepCopy();
+        String name = sanitizeName(preset.name());
+        body.addProperty(ViperPreset.KEY_NAME, name);
+        requireFiniteJson(body);
+        ViperPreset normalized = ViperPresetParser.parse(body.toString(), name);
+        // Parser 的兼容导出省略 null；保存须保留未知字段（包括 null）的原有形状。
+        return SAVE_JSON.toJson(normalized.json()) + "\n";
+    }
+
+    private static void requireFiniteJson(JsonElement value) {
+        if (value.isJsonObject()) {
+            for (java.util.Map.Entry<String, JsonElement> entry : value.getAsJsonObject().entrySet()) {
+                requireFiniteJson(entry.getValue());
+            }
+        } else if (value.isJsonArray()) {
+            for (JsonElement element : value.getAsJsonArray()) {
+                requireFiniteJson(element);
+            }
+        } else if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
+            String literal = value.getAsString();
+            // 未知字段可能是比 double 更大的合法 JSON 数，不以溢出的 double 视图拒绝它。
+            if ("NaN".equals(literal) || "Infinity".equals(literal)
+                    || "+Infinity".equals(literal) || "-Infinity".equals(literal)) {
+                throw new IllegalArgumentException("预设包含非有限数值，拒绝写入");
+            }
+        }
+    }
+
+    private static void replaceChecked(Path target, String text) throws IOException {
+        Files.createDirectories(target.getParent());
+        if (Files.isSymbolicLink(target)) {
+            throw new IOException("预设目标为符号链接：" + target);
+        }
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
+                && !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("预设目标不是普通文件：" + target);
+        }
+        Path temporary = Files.createTempFile(target.getParent(), ".viper-preset-", ".tmp");
+        Throwable pending = null;
+        try {
+            Files.writeString(temporary, text, StandardCharsets.UTF_8);
+            try {
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                // 只对“不支持原子移动”降级；权限/锁定等错误不能换一路伪装成功。
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException | RuntimeException | Error failure) {
+            pending = failure;
+            throw failure;
+        } finally {
+            try {
+                Files.deleteIfExists(temporary);
+            } catch (IOException | RuntimeException cleanup) {
+                if (pending != null) {
+                    pending.addSuppressed(cleanup);
+                } else {
+                    throw cleanup;
+                }
+            }
         }
     }
 

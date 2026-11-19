@@ -42,6 +42,17 @@ public final class DownmixSample extends FloatSample {
         setFrameRate(inner.getFrameRate());
     }
 
+    /** 内层样本（降混只改声道布局，不改帧轴）。供 SoundFile#primeWindowAt 的预热旁路按实际类型穿透；
+     * 注意内层下标是原始声道数的交错下标，与降混后的 2 声道下标不同刻度。 */
+    public FloatSample innerSample() {
+        return this.inner;
+    }
+
+    /** 内层每帧采样数（原始声道数）。预热旁路换算交错下标时需要它。 */
+    public int innerChannels() {
+        return this.innerChannels;
+    }
+
     /**
      * 需要降混就包一层，1/2 声道原样归还。
      *

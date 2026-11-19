@@ -6,6 +6,7 @@
   "client": [
     "MusicManagerAccessor",
     "MusicManagerDuckMixin",
+    "ChatIslandMouseMixin",
     "RenderTargetPresentMixin",
     "GameRendererRenderLevelMixin",
     "GameRendererAccessor",
@@ -14,6 +15,9 @@
     "TransparentEntityMixin",
     "TransparentCameraMixin",
     "CineCameraMixin",
+    "CineKeyboardMixin",
+    "CineMouseMixin",
+    "CineRollMixin",
     "CineFovMixin",
     "CineHudMixin",
     "SpinEntityMixin",

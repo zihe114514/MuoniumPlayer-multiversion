@@ -61,15 +61,16 @@ class ControlsBarThemeFollowStaticTest {
     }
 
     @Test
-    @DisplayName("填充取色排在镜像态那个 return 之前：没进度也得有颜色")
+    @DisplayName("填充取色排在准备中与未知时长的 return 之前：没进度也得有颜色")
     void fillColorIsReadBeforeTheEarlyReturns() throws IOException {
         String src = flat(CONTROLS_BAR);
         int fillColor = src.indexOf("progressBar.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT))");
-        int mirrorReturn = src.indexOf("if(!CloudMusic.hasPlaybackClock())return");
+        int preparingReturn = src.indexOf("if(presentation.preparing){progressBar.setWidth(0).setRadius(0);return;}");
         int noDuration = src.indexOf("if(total<=0.0f){progressBar.setWidth(0).setRadius(0);return;}");
 
-        assertTrue(fillColor < mirrorReturn,
-                "系统播放器镜像态一 return 就跳过了取色：镜像态下进度条照样要画，颜色也得跟主题");
+        assertTrue(fillColor >= 0 && preparingReturn >= 0 && noDuration >= 0, "各个取色/短路锚点必须存在");
+        assertTrue(fillColor < preparingReturn,
+                "准备新歌时可以清进度，但不能跳过当前主题的取色");
         assertTrue(fillColor < noDuration,
                 "总时长还没落地的那次 return 同样会跳过取色（起播头几帧就是这个状态）");
     }

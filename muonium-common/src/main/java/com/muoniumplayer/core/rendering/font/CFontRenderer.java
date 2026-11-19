@@ -77,6 +77,11 @@ public class CFontRenderer implements Closeable, SharedConstants {
     /** 未派生的原始 AWT Font 实例，用来向 {@link SkijaText} 查 Typeface。 */
     private Font sourceFont;
     private final TextBlobCache plainTextBlobs = new TextBlobCache(256, 16_384);
+    private final Map<String, io.github.humbleui.types.Rect> glyphInkBounds = new java.util.LinkedHashMap<>(256, .75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, io.github.humbleui.types.Rect> eldest) {
+            return size() > 256;
+        }
+    };
     private Font[] sourceFallbacks;
 
     /**
@@ -588,6 +593,37 @@ public class CFontRenderer implements Closeable, SharedConstants {
         }
     }
 
+    /** 同一份字形索引、回退链和步进的墨迹盒，相对 drawGlyphsOn 的 (x, y)。 */
+    public io.github.humbleui.types.Rect getGlyphBounds(String text) {
+        if (text == null || text.isEmpty() || text.length() > 1024
+                || text.indexOf('\u00a7') >= 0 || skFonts.length == 0) return null;
+        if (glyphInkBounds.containsKey(text)) return glyphInkBounds.get(text);
+        double left = Double.POSITIVE_INFINITY, top = Double.POSITIVE_INFINITY;
+        double right = Double.NEGATIVE_INFINITY, bottom = Double.NEGATIVE_INFINITY;
+        double x = 0, y = baselineOffset - 2;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i), next = i + 1 < text.length() ? text.charAt(i + 1) : '\0';
+            if (c == '\n') { x = 0; y += getHeight() + 2; continue; }
+            c = replaceForMeasurement(c);
+            GlyphRef ref = glyphRef(c);
+            if (ref.fontIndex >= 0) {
+                io.github.humbleui.types.Rect ink = skFonts[ref.fontIndex].getBounds(new short[]{ref.glyphId})[0];
+                if (ink.getWidth() > 0 && ink.getHeight() > 0) {
+                    left = Math.min(left, x + ink.getLeft());
+                    right = Math.max(right, x + ink.getRight());
+                    top = Math.min(top, y + ink.getTop());
+                    bottom = Math.max(bottom, y + ink.getBottom());
+                }
+                x += ref.advance;
+            }
+            if (fontKerning != null && next != '\0' && next != '\n') x += fontKerning.getKerning(c, next, sizePx);
+        }
+        io.github.humbleui.types.Rect ink = Double.isFinite(left) ? new io.github.humbleui.types.Rect(
+                (float) left, (float) top, (float) right, (float) bottom) : null;
+        glyphInkBounds.put(text, ink);
+        return ink;
+    }
+
     private boolean drawGlyphs(String s, double x, double y, int baseArgb, int alpha255,
                                float glowSigma, Shader shader) {
         Canvas canvas = SkijaGfx.canvas();
@@ -1034,6 +1070,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
     private void closeSkiaFonts() {
         // Font changes invalidate glyph IDs, offsets and kerning in every blob.
         plainTextBlobs.close();
+        glyphInkBounds.clear();
         for (io.github.humbleui.skija.Font f : skFonts) {
             f.close();
         }

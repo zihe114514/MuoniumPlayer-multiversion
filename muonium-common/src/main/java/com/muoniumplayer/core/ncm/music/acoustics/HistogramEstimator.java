@@ -167,7 +167,7 @@ public final class HistogramEstimator {
         return (double) lit / EnergyField.BINS;
     }
 
-    /** 早期反射窗(秒):SceneAcoustics 的 ER 窗(0.16s)内、优先效应主导的
+    /** 早期反射窗(秒):SceneAcoustics 的 ER 窗(0.24s)内,优先效应主导的
      *  前 80ms —— 直方图侧的「早期」按感知定义取更短的一档。 */
     public static final double EARLY_WINDOW_SEC = 0.08;
 }

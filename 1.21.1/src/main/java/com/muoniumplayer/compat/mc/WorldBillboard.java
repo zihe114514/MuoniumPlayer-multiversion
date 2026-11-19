@@ -31,8 +31,8 @@ import org.joml.Matrix4f;
  *   <li>现代化风格 {@link #drawSmoothGlyph}：查 {@link LyricGlyphAtlas}
  *       （Skija 5× 超采样字形 + TextGlow 三层高斯发光烘在同一张格里），以原版
  *       {@code RenderType.textSeeThrough(页纹理)} 发一个 POSITION_COLOR_TEX_LIGHTMAP
- *       四顶点 quad —— 逐字 textured quad，wiggle 的旋转/缩放
- *       绕字中心落进顶点矩阵；页纹理强制 LINEAR（见 PageTexture），超采样不被
+ *       四顶点 quad —— 顶点坐标在树侧显式变换，逐字 textured quad 的
+ *       wiggle 旋转/缩放绕字中心落进公告牌矩阵；页纹理强制 LINEAR（见 PageTexture），超采样不被
  *       NEAREST 采样毁掉。</li>
  * </ul>
  *
@@ -454,6 +454,17 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         }
     }
 
+    /**
+     * 顶点在本树侧完成公告牌变换，再提交位置重载。HUD 直画不依赖可被
+     * 渲染优化模组替换的 Matrix4f 重载；相机旋转仍只来自 basePose 一次。
+     */
+    private static VertexConsumer putVertex(VertexConsumer vc, Matrix4f mat, float x, float y) {
+        float tx = mat.m00() * x + mat.m10() * y + mat.m30();
+        float ty = mat.m01() * x + mat.m11() * y + mat.m31();
+        float tz = mat.m02() * x + mat.m12() * y + mat.m32();
+        return vc.addVertex(tx, ty, tz);
+    }
+
     /** 一个字形 quad 顶点：绕字中心旋转/缩放（设计像素口径），再进 billboard 矩阵。 */
     private static void putGlyphVertex(VertexConsumer vc, Matrix4f mat,
                                        float px, float py, float cx, float cy,
@@ -466,7 +477,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             vx = cx + (ox * cos - oy * sin) * s;
             vy = cy + (ox * sin + oy * cos) * s;
         }
-        vc.addVertex(mat, vx, vy, 0f)
+        putVertex(vc, mat, vx, vy)
                 .setColor(argb)
                 .setUv(u, v)
                 // packed light 拆两个坐标（BakedGlyph 同款）：u = 低半（方块光）、v = 高半（天空光）。
@@ -529,7 +540,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private static void putTrailVertex(VertexConsumer vc, Matrix4f mat,
                                        float x, float y, int alpha, int rgb) {
         int argb = (alpha << 24) | rgb;
-        vc.addVertex(mat, x, y, 0f)
+        putVertex(vc, mat, x, y)
                 .setColor(argb)
                 .setUv(0.5f, 0.03f)
                 .setUv2(LightTexture.FULL_BRIGHT & 0xFFFF,
@@ -683,7 +694,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
     private static void putHaloVertex(VertexConsumer vc, Matrix4f mat,
                                       float x, float y, float u, float v, int argb) {
-        vc.addVertex(mat, x, y, 0f)
+        putVertex(vc, mat, x, y)
                 .setColor(argb)
                 .setUv(u, v)
                 .setUv2(LightTexture.FULL_BRIGHT & 0xFFFF,
@@ -966,7 +977,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
     private static void putBurstVertex(VertexConsumer vc, Matrix4f mat,
                                        float x, float y, float u, float v, int argb) {
-        vc.addVertex(mat, x, y, 0f)
+        putVertex(vc, mat, x, y)
                 .setColor(argb)
                 .setUv(u, v)
                 .setUv2(LightTexture.FULL_BRIGHT & 0xFFFF,

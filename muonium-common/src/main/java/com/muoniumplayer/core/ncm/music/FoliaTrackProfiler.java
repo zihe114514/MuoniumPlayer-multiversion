@@ -25,7 +25,7 @@ final class FoliaTrackProfiler {
     static FoliaTrackProfile loadOrAnalyse(AudioPlayer player, boolean outgoing) {
         File source = player == null ? null : player.getSourceFile();
         if (source == null || !source.isFile()) return null;
-        String key = cacheKey(source);
+        String key = cacheKey(source, outgoing);
         FoliaTrackProfile cached = read(key);
         if (cached != null && cached.isUsable()) return cached;
         FoliaTrackProfile profile = analyse(player, source, key, outgoing);
@@ -196,8 +196,12 @@ final class FoliaTrackProfiler {
      * 是 120–180 秒的事，读不到就必须立刻返回，让那一首歌留在原位。</p>
      */
     static FoliaTrackProfile peek(File source) {
+        return peek(source, false);
+    }
+
+    static FoliaTrackProfile peek(File source, boolean outgoing) {
         if (source == null || !source.isFile()) return null;
-        FoliaTrackProfile profile = read(cacheKey(source));
+        FoliaTrackProfile profile = read(cacheKey(source, outgoing));
         return profile != null && profile.isUsable() ? profile : null;
     }
 
@@ -312,11 +316,16 @@ final class FoliaTrackProfiler {
     }
 
     static String cacheKey(File source) {
+        return cacheKey(source, false);
+    }
+
+    static String cacheKey(File source, boolean outgoing) {
         String models = (FoliaModelManager.isInstalled(FoliaModelManager.Kind.BEAT_THIS) ? "B" : "-")
                 + (AutomixSettings.isPerformanceModeEnabled()
                 && FoliaModelManager.isInstalled(FoliaModelManager.Kind.HTDEMUCS)
                 && FoliaModelManager.runtimeReady() ? "S" : "-");
-        String value=source.getAbsolutePath()+'|'+source.length()+'|'+source.lastModified()+'|'+models;
+        String role = outgoing ? "outro" : "intro";
+        String value=source.getAbsolutePath()+'|'+source.length()+'|'+source.lastModified()+'|'+models+'|'+role;
         long hash=0xcbf29ce484222325L;
         for(int i=0;i<value.length();i++){hash^=value.charAt(i);hash*=0x100000001b3L;}
         return Long.toUnsignedString(hash,16);

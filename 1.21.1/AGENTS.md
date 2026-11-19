@@ -53,3 +53,10 @@
 ```
 
 保留 `Port1211StaticTest` 等版本守卫；测试通过不代表新 Mixin 运行时已命中。共享改动按根规范扩展到七树，不以本树单点验收代替。
+
+### 3D 歌词 HUD 直画（2026-11-14）
+
+- 仅本树的「光影 + 更激进的适配」窗口使用歌词专用 `MultiBufferSource.immediate(ByteBufferBuilder)`，全部批次在恢复投影/模型视图前收完，原生缓冲用 try-with-resources 当次关闭；不要换回宿主共享的文字/实体缓冲。
+- `WorldBillboard` 的现代字形和特效经 `putVertex` 在树侧完成仿射变换，再调用 `addVertex(float,float,float)`；相机旋转仍只存在于 `basePose`，不能再叠加全局相机矩阵。
+- 依据为本树实际解析的 Fabric MC 1.21.1 Mojmap JAR 与 NeoForge 21.1.249 JAR 中 `VertexConsumer.addVertex(Matrix4f,float,float,float)`、`MultiBufferSource.immediate(ByteBufferBuilder)`、`ByteBufferBuilder.close()`；两侧已分别核实声明。`Port1211StaticTest` 覆盖提交坐标与 HUD 收批边界，不证明 Iris/Sodium 运行兼容。
+- 本次兼容性隔离不改共享回屏保持算法、不关闭光晕或现代化风格，也不直接移植到其他车道。指定光影组合实测前不能将它称为已证实的唯一根因修复；具体证据与复测清单见内部实现约定。

@@ -3,10 +3,11 @@ package com.muoniumplayer.core.cine;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 运镜数学的纯函数测试：缓动、平滑、punch 包络、roll 限幅。
+ * 运镜数学的纯函数测试：缓动、平滑、roll 安全值与位姿插值。
  * 这些曲线直接决定观感——端点错一点，运镜就是「抖」而不是「滑」。
  */
 class CinePoseMathTest {
@@ -29,42 +30,6 @@ class CinePoseMathTest {
     }
 
     @Test
-    void expLerp帧率无关性() {
-        // 同样的总时长,大帧小帧走出的总进度一致(指数平滑的定义性质)。
-        // 10s 总时长:60fps 每帧 1/60s vs 10fps 每帧 0.1s,最终都收敛到同一比例。
-        double tau = 0.2d;
-        double bigFrames = 1d;
-        for (int i = 0; i < 10; i++) {
-            bigFrames *= (1d - CineShots.expLerp(0.1d, tau));
-        }
-        double smallFrames = 1d;
-        for (int i = 0; i < 600; i++) {
-            smallFrames *= (1d - CineShots.expLerp(1d / 60d, tau));
-        }
-        assertEquals(bigFrames, smallFrames, 0.01d,
-                "帧率不同时 10 秒后的剩余距离必须一致（±1%）");
-        // dt 上限钳制：卡顿一帧 1s 不该让 blend 直接打到 1 跳变
-        double blended = CineShots.expLerp(5d, tau);
-        assertTrue(blended <= 1d, "超长 dt 也要钳在 [0,1]");
-    }
-
-    @Test
-    void fovPunch冲高回落与限幅() {
-        long now = 1_000_000_000L;
-        // punch 时刻打满幅度
-        double atPeak = CineShots.fovPunch(8d, now, now, 0.2d);
-        assertEquals(8d, atPeak, 1.0e-6, "鼓点瞬间 = 满幅度");
-        // 0.2s 后衰减到 1/e ≈ 36.8%
-        double afterTau = CineShots.fovPunch(8d, now, now + 200_000_000L, 0.2d);
-        assertEquals(8d * Math.exp(-1d), afterTau, 0.05d, "τ 时刻应衰减到 1/e");
-        // punch 之前恒 0（不许预告）
-        assertEquals(0d, CineShots.fovPunch(8d, now + 100L, now, 0.2d),
-                "punch 之前必须为 0");
-        // 零幅度直接 0
-        assertEquals(0d, CineShots.fovPunch(0d, now, now, 0.2d));
-    }
-
-    @Test
     void wrapDegrees归一到180() {
         assertEquals(0f, CineShots.wrapDegrees(360f), 1.0e-4f);
         assertEquals(-179f, CineShots.wrapDegrees(181f), 1.0e-4f);
@@ -74,19 +39,36 @@ class CinePoseMathTest {
     }
 
     @Test
-    void 手持感幅度在限内() {
-        // 1.0 强度下 roll 峰值 ≈ 0.9°×(1+0.35) ≈ 1.22°，pitch ≈ 0.78°——远低于 3D 晕阈值。
-        double maxRoll = 0d;
-        double maxPitch = 0d;
-        for (int i = 0; i < 10000; i++) {
-            double t = i / 100.0;
-            maxRoll = Math.max(maxRoll, Math.abs(CineShots.handheldRoll(t, 1.0d)));
-            maxPitch = Math.max(maxPitch, Math.abs(CineShots.handheldPitch(t, 1.0d)));
-        }
-        assertTrue(maxRoll < 1.5d, "手持 roll 峰值必须 <1.5°（3D 晕安全线），实测 " + maxRoll);
-        assertTrue(maxPitch < 1.2d, "手持 pitch 峰值必须 <1.2°，实测 " + maxPitch);
-        // intensity=0 时完全静止
-        assertEquals(0d, CineShots.handheldRoll(123.4d, 0d), 1.0e-9);
+    void cineMathHasNoHandheldOrBeatPulseHelpers() throws Exception {
+        String shots = java.nio.file.Files.readString(
+                com.muoniumplayer.testsupport.ProjectPaths.sharedJava()
+                        .resolve("com/muoniumplayer/core/cine/CineShots.java"),
+                java.nio.charset.StandardCharsets.UTF_8);
+        String session = java.nio.file.Files.readString(
+                com.muoniumplayer.testsupport.ProjectPaths.sharedJava()
+                        .resolve("com/muoniumplayer/core/cine/CineSession.java"),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertFalse(shots.contains("handheldRoll("));
+        assertFalse(shots.contains("handheldPitch("));
+        assertFalse(shots.contains("fovPunch("));
+        assertFalse(session.contains("playback.pulse()"));
+        assertFalse(session.contains("fovPunch"));
+        assertFalse(session.contains("handheld"));
+    }
+
+    @Test
+    void poseInterpolationUsesShortestYawAndClampsPartialTick() {
+        CinePose from = CinePose.of(0d, 64d, 0d, 179f, 5f, 0.5f);
+        CinePose to = new CinePose(2d, 66d, 4d, -179f, 9f, -0.5f, 8f);
+        CinePose middle = CinePose.interpolate(from, to, 0.5f);
+        assertEquals(180f, middle.yawDeg(), 1.0e-5f);
+        assertEquals(1d, middle.x());
+        assertEquals(65d, middle.y());
+        assertEquals(4f, middle.fovOffsetDeg());
+        assertTrue(middle.isFinite());
+        assertEquals(from, CinePose.interpolate(from, to, -1f));
+        assertEquals(to.x(), CinePose.interpolate(from, to, Float.NaN).x());
+        assertFalse(CinePose.of(Double.NaN, 0d, 0d, 0f, 0f, 0f).isFinite());
     }
 
     @Test

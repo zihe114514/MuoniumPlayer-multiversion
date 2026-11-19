@@ -7,7 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,10 +20,118 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class TouchScrollWiringStaticTest {
 
+    private static final List<String> CHAT_ISLAND_PORTS = List.of(
+            "1.20.1 recode", "1.21.1", "1.21.10", "1.21.11 recode", "26.1.2", "26.2", "26.3");
+
     private static String read(String relative) throws Exception {
         Path path = ProjectPaths.sharedJava().resolve(
                 Paths.get("com", "muoniumplayer").resolve(relative));
         return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void chatIslandMouseHookConsumesBeforeVanillaDragAndRegistersBothLoaders() throws Exception {
+        for (String port : CHAT_ISLAND_PORTS) {
+            Path tree = ProjectPaths.repoRoot().resolve(port);
+            String source = readVersionSource(tree, "mixin/ChatIslandMouseMixin.java");
+            boolean rawButtons = port.equals("1.20.1 recode") || port.equals("1.21.1");
+            String descriptor = rawButtons ? "onPress(JIII)V"
+                    : "onButton(JLnet/minecraft/client/input/MouseButtonInfo;I)V";
+            assertTrue(source.contains("@Mixin(MouseHandler.class)") && source.contains(descriptor),
+                    port + ": 必须在已核实的 MouseHandler 入口拦截，不能等到 Screen 已设置拖拽状态");
+            assertTrue(source.contains("at = @At(\"HEAD\"), cancellable = true, require = 1"),
+                    port + ": HEAD 可取消且注入缺失必须失败");
+            assertTrue(source.contains("window == 0L || window != Display.getWindowHandle()"),
+                    port + ": 其他窗口的事件不得被卡片消费");
+            assertTrue(source.contains("if (DownloadDynamicIsland.handleMusicCardMouseButton(button, action)) ci.cancel();"),
+                    port + ": 只按共享命中/配对抬起结果消费，未命中仍交给聊天");
+            assertFalse(source.contains("needsChatOverlay()") || source.contains("instanceof ChatScreen"),
+                    port + ": 宿主不能在共享配对抬起之前再拦一道聊天/音乐门禁");
+            if (port.equals("26.3")) {
+                int normalize = source.indexOf("int button = Mouse.fromSdlButton(info.button());");
+                int update = source.indexOf("Mouse.setButtonPressed(button, action == 1);");
+                int consume = source.indexOf("DownloadDynamicIsland.handleMusicCardMouseButton(button, action)");
+                assertTrue(normalize >= 0 && update > normalize && consume > update,
+                        "26.3: 必须先归一化并同步 SDL 按住位图，不能依赖另一颗 HEAD mixin 的顺序");
+            } else {
+                if (!rawButtons) assertTrue(source.contains("int button = info.button();"), port);
+                assertFalse(source.contains("setButtonPressed") || source.contains("fromSdlButton"),
+                        port + ": GLFW 车道按住状态直接查询硬件");
+            }
+            String otherLoader = port.equals("1.20.1 recode") ? "forge" : "neoforge";
+            for (String loader : List.of("fabric", otherLoader)) {
+                String mixins = Files.readString(tree.resolve(loader).resolve(
+                        "src/main/resources/muonium.mixins.json"), StandardCharsets.UTF_8);
+                assertEquals(2, mixins.split("\"ChatIslandMouseMixin\"", -1).length,
+                        port + "/" + loader + ": 聊天卡输入必须且只能注册一次");
+                assertTrue(mixins.contains("\"required\": true"), port + "/" + loader);
+            }
+        }
+    }
+
+    @Test
+    void chatIslandGateRequiresChatFocusAndNoHostOverlay() throws Exception {
+        for (String port : CHAT_ISLAND_PORTS) {
+            String source = readVersionSource(ProjectPaths.repoRoot().resolve(port),
+                    "core/rendering/IslandVisibilityGate.java");
+            int start = source.indexOf("static boolean isChatOpen()");
+            int end = source.indexOf("static Scene capture()", start);
+            assertTrue(start >= 0 && end > start, port + ": 缺少聊天门禁");
+            String gate = source.substring(start, end);
+            boolean guiOwner = port.equals("26.2") || port.equals("26.3");
+            assertTrue(gate.contains("mc != null && mc.isWindowActive()"),
+                    port + ": 失焦不能继续悬停展开或接收卡片输入");
+            assertTrue(gate.contains(guiOwner ? "mc.gui.overlay() == null" : "mc.getOverlay() == null"),
+                    port + ": 宿主 overlay 必须遮断聊天岛交互");
+            assertTrue(gate.contains((guiOwner ? "mc.gui.screen()" : "mc.screen")
+                    + " instanceof net.minecraft.client.gui.screens.ChatScreen"),
+                    port + ": 只能在聊天 Screen 开放，不能放开全部界面");
+        }
+    }
+
+    @Test
+    void chatOverlayOnlyOpensIslandPassAndRetainsOtherUiGuards() throws Exception {
+        for (String port : CHAT_ISLAND_PORTS) {
+            String client = readVersionSource(ProjectPaths.repoRoot().resolve(port), "MuoniumPlayerClient.java");
+            int start = client.indexOf("public void onScreenRendered(Screen screen)");
+            assertTrue(start >= 0, port);
+            String overlay = client.substring(start).replaceAll("\\s+", " ");
+            assertTrue(overlay.contains("boolean editorOrOtherUi = screen instanceof GuiHudEditorPro"
+                            + " || (screen != null && !(screen instanceof NCMScreen));"),
+                    port + ": 聊天仍归其他 UI，不能放宽整套 HUD/AUTOMIX 白名单");
+            assertTrue(overlay.contains("if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()"
+                            + " && !DownloadDynamicIsland.needsChatOverlay()"
+                            + " && !DownloadDynamicIsland.needsTrackNoticeOverlay()) return;"),
+                    port + ": 开帧/调度前必须给聊天岛单独放行");
+            assertTrue(overlay.contains("if (DownloadDynamicIsland.isDownloadActive() || !editorOrOtherUi"
+                            + " || DownloadDynamicIsland.needsChatOverlay()"
+                            + " || DownloadDynamicIsland.needsTrackNoticeOverlay()) { DownloadDynamicIsland.render(); }"),
+                    port + ": 绘制回调也必须单独放行聊天岛，最旧两树不能只改外层");
+            assertTrue(overlay.contains("if (!editorOrOtherUi) { AutomixTransitionAnimation.render(); }"),
+                    port + ": 聊天只绘制岛，不带入 AUTOMIX 覆盖层");
+            assertFalse(overlay.contains("onHudRender(") || overlay.contains("onHudRenderUnguarded("),
+                    port + ": 聊天不可复用全套 HUD 渲染入口");
+        }
+    }
+
+    @Test
+    void chatContextIsMaintainedBeforeOverlayGuardsAndWithoutADrawingFrame() throws Exception {
+        for (String port : CHAT_ISLAND_PORTS) {
+            String client = readVersionSource(ProjectPaths.repoRoot().resolve(port), "MuoniumPlayerClient.java");
+            int start = client.indexOf("public void onScreenRendered(Screen screen)");
+            int maintenance = client.indexOf("DownloadDynamicIsland.maintainMusicCardContext();", start);
+            int guard = client.indexOf("if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()", start);
+            assertTrue(maintenance > start && maintenance < guard, port + ": 不绘制也要清理旧聊天输入");
+            String gate = readVersionSource(ProjectPaths.repoRoot().resolve(port), "core/rendering/IslandVisibilityGate.java");
+            assertTrue(gate.contains("static Object chatScreenIdentity()"), port + ": 新聊天必须按Screen实例区分");
+        }
+        assertTrue(read("core/MuoniumPlayerEventHandler.java").contains("DownloadDynamicIsland.maintainMusicCardContext();"),
+                "没有覆盖层的tick也必须维护拖动与失焦状态");
+    }
+
+    private static String readVersionSource(Path tree, String relative) throws Exception {
+        return Files.readString(tree.resolve("src/main/java/com/muoniumplayer").resolve(relative),
+                StandardCharsets.UTF_8).replace("\r\n", "\n");
     }
 
     @Test
@@ -133,7 +243,7 @@ class TouchScrollWiringStaticTest {
     void 横向拖动站点全部让位纵向手势() throws Exception {
         for (String relative : new String[]{
                 Paths.get("core", "screens", "ncm", "VolumeControl.java").toString(),
-                Paths.get("core", "screens", "ncm", "ViperOverlay.java").toString(),
+                Paths.get("core", "screens", "ncm", "effects", "EffectsWorkbench.java").toString(),
                 Paths.get("core", "screens", "ncm", "ThemePaletteOverlay.java").toString(),
                 Paths.get("core", "screens", "ncm", "LyricStyleQuickPanel.java").toString(),
                 Paths.get("core", "screens", "ncm", "MusicLyricsPanel.java").toString(),

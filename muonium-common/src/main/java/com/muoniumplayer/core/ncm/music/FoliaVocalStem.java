@@ -48,7 +48,7 @@ final class FoliaVocalStem {
     static FoliaVocalStem load(File source, int deckRate) {
         try {
             if (source == null || deckRate <= 0) return null;
-            FoliaTrackProfile profile = FoliaTrackProfiler.peek(source);
+            FoliaTrackProfile profile = FoliaTrackProfiler.peek(source, false);
             FoliaStemProfile stems = profile == null ? null : profile.stems;
             if (stems == null || !stems.hasVocalMaterial()) return null;
             // 素材是模型在 44.1k 上算的（输入从原采样率线性插值上来）。把它再插值回 48k 去减 48k

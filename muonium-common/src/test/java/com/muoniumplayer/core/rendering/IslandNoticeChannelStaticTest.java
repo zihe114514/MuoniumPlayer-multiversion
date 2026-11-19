@@ -86,10 +86,12 @@ class IslandNoticeChannelStaticTest {
         assertPublishes(source, "public static void showVolume(int percent)", "IslandNoticeType.VOLUME");
         assertPublishes(source, "public static void showPlaybackQuality(String quality, String format)",
                 "IslandNoticeType.QUALITY");
-        assertPublishes(source, "public static void showPlaybackPaused(String trackName)",
-                "IslandNoticeType.PLAYBACK_TOGGLE");
-        assertPublishes(source, "public static void showPlaybackResumed(String trackName)",
-                "IslandNoticeType.PLAYBACK_TOGGLE");
+        assertTrue(body(source, "public static void showPlaybackPaused(String trackName)")
+                        .contains("IslandNoticeType.PLAYBACK_TOGGLE"),
+                "卡片未展示时仍保留暂停状态确认");
+        assertTrue(body(source, "public static void showPlaybackResumed(String trackName)")
+                        .contains("IslandNoticeType.PLAYBACK_TOGGLE"),
+                "卡片未展示时仍保留恢复状态确认");
         assertPublishes(source, "public static void cycleStyle()", "IslandNoticeType.STYLE");
 
         // 主题与播放器大小的按钮在导航栏上，改到别处去发就没人再报当前值了。

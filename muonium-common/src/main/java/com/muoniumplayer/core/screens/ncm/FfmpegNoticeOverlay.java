@@ -3,140 +3,71 @@ package com.muoniumplayer.core.screens.ncm;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.FfmpegInstaller;
 import com.muoniumplayer.core.ncm.music.FfmpegNotice;
-import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.GlassLook;
+import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
+import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RectWidget;
-import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.utils.KeyboardUtils;
+import com.muoniumplayer.party.ui.PartyIcons;
 
 import java.net.URI;
 
 /**
- * 「您的电脑似乎没有 ffmpeg 喵~」提示的界面本体。
- *
- * <p>它与播放器里的模态浮层（{@link ConfirmationOverlay}、{@link ModelInstallNoticeOverlay}）
- * 是同一套 Skija 组件：遮罩、圆角卡片、主题色、悬停态、模态输入独占全部复用。之所以要单独
- * 做成一个能独立渲染的 {@link NCMPanel} 而不是像那两个一样挂在 {@code NCMScreen} 上，是因为
- * 这个提示要在<b>主菜单</b>就弹出来 —— 那时播放器界面还没打开，没有宿主浮层可用。
- * 对应地有个最薄的宿主 {@code GuiFfmpegNotice}：它只负责开 Skija 帧、把窗口尺寸与鼠标键盘
- * 转给这里、以及提示收起后回到原来的界面。</p>
- *
- * <p>在此之前这里是「原版 GuiScreen 画底板 + GuiGraphics.drawString 画文字」的混合实现，
- * 而标题/正文用的是 {@code 0xFFFFFF} 这类<b>不含 alpha 通道</b>的颜色常量。1.21 的原版文字
- * 链路会把颜色当成 ARGB 直接取高字节作透明度（{@code Font}/{@code GuiGraphics} 里都没有
- * 「alpha 为 0 就当不透明」的兜底），于是标题、正文、「永不展示」画出来全透明，界面上只剩
- * 两个按钮的文字（按钮标签走的是另一条 ActiveTextCollector 链路，颜色是带 alpha 的）。
- * 改用 Skija 之后文字与播放器界面走同一条 {@code CFontRenderer} 链路，颜色一律带 alpha，
- * 不再有这种分歧。</p>
- *
- * <p>出口也按「傻瓜操作」重排过：Windows 上的主行动是「一键安装喵！」——交给 {@link FfmpegInstaller}
- * 从托管仓库的镜像链自动下载伴生包并装好，状态行报真实下载进度，界面侧的看门狗每帧瞄一眼安装状态，
- * 装好后把成功文案多留一会儿再自动收起（立刻消失会让人怀疑有没有真装上）。装好的 ffmpeg 落在
- * {@code config/muonium/bin/}，探测逻辑本来就覆盖那里，装完立刻生效、不用重启游戏。「前往下载」退居
- * 次要出口：镜像链全挂或复测不过时，还能去官网手动下。三个出口都不改动任何设置；打不开浏览器就把地址
- * 塞进剪贴板。ESC 与点遮罩等价于「我才不管呢喵」。</p>
+ * Windows 缺少 FFmpeg 时的 Skija 提示；宿主只负责尺寸、输入与退场后的返回。
+ * 安装与复测由 FfmpegInstaller 的后台流程拥有，关闭提示不会取消安装。
  */
 public final class FfmpegNoticeOverlay extends NCMPanel {
 
-    /** 标题：整段提示的主语。 */
-    private static final String HEADING = "您的电脑似乎没有ffmpeg喵~要不要安装一个喵？！";
-    /**
-     * 正文：如实解释不装会怎样。动态封面是唯一会彻底失效的功能（退回静态封面）；
-     * B 站音频与无缝交接都有纯 Java 兜底，没有 ffmpeg 只是慢一点、覆盖率窄一点，
-     * 不是「受影响」这种让用户自己猜程度的模糊说法。措辞用玩家已有的词汇
-     * （「无缝交接」，ControlsBar 里就是这么叫的），不引入内部名。
-     */
+    private static final String HEADING = "为音乐补齐解码能力";
     private static final String BODY =
             "不装也能正常听歌喵！只有动态封面会退回静态图；B站解析和无缝交接有纯 Java 兜底，只是慢一点点喵~";
     private static final String NEVER_SHOW = "永不展示";
     private static final String DOWNLOAD = "前往下载";
     private static final String INSTALL = "一键安装喵！";
     private static final String IGNORE = "我才不管呢喵！";
-
-    /**
-     * 空闲时状态行上的指引：说清「一键安装」会联网下载。状态行是单行截断的（TRIM_TO_WIDTH），
-     * 最宽卡片下只装得下 ~25 个汉字，这条与失败文案一样按这个预算写——指引里必须保住
-     * 「一键安装」这个词，它是按钮名的锚点。
-     */
     private static final String HINT_IDLE = "点「一键安装喵！」自动下载安装，需要联网（约 38MB）";
-    /** 下载中但还没拿到有效进度（镜像还在响应）。 */
     private static final String STATUS_CONNECTING = "正在下载 ffmpeg 喵";
-    /** 下载中且进度已知，{0} 是百分比。 */
     private static final String STATUS_DOWNLOADING = "正在下载 ffmpeg 喵 {0}%";
-    /** 下载完成到复测通过之间的窗口：解压 + 实测 ffmpeg。 */
     private static final String STATUS_INSTALLING = "下载完成，正在安装喵";
     private static final String STATUS_SUCCESS = "装好了喵！已经检测到 ffmpeg，动态封面可以用了";
 
-    /** 正文最多显示的行数；再长会在最后一行截断，卡片不允许长到顶出屏幕。 */
+    private static final double SIDE_INSET = 24.0;
+    private static final double CARD_MAX_WIDTH = 624.0;
+    private static final double FOOTER_HEIGHT = 112.0;
     private static final int MAX_BODY_LINES = 5;
 
-    /** 卡片左右留白，标题、正文、底板、按钮共用同一套内缩，任何一处改动都不会各自跑偏。 */
-    private static final double SIDE_INSET = 22.0;
-    /** 卡片宽度的下限与上限：太窄放不下按钮，太宽一行字读起来要来回扫。 */
-    private static final double CARD_MIN_WIDTH = 300.0;
-    private static final double CARD_MAX_WIDTH = 430.0;
-    /** 徽标与标题所在的高度带。 */
-    private static final double HEADER_CENTER_Y = 28.0;
-    /** 正文区上沿（正文文字的第一行基线所在处）。 */
-    private static final double BODY_TOP = 52.0;
-    /** 承载正文的圆角底板在文字四周留出的边距。 */
-    private static final double BODY_PAD = 7.0;
-    /** 按钮高度；下面那一行链接区的高度由字体决定。 */
-    private static final double BUTTON_HEIGHT = 26.0;
-    /** 分隔线到按钮之间的间距。 */
-    private static final double BUTTONS_TOP_GAP = 9.0;
-    /** 按钮与「永不展示」之间的间距。 */
-    private static final double LINK_GAP = 8.0;
-    private static final double CARD_BOTTOM_PAD = 12.0;
-
-    /** 强调按钮（一键安装喵！）的底色，与「未安装分析模型」提示里的安装按钮同色。 */
-    private static final int PRIMARY_COLOR = 0xD2913A;
-    private static final int PRIMARY_HOVER_COLOR = 0xE5B24E;
-    /** 安装进行中主按钮压暗一档：看得出「在干活」，又不至于像坏了。 */
-    private static final int PRIMARY_RUNNING_COLOR = 0xB07E38;
-    /** 安装成功的状态行颜色；唯一一处跳出橙色系的地方，让「成了」和「出事了」一眼分得开。 */
-    private static final int SUCCESS_COLOR = 0x9FD48A;
-    /** 异常与进行中共用的状态行颜色（打不开浏览器、安装失败等）。 */
-    private static final int STATUS_COLOR = 0xFFB74D;
-    /** 链接悬停时的颜色（我才不管呢喵 / 永不展示）。 */
-    private static final int LINK_HOVER_COLOR = 0xFFD08A;
-
     private boolean closing;
-    /** 进出场那一条时钟，和 {@code NcmSheet} 那六个浮层共用同一个 {@link SheetClock}。 */
+    private final NcmExpressiveLayout layout = new NcmExpressiveLayout();
     private final SheetClock clock = new SheetClock();
-    /** 遮罩与卡片共同读的那一档进度（已经过缓动）。 */
     private double presentation;
     private boolean resolved;
-
-    /** 浏览器打不开时显示的兜底说明（地址已复制到剪贴板）；非空时状态行优先显示它。 */
     private String status;
-    /** 界面侧看门狗：第一次看到「装好了」的时刻，据此在短暂展示后自动收起。-1 表示还没见到。 */
     private long successSeenAt = -1L;
-    /** 按当前卡片宽度换行后的正文。 */
-    private String[] bodyLines = new String[0];
-    /** 上一次换行用的宽度；宽度没变就不重复换行（换行要逐字累加字形宽度）。 */
-    private double wrappedForWidth = -1.0;
-    /** 上一次换行时字形是否已全部就绪；没就绪算出来的宽度是 0，必须下一帧重算。 */
-    private boolean wrappedWithLoadedGlyphs;
-    /** 标题是否已经降到小一号字体；只在需要变化时才换字体。 */
-    private boolean titleCompact;
 
-    /** 正在退场：还画得着，但 {@link NCMPanel} 会把它这一帧的输入整个吞掉。 */
+    private String[] bodyLines = new String[0];
+    private String wrappedBody;
+    private double wrappedForWidth = -1.0;
+    private long wrappedBodyRevision = -1L;
+    private boolean wrappedWithLoadedGlyphs;
+    private String[] statusLines = new String[0];
+    private String wrappedStatus;
+    private double wrappedStatusWidth = -1.0;
+    private long wrappedStatusRevision = -1L;
+    private boolean wrappedStatusGlyphs;
+
     @Override
     protected boolean isDismissing() {
         return closing;
     }
 
     public boolean shouldClose() {
-        // 退场播完才回收。原来是 closing 一置位下一帧就把这一层抹掉，所以「打开有淡入、
-        // 关掉啪一下没了」。
         return clock.isGone();
     }
 
-    /** 「我才不管呢喵」、点遮罩、ESC 都走这里：收起提示，本次启动不再弹（由 FfmpegNotice 记）。 */
+    /** 只收起本次提示；安装线程及启动探测闸门仍由各自的拥有者维护。 */
     public void cancel() {
         if (resolved) return;
         resolved = true;
@@ -149,21 +80,35 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
     }
 
     @Override
+    public void renderWidget(double mouseX, double mouseY, int dWheel) {
+        layout.render(this, mouseX, mouseY, dWheel, (x, y, wheel) -> {
+            super.renderWidget(x, y, 0);
+            if (wheel != 0 && !isDismissing()) super.onDWheelReceived(x, y, wheel);
+        });
+    }
+
+    @Override
+    public void onMouseClickReceived(double mouseX, double mouseY, int button) {
+        layout.dispatch(this, mouseX, mouseY, button, (x, y, input) -> super.onMouseClickReceived(x, y, input));
+    }
+
+    @Override
+    public void onDWheelReceived(double mouseX, double mouseY, int dWheel) {
+        layout.dispatch(this, mouseX, mouseY, dWheel, (x, y, input) -> super.onDWheelReceived(x, y, input));
+    }
+
+    @Override
     public void onInit() {
         RectWidget mask = new RectWidget();
         addChild(mask);
         mask.setClickable(false);
         mask.setColor(0x000000);
-        // 遮罩和卡片同一条进度：原来它是写死的 .5f，于是卡片还没出现整屏已经先黑了。
         mask.setBeforeRenderCallback(() -> {
             mask.setMargin(0);
-            mask.setAlpha((float) (presentation * .5f));
+            mask.setAlpha((float) (presentation * .48));
         });
-        // 时钟在根组件这一格里推进：它跑在所有子组件之前，遮罩和卡片于是读到同一个值。
+        // 一帧只推一次；异步安装完成与 resize 都不重开进场时钟。
         setBeforeRenderCallback(() -> presentation = TransitionCurveCache.MOTION.at(clock.tick()));
-
-        // 点在卡片外面等价于「我才不管呢喵」，并且必须被这里吃掉：我们的宿主是一个独立的
-        // Screen，落不到别处，但这个回调仍然要拦下右键以外的点击，避免往下透传。
         setOnClickCallback((x, y, button) -> {
             if (button == 0) {
                 cancel();
@@ -175,187 +120,135 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         Panel dialog = new Panel();
         addChild(dialog);
         dialog.setOnClickCallback((x, y, button) -> true);
-        // 高度由正文行数决定，所以尺寸每帧在渲染前重算：窗口变窄会让正文多一行，卡片必须跟着
-        // 长高，否则按钮会压在正文上。顺带跑界面侧的安装看门狗，见 tickInstallWatchdog。
-        dialog.setBeforeRenderCallback(() -> {
-            layoutDialog(dialog);
-            tickInstallWatchdog();
-        });
-
-        RoundedRectWidget background = new RoundedRectWidget();
-        dialog.addChild(background);
-        background.setClickable(false);
-        background.setRadius(11);
-        background.setColor(getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
-        background.setBeforeRenderCallback(() -> background.setMargin(0));
+        RoundedRectWidget background = NcmExpressive.surface(dialog, 0, 0,
+                dialog::getWidth, dialog::getHeight, NcmExpressive.DIALOG_RADIUS,
+                () -> NcmExpressivePalette.live().surface());
         background.setGlassSheet(GlassLook.Surface.PLAYER);
-        // 底板自己那层深色压薄：不压的话刚贴上去的糊背景仍然在它底下，弹窗读起来就是一块实色板。
-        background.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+        background.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1));
 
-        RoundedRectWidget badge = new RoundedRectWidget();
-        dialog.addChild(badge);
-        badge.setClickable(false);
-        badge.setRadius(12);
-        badge.setColor(0xD87857);
-        badge.setBeforeRenderCallback(() -> badge.setBounds(SIDE_INSET, 16, 24, 24));
+        // 矮窗口收紧页眉，不缩放字体；宿主的绘制与命中继续使用同一布局轴。
+        NcmExpressive.medallion(dialog, PartyIcons.ALBUM, () -> 55,
+                () -> compact() ? 36 : 55, () -> compact() ? 46 : 62,
+                () -> NcmExpressivePalette.live().primaryContainer(),
+                () -> NcmExpressivePalette.live().primary());
+        NcmExpressive.label(dialog, () -> "解码支持 / FFmpeg", FontManager.pf25,
+                () -> compact() ? 89 : 102, () -> compact() ? 35 : 54,
+                () -> Math.max(1, dialog.getWidth() - (compact() ? 169 : 182)),
+                () -> NcmExpressivePalette.live().muted());
+        NcmExpressive.label(dialog, this::headingText, FontManager.pf40bold,
+                () -> SIDE_INSET, () -> compact() ? 74 : 115,
+                () -> innerWidth(dialog), () -> NcmExpressivePalette.live().text());
+        NcmExpressive.hitSurface(dialog, () -> dialog.getWidth() - 66,
+                () -> compact() ? 15 : 34, () -> 42, () -> 42, 21,
+                () -> NcmExpressivePalette.live().container(), this::cancel);
+        NcmExpressive.icon(dialog, PartyIcons.CLOSE, NcmSheet.ICON_M,
+                () -> dialog.getWidth() - 45, () -> compact() ? 36 : 55,
+                () -> NcmExpressivePalette.live().muted());
 
-        // Fontello 的警告字形随播放器内置，避免半角感叹号在缺字形时退化成方框。
-        LabelWidget warningIcon = new LabelWidget(FontelloIcons.WARNING, FontManager.fontello18);
-        dialog.addChild(warningIcon);
-        warningIcon.setClickable(false);
-        warningIcon.setBeforeRenderCallback(() -> {
-            warningIcon.setColor(0xFFFFFF);
-            warningIcon.setPosition(SIDE_INSET + 12 - warningIcon.getWidth() * .5,
-                    HEADER_CENTER_Y - warningIcon.getHeight() * .5 + 1);
+        // 说明独立滚动，页脚始终可点。原版宿主不转发滚轮，因此另给显式翻阅按钮。
+        ScrollPanel scroller = new ScrollPanel();
+        dialog.addChild(scroller);
+        scroller.setSpacing(0).setScrollStrength(30).setIndicatorInsideViewport();
+        Panel content = new Panel();
+        scroller.addChild(content);
+        content.setClickable(false);
+        scroller.setBeforeRenderCallback(() -> {
+            scroller.setBounds(dialog.getWidth(), Math.max(1, dialog.getHeight() - headerHeight() - footerHeight(dialog)));
+            scroller.setPosition(0, headerHeight());
+            content.setBounds(dialog.getWidth(), cardTop() + cardHeight(content) + 12);
         });
-
-        LabelWidget headingLabel = new LabelWidget(HEADING, FontManager.pf18bold);
-        dialog.addChild(headingLabel);
-        headingLabel.setClickable(false);
-        headingLabel.setBeforeRenderCallback(() -> {
-            double maxWidth = Math.max(1, dialog.getWidth() - SIDE_INSET - 52);
-            // 窄窗口下宁可降一号字也不截断：标题就是这次提示的主语，看不全等于没提示。
-            boolean compact = FontManager.pf18bold != null
-                    && FontManager.pf18bold.getStringWidthD(HEADING) > maxWidth;
-            if (compact != titleCompact) {
-                titleCompact = compact;
-                headingLabel.setFont(compact ? FontManager.pf14bold : FontManager.pf18bold);
-            }
-            headingLabel.setColor(getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            headingLabel.setMaxWidth(maxWidth);
-            headingLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            headingLabel.setPosition(SIDE_INSET + 40, HEADER_CENTER_Y - headingLabel.getHeight() * .5);
-        });
-
-        // 正文底板：整块圆角矩形垫在文字下面。它比正文标签先加入，所以画在文字下面。
-        RoundedRectWidget bodySurface = new RoundedRectWidget();
-        dialog.addChild(bodySurface);
-        bodySurface.setClickable(false);
-        bodySurface.setRadius(6);
-        bodySurface.setBeforeRenderCallback(() -> {
-            bodySurface.setBounds(SIDE_INSET, BODY_TOP - BODY_PAD,
-                    Math.max(1, dialog.getWidth() - SIDE_INSET * 2), bodyBlockHeight() + BODY_PAD * 2);
-            bodySurface.setColor(getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-        });
-
-        // 正文每行一个 Label：这套字体渲染器没有多行绘制，换行结果由 wrapBody 每次布局时算好。
-        // 用不到的行取空字符串而不是 setHidden —— 被隐藏的组件不再执行自己的回调，就再也显示不回来。
         for (int index = 0; index < MAX_BODY_LINES; index++) {
-            final int lineIndex = index;
-            LabelWidget bodyLabel = new LabelWidget(
-                    () -> lineIndex < bodyLines.length ? bodyLines[lineIndex] : "", FontManager.pf14);
-            dialog.addChild(bodyLabel);
-            bodyLabel.setClickable(false);
-            bodyLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            bodyLabel.setBeforeRenderCallback(() -> {
-                // 宽度必须在渲染前从已经定过尺寸的卡片上取：onInit() 时卡片宽度还是 0，
-                // 那时算出来的上限会被夹成 1px，而 TRIM_TO_WIDTH 在 1px 内连省略号都
-                // 放不下，于是整行文字静默地什么都不画（正文曾经就是这样消失的）。
-                bodyLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2 - BODY_PAD * 2));
-                bodyLabel.setColor(getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-                bodyLabel.setPosition(SIDE_INSET + BODY_PAD, BODY_TOP + lineIndex * lineHeight());
-            });
+            final int line = index;
+            NcmExpressive.label(content, () -> line < bodyLines.length ? bodyLines[line] : "",
+                    FontManager.pf32, () -> SIDE_INSET, () -> 12 + line * lineHeight(),
+                    () -> innerWidth(dialog), () -> NcmExpressivePalette.live().muted());
         }
 
-        // 状态行：平时是傻瓜指引，装的时候滚进度，结束报结果。这一行的高度恒被预留：否则它会一边
-        // 长出来一边把按钮往下推，用户正要点按钮的时候按钮跑了。
-        LabelWidget statusLabel = new LabelWidget(this::statusText, FontManager.pf14);
-        dialog.addChild(statusLabel);
-        statusLabel.setClickable(false);
-        statusLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-        statusLabel.setBeforeRenderCallback(() -> {
-            // 宽度必须在渲染前从已经定过尺寸的卡片上取：onInit() 时卡片宽度还是 0，
-            // 那时算出来的上限会被夹成 1px，而 TRIM_TO_WIDTH 在 1px 内连省略号都
-            // 放不下，于是整行文字静默地什么都不画（正文曾经就是这样消失的）。
-            statusLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2 - BODY_PAD * 2));
-            statusLabel.setColor(statusColor());
-            statusLabel.setPosition(SIDE_INSET + BODY_PAD, statusTop());
+        NcmExpressive.surface(content, () -> SIDE_INSET, this::cardTop,
+                () -> innerWidth(dialog), () -> cardHeight(content), NcmExpressive.CARD_RADIUS,
+                () -> NcmExpressivePalette.live().container());
+        NcmExpressive.label(content, this::cardHeading, FontManager.pf28bold,
+                () -> SIDE_INSET + 20, () -> cardTop() + 23,
+                () -> innerWidth(dialog) - 40, () -> NcmExpressivePalette.live().containerInk());
+        NcmExpressive.label(content, this::progressText, FontManager.pf50bold,
+                () -> SIDE_INSET + 20, () -> cardTop() + 57,
+                () -> innerWidth(dialog) - 108, this::statusColor);
+        NcmExpressive.loading(content, () -> dialog.getWidth() - SIDE_INSET - 42,
+                () -> cardTop() + 58, () -> running() ? 40 : 0,
+                () -> NcmExpressivePalette.live().primary());
+        NcmExpressive.medallion(content, PartyIcons.INFO,
+                () -> dialog.getWidth() - SIDE_INSET - 42, () -> cardTop() + 57,
+                () -> FfmpegInstaller.state() == FfmpegInstaller.IDLE ? 48 : 0,
+                () -> NcmExpressivePalette.live().primaryContainer(),
+                () -> NcmExpressivePalette.live().primary());
+        NcmExpressive.medallion(content, PartyIcons.CHECK,
+                () -> dialog.getWidth() - SIDE_INSET - 42, () -> cardTop() + 57,
+                () -> FfmpegInstaller.state() == FfmpegInstaller.SUCCESS ? 48 : 0,
+                () -> NcmExpressivePalette.live().primaryContainer(),
+                () -> NcmExpressivePalette.live().success());
+        NcmExpressive.medallion(content, PartyIcons.WARNING,
+                () -> dialog.getWidth() - SIDE_INSET - 42, () -> cardTop() + 57,
+                () -> FfmpegInstaller.state() == FfmpegInstaller.FAILED ? 48 : 0,
+                () -> NcmExpressivePalette.live().primaryContainer(),
+                () -> NcmExpressivePalette.live().error());
+        Panel statusContent = new Panel();
+        content.addChild(statusContent);
+        statusContent.setClickable(false);
+        statusContent.setBeforeRenderCallback(() -> {
+            while (statusContent.getChildren().size() < statusLines.length) {
+                final int line = statusContent.getChildren().size();
+                NcmExpressive.label(statusContent, () -> line < statusLines.length ? statusLines[line] : "",
+                        FontManager.pf25, () -> 0, () -> 9 + line * captionHeight(),
+                        () -> statusContent.getWidth(), this::statusColor);
+            }
+            statusContent.setBounds(innerWidth(dialog) - (running() ? 40 : 104), statusLines.length * captionHeight());
+            statusContent.setPosition(SIDE_INSET + 20, cardTop() + (running() ? 80 : 46));
         });
+        NcmExpressive.progress(content, () -> SIDE_INSET + 20,
+                () -> cardTop() + cardHeight(content) - 16,
+                () -> running() ? innerWidth(dialog) - 40 : 0, this::downloadProgress, this::running);
 
-        RectWidget divider = new RectWidget();
-        dialog.addChild(divider);
-        divider.setClickable(false);
-        divider.setBeforeRenderCallback(() -> {
-            divider.setBounds(SIDE_INSET, actionsTop(),
-                    Math.max(1, dialog.getWidth() - SIDE_INSET * 2), .5);
-            divider.setColor(getColor(NCMScreen.ColorType.BORDER));
-        });
+        NcmExpressive.action(dialog, PartyIcons.LINK, () -> DOWNLOAD, NcmExpressive.ActionStyle.TONAL,
+                () -> SIDE_INSET, () -> actionTop(dialog),
+                () -> showInstallActions() ? actionWidth(dialog) : 0,
+                () -> showInstallActions() ? NcmExpressive.BUTTON_HEIGHT : 0, this::openDownloadPage);
+        NcmExpressive.action(dialog, PartyIcons.SYNC,
+                () -> FfmpegInstaller.state() == FfmpegInstaller.FAILED ? "重试安装" : INSTALL,
+                NcmExpressive.ActionStyle.PRIMARY,
+                () -> stacked(dialog) ? SIDE_INSET : dialog.getWidth() - SIDE_INSET - actionWidth(dialog),
+                () -> actionTop(dialog) + (stacked(dialog) ? NcmExpressive.BUTTON_HEIGHT + 10 : 0),
+                () -> showInstallActions() ? actionWidth(dialog) : 0,
+                () -> showInstallActions() ? NcmExpressive.BUTTON_HEIGHT : 0, this::startInstall);
+        NcmExpressive.action(dialog, "", () -> "稍后查看", NcmExpressive.ActionStyle.TONAL,
+                () -> dialog.getWidth() - SIDE_INSET - Math.min(188, innerWidth(dialog)),
+                () -> actionTop(dialog),
+                () -> running() ? Math.min(188, innerWidth(dialog)) : 0,
+                () -> running() ? NcmExpressive.BUTTON_HEIGHT : 0, this::cancel);
+        addReadControls(dialog, scroller, content);
 
-        RoundedButtonWidget downloadButton = new RoundedButtonWidget(DOWNLOAD, FontManager.pf12bold);
-        dialog.addChild(downloadButton);
-        downloadButton.setRadius(6);
-        downloadButton.setGlassRim(GlassLook.Surface.PLAYER);
-        RoundedButtonWidget installButton = new RoundedButtonWidget(INSTALL, FontManager.pf12bold);
-        dialog.addChild(installButton);
-        installButton.setRadius(6);
-        installButton.setGlassRim(GlassLook.Surface.PLAYER);
-
-        // 两个按钮共用一次宽度计算，保证左右对齐、中间间隙一致。
-        downloadButton.setBeforeRenderCallback(() -> {
-            layoutActions(dialog, downloadButton, installButton);
-            downloadButton.setColor(downloadButton.isHovering()
-                    ? getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            downloadButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            downloadButton.setTextColor(getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-        });
-        downloadButton.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            openDownloadPage();
-            return true;
-        });
-
-        installButton.setBeforeRenderCallback(() -> {
-            layoutActions(dialog, downloadButton, installButton);
-            boolean running = FfmpegInstaller.state() == FfmpegInstaller.RUNNING;
-            installButton.setColor(running ? PRIMARY_RUNNING_COLOR
-                    : installButton.isHovering() ? PRIMARY_HOVER_COLOR : PRIMARY_COLOR);
-            installButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            installButton.setTextColor(0xFFFFFF);
-        });
-        installButton.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            // 正在装就别点出第二个安装进程；FfmpegInstaller.start() 自己也会挡，这里挡是为了
-            // 连点时连「状态行闪一下」都不发生。
-            if (FfmpegInstaller.state() == FfmpegInstaller.RUNNING) return true;
-            // 清掉浏览器兜底说明之类的一次性文案，状态行交还给安装流程自己的输出。
-            status = null;
-            successSeenAt = -1L;
-            FfmpegInstaller.start();
-            return true;
-        });
-
-        // 「我才不管呢喵」与「永不展示」是两个低调出口，放同一行：左边本次不弹，右边永久不弹。
-        // 它们降级成链接是刻意的——傻瓜流程要把视线留给「一键安装」。
-        LabelWidget ignoreLink = new LabelWidget(IGNORE, FontManager.pf12);
-        dialog.addChild(ignoreLink);
-        ignoreLink.setShouldOverrideMouseCursor(true);
-        ignoreLink.setBeforeRenderCallback(() -> {
-            ignoreLink.setColor(ignoreLink.isHovering()
-                    ? LINK_HOVER_COLOR
-                    : getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            ignoreLink.setPosition(SIDE_INSET, linkTop());
-        });
-        ignoreLink.setOnClickCallback((x, y, button) -> {
+        LabelWidget ignore = NcmExpressive.label(dialog,
+                () -> running() ? "关闭提示不会取消后台安装" : FfmpegInstaller.state() == FfmpegInstaller.SUCCESS
+                        ? "约 2.6 秒后自动收起 · 无需重启" : IGNORE,
+                FontManager.pf25, () -> SIDE_INSET, () -> dialog.getHeight() - 26,
+                () -> innerWidth(dialog) - (showInstallActions() ? 88 : 0),
+                () -> NcmExpressivePalette.live().muted());
+        ignore.setClickable(true).setShouldOverrideMouseCursor(true);
+        ignore.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
             cancel();
             return true;
         });
-
-        // 「永不展示」是这一屏唯一的持久化出口，收在右下角。
-        LabelWidget neverShowLabel = new LabelWidget(NEVER_SHOW, FontManager.pf12);
-        dialog.addChild(neverShowLabel);
-        neverShowLabel.setShouldOverrideMouseCursor(true);
-        neverShowLabel.setBeforeRenderCallback(() -> {
-            neverShowLabel.setColor(neverShowLabel.isHovering()
-                    ? LINK_HOVER_COLOR
-                    : getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            // 宽度是上一帧量出来的：文本内容固定，第一帧之后就是定值。
-            neverShowLabel.setPosition(
-                    Math.max(SIDE_INSET, dialog.getWidth() - SIDE_INSET - neverShowLabel.getWidth()),
-                    linkTop());
+        LabelWidget never = NcmExpressive.rightAligned(dialog, () -> showInstallActions() ? NEVER_SHOW : "",
+                FontManager.pf25, () -> dialog.getWidth() - SIDE_INSET,
+                () -> dialog.getHeight() - 26, () -> 80,
+                () -> NcmExpressivePalette.live().muted());
+        never.setClickable(true).setShouldOverrideMouseCursor(true);
+        dialog.setBeforeRenderCallback(() -> {
+            layoutDialog(dialog);
+            tickInstallWatchdog();
+            never.setClickable(showInstallActions()).setShouldOverrideMouseCursor(showInstallActions());
         });
-        neverShowLabel.setOnClickCallback((x, y, button) -> {
+        never.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
             FfmpegNotice.setNeverShow();
             cancel();
@@ -364,40 +257,90 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
     }
 
     private void layoutDialog(Panel dialog) {
-        double width = Math.max(CARD_MIN_WIDTH, Math.min(CARD_MAX_WIDTH, getWidth() - 32));
-        // 先按这个宽度把正文换行，再由行数决定卡片高度。
-        wrapBody(Math.max(1, width - SIDE_INSET * 2 - BODY_PAD * 2));
-        // 上限用「屏幕高度 - 28」而不是写死的数：这样卡片一定落在屏幕内。正常窗口下这个上限
-        // 根本不会生效，只有极小的窗口才会压到正文行数。
-        dialog.setBounds(width, Math.min(Math.max(160.0, contentHeight()),
-                Math.max(160.0, getHeight() - 28)));
+        double width = NcmExpressive.dialogWidth(this, CARD_MAX_WIDTH);
+        dialog.setBounds(width, NcmExpressive.dialogHeight(this, 584));
+        wrapBody(Math.max(1, width - SIDE_INSET * 2));
+        wrapStatus(Math.max(1, width - SIDE_INSET * 2 - (running() ? 40 : 104)));
         dialog.center();
-        dialog.setPosition(dialog.getRelativeX(), dialog.getRelativeY() + (1.0 - presentation) * 10.0);
+        dialog.setPosition(dialog.getRelativeX(), dialog.getRelativeY() + (1.0 - presentation) * 12.0);
         dialog.setAlpha((float) presentation);
     }
 
-    private void layoutActions(Panel dialog, RoundedButtonWidget download, RoundedButtonWidget install) {
-        double total = Math.max(1, dialog.getWidth() - SIDE_INSET * 2);
-        double gap = 8;
-        double installWidth = Math.max(118, Math.min(150, total * .52));
-        double downloadWidth = Math.max(1, total - gap - installWidth);
-        double top = buttonsTop();
-        // 「前往下载」在左、「一键安装喵！」在右：主行动放惯用手一侧，鼠标停过去最顺手。
-        download.setBounds(downloadWidth, BUTTON_HEIGHT);
-        download.setPosition(SIDE_INSET, top);
-        install.setBounds(installWidth, BUTTON_HEIGHT);
-        install.setPosition(SIDE_INSET + downloadWidth + gap, top);
+    private void addReadControls(Panel dialog, ScrollPanel scroller, Panel content) {
+        NcmExpressive.action(dialog, PartyIcons.CHEVRON_LEFT, () -> "上页", NcmExpressive.ActionStyle.NEUTRAL,
+                () -> SIDE_INSET, () -> dialog.getHeight() - footerHeight(dialog) + 4,
+                () -> readReserve(dialog) > 0 ? 80 : 0,
+                () -> readReserve(dialog) > 0 ? 28 : 0,
+                () -> scroller.scrollToOffsetImmediately(scroller.targetScrollOffset - Math.max(32, scroller.getHeight() * .8)));
+        NcmExpressive.action(dialog, PartyIcons.CHEVRON_RIGHT, () -> "下页", NcmExpressive.ActionStyle.NEUTRAL,
+                () -> dialog.getWidth() - SIDE_INSET - 80, () -> dialog.getHeight() - footerHeight(dialog) + 4,
+                () -> readReserve(dialog) > 0 ? 80 : 0,
+                () -> readReserve(dialog) > 0 ? 28 : 0,
+                () -> scroller.scrollToOffsetImmediately(scroller.targetScrollOffset + Math.max(32, scroller.getHeight() * .8)));
     }
 
-    private static double lineHeight() {
-        return (FontManager.pf14 == null ? 13.0 : FontManager.pf14.getFontHeight()) + 3.0;
+    private boolean compact() { return getHeight() < 540; }
+    private double headerHeight() { return compact() ? 96 : 144; }
+    private double cardTop() { return bodyLines.length * lineHeight() + 12; }
+    private double cardHeight(Panel content) { return Math.max(running() ? 132 : 112,
+            (running() ? 104 : 72) + statusLines.length * captionHeight()); }
+    private static double innerWidth(Panel dialog) { return Math.max(1, dialog.getWidth() - SIDE_INSET * 2); }
+    private static boolean stacked(Panel dialog) { return dialog.getWidth() < 380; }
+    private double baseFooterHeight(Panel dialog) { return stacked(dialog) && showInstallActions() ? 172 : FOOTER_HEIGHT; }
+    private double readReserve(Panel dialog) {
+        return cardTop() + cardHeight(dialog) + 12 > dialog.getHeight() - headerHeight() - baseFooterHeight(dialog) ? 36 : 0;
+    }
+    private double footerHeight(Panel dialog) { return baseFooterHeight(dialog) + readReserve(dialog); }
+    private double actionTop(Panel dialog) { return dialog.getHeight() - baseFooterHeight(dialog) + 12; }
+    private static double actionWidth(Panel dialog) { return stacked(dialog) ? innerWidth(dialog) : Math.max(1, (innerWidth(dialog) - 12) * .5); }
+    private static double lineHeight() { return Math.max(24, FontManager.pf32 == null ? 24 : FontManager.pf32.getFontHeight() + 6); }
+    private static double captionHeight() { return Math.max(18, FontManager.pf25 == null ? 18 : FontManager.pf25.getFontHeight() + 5); }
+    private boolean running() { return FfmpegInstaller.state() == FfmpegInstaller.RUNNING; }
+    private boolean showInstallActions() { return !running() && FfmpegInstaller.state() != FfmpegInstaller.SUCCESS; }
+
+    private String headingText() {
+        int state = FfmpegInstaller.state();
+        if (state == FfmpegInstaller.RUNNING) return "正在安装 FFmpeg";
+        if (state == FfmpegInstaller.SUCCESS) return "FFmpeg 已准备好";
+        if (state == FfmpegInstaller.FAILED) return "这次安装没有完成";
+        return HEADING;
     }
 
-    /**
-     * 状态行文字：每帧由 Label 的取值回调读一次。来源只有两个——浏览器兜底说明（一次性事件，
-     * {@code status} 非空就优先它）和安装流程的当前状态。安装线程只写 volatile 字段，这里只读，
-     * 跨线程不需要任何锁。
-     */
+    private String bodyText() {
+        int state = FfmpegInstaller.state();
+        if (state == FfmpegInstaller.RUNNING) return "关闭提示不会取消后台安装，装好后无需重启。";
+        if (state == FfmpegInstaller.SUCCESS) return "已经重新检测到可用的 FFmpeg，动态封面可以用了。";
+        if (state == FfmpegInstaller.FAILED) return "仍可正常听歌。检查网络后重试安装，或前往官网下载。";
+        return BODY;
+    }
+
+    private String cardHeading() {
+        int state = FfmpegInstaller.state();
+        if (state == FfmpegInstaller.RUNNING) return FfmpegInstaller.progressPercent() >= 100 ? "安装与复测" : "正在下载安装包";
+        if (state == FfmpegInstaller.SUCCESS) return "安装完成";
+        if (state == FfmpegInstaller.FAILED) return "可以重新尝试";
+        return "一键下载并安装";
+    }
+
+    private String progressText() {
+        if (!running()) return "";
+        int percent = FfmpegInstaller.progressPercent();
+        return percent < 0 ? "连接中" : percent >= 100 ? "复测中" : percent + "%";
+    }
+
+    private double downloadProgress() {
+        int percent = FfmpegInstaller.progressPercent();
+        return percent < 0 ? -1 : percent / 100.0;
+    }
+
+    private void startInstall() {
+        if (FfmpegInstaller.state() == FfmpegInstaller.RUNNING) return;
+        status = null;
+        successSeenAt = -1L;
+        FfmpegInstaller.start();
+    }
+
+    /** 浏览器兜底事件优先；安装状态只消费后台线程发布的真实结论。 */
     private String statusText() {
         if (status != null) return status;
         int state = FfmpegInstaller.state();
@@ -415,19 +358,16 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         return HINT_IDLE;
     }
 
-    /** 状态行颜色：成功是唯一的绿色系，失败与进行中用橙色，空闲指引跟着主题的次要文字色。 */
     private int statusColor() {
-        if (status != null) return STATUS_COLOR;
+        NcmExpressivePalette palette = NcmExpressivePalette.live();
+        if (status != null) return palette.warning();
         int state = FfmpegInstaller.state();
-        if (state == FfmpegInstaller.SUCCESS) return SUCCESS_COLOR;
-        if (state == FfmpegInstaller.RUNNING || state == FfmpegInstaller.FAILED) return STATUS_COLOR;
-        return getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+        if (state == FfmpegInstaller.SUCCESS) return palette.success();
+        if (state == FfmpegInstaller.FAILED) return palette.error();
+        if (state == FfmpegInstaller.RUNNING) return palette.containerInk();
+        return palette.muted();
     }
 
-    /**
-     * 按 0.4 秒一颗滚动的省略号；不加的话「正在下载」「正在安装」静得像卡死了。
-     * 解压 98MB 的 exe 加复测可能要十几秒，这一秒的动画差别就是「在干活」与「假死」。
-     */
     private static String progressDots() {
         long elapsed = System.currentTimeMillis() - FfmpegInstaller.startedAtMillis();
         int count = (int) ((elapsed / 400L) % 4L);
@@ -437,11 +377,7 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         return dots.toString();
     }
 
-    /**
-     * 界面侧的看门狗：每帧瞄一眼安装状态。装好后把成功文案多留两秒半再自动收起——立刻消失会让人
-     * 怀疑有没有真装上（用户刚等完一整次下载，确认感值得多花一秒）；失败则停在原地，让用户改走
-     * 「前往下载」。收起走 {@link #cancel()}，与「我才不管呢喵」同一条路。
-     */
+    /** SUCCESS 由安装器完成真正复测后发布；保留 2.6 秒确认感再走同一退场出口。 */
     private void tickInstallWatchdog() {
         if (resolved) return;
         if (FfmpegInstaller.state() != FfmpegInstaller.SUCCESS) return;
@@ -454,78 +390,53 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         }
     }
 
-    private double bodyBlockHeight() {
-        return Math.max(lineHeight(), bodyLines.length * lineHeight());
-    }
-
-    /** 兜底说明那一行的高度恒被预留，见 statusLabel 的注释。 */
-    private double statusTop() {
-        return BODY_TOP + bodyBlockHeight() + BODY_PAD + 3.0;
-    }
-
-    private double actionsTop() {
-        return statusTop() + lineHeight() + 4.0;
-    }
-
-    private double buttonsTop() {
-        return actionsTop() + BUTTONS_TOP_GAP;
-    }
-
-    private double linkTop() {
-        return buttonsTop() + BUTTON_HEIGHT + LINK_GAP;
-    }
-
-    /** 卡片为了装下正文、兜底说明、按钮与链接所需的高度。 */
-    private double contentHeight() {
-        return linkTop() + lineHeight() + CARD_BOTTOM_PAD;
-    }
-
-    /**
-     * 把正文按给定宽度换行。
-     *
-     * <p>字形是按需上传的，没上传的字宽度为 0 —— 那样换行会把整段算成一行。项目里其它需要测量
-     * 文字的地方（{@link ConfirmationOverlay}、{@link ModelInstallNoticeOverlay}）也是这个套路：
-     * 字形没齐之前每帧重算，照常绘制会把字形逐步上传，齐了之后再按宽度缓存结果。</p>
-     */
-    private void wrapBody(double contentWidth) {
-        boolean glyphsReady = FontManager.pf14 != null && FontManager.pf14.areGlyphsLoaded(BODY);
-        if (!wrappedWithLoadedGlyphs || Math.abs(contentWidth - wrappedForWidth) >= .5) {
-            wrappedForWidth = contentWidth;
-            wrappedWithLoadedGlyphs = glyphsReady;
-            String[] lines;
-            try {
-                lines = FontManager.pf14.fitWidth(BODY, contentWidth);
-            } catch (Throwable ignored) {
-                // 换行只是排版，任何异常都不该让一个提示窗打不开。
-                lines = new String[]{BODY};
-            }
-            if (lines == null || lines.length == 0) lines = new String[]{BODY};
-            if (lines.length > MAX_BODY_LINES) {
-                String[] limited = new String[MAX_BODY_LINES];
-                System.arraycopy(lines, 0, limited, 0, MAX_BODY_LINES);
-                limited[MAX_BODY_LINES - 1] = FontManager.pf14.trim(
-                        limited[MAX_BODY_LINES - 1], Math.max(1, contentWidth - 8)) + "…";
-                lines = limited;
-            }
-            bodyLines = lines;
+    private void wrapBody(double width) {
+        String source = bodyText();
+        CFontRenderer font = FontManager.pf32;
+        long revision = font == null ? -1 : font.metricsRevision();
+        boolean ready = font != null && font.areGlyphsLoaded(source);
+        if (!wrappedWithLoadedGlyphs || !source.equals(wrappedBody)
+                || revision != wrappedBodyRevision || Math.abs(width - wrappedForWidth) >= .5) {
+            bodyLines = wrap(font, source, width, MAX_BODY_LINES);
+            wrappedBody = source;
+            wrappedForWidth = width;
+            wrappedBodyRevision = revision;
+            wrappedWithLoadedGlyphs = ready;
         }
     }
 
-    /**
-     * 「前往下载」：先尝试打开系统浏览器，打不开就把地址放进剪贴板并把说明显示出来。
-     *
-     * <p>先用反射走 {@code java.awt.Desktop}（和原版 {@code GuiScreen.openWebLink} 同一条路：
-     * 反射是为了不在错误的时机把 AWT 类加载进来），失败再退到 LWJGL 的 {@code Sys.openURL}。</p>
-     */
+    private void wrapStatus(double width) {
+        String source = statusText();
+        CFontRenderer font = FontManager.pf25;
+        long revision = font == null ? -1 : font.metricsRevision();
+        boolean ready = font != null && font.areGlyphsLoaded(source);
+        if (!wrappedStatusGlyphs || !source.equals(wrappedStatus)
+                || revision != wrappedStatusRevision || Math.abs(width - wrappedStatusWidth) >= .5) {
+            statusLines = wrap(font, source, width, Integer.MAX_VALUE);
+            wrappedStatus = source;
+            wrappedStatusWidth = width;
+            wrappedStatusRevision = revision;
+            wrappedStatusGlyphs = ready;
+        }
+    }
+
+    private static String[] wrap(CFontRenderer font, String source, double width, int maximum) {
+        if (font == null) return new String[]{source};
+        String[] lines = NcmExpressive.wrap(font, source, width);
+        if (lines == null || lines.length == 0) return new String[]{source};
+        if (lines.length <= maximum) return lines;
+        String[] limited = new String[maximum];
+        System.arraycopy(lines, 0, limited, 0, maximum);
+        limited[maximum - 1] = font.trim(limited[maximum - 1], Math.max(1, width - 8)) + "…";
+        return limited;
+    }
+
     private void openDownloadPage() {
         if (browse(FfmpegNotice.DOWNLOAD_URL)) {
             cancel();
             return;
         }
-        // 打不开浏览器（无桌面环境 / 被沙箱拦住）时把地址塞进剪贴板，别让用户照着抄。
         KeyboardUtils.setClipboardString(FfmpegNotice.DOWNLOAD_URL);
-        // 剪贴板兜底文案必须短：URL 是这行的关键信息，状态行单行截断会把超宽文案的尾巴
-        // （恰好是地址）吃掉，兜底就白兜了。地址在剪贴板里，这行只要说清这件事。
         status = "打不开浏览器喵，下载地址已复制到剪贴板";
     }
 

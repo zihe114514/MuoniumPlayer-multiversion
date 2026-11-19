@@ -21,6 +21,12 @@ class PresetPolicyCompletenessTest {
         assertCovered("folia defaults", find("foliaBg").policy(), FoliaBackgroundConfig.defaultsJson());
     }
     @Test void 卡点运镜每个落盘键都已归类() { assertCovered("cine", find("cine").policy(), CineSettings.defaultsJson()); }
+    @Test void 环境镜头比例归入运镜分面并追加分享编号() {
+        PresetDomain cine = find("cine");
+        assertNotNull(cine.policy().rule("environmentShotPercent"));
+        assertEquals(Facet.CAMERA, cine.policy().rule("environmentShotPercent").facet());
+        assertEquals(18, cine.shareKeys().indexOf("environmentShotPercent"));
+    }
     @Test void 其余配置域的出厂视图与策略一致() {
         for (String id : new String[]{"theme", "font", "transparent", "acoustics", "viper"}) assertCovered(id, find(id).policy(), find(id).defaults());
     }

@@ -16,6 +16,9 @@ import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.PlayerIconAssets;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.WeakHashMap;
 import java.util.function.DoubleSupplier;
 
 /**
@@ -37,7 +40,7 @@ import java.util.function.DoubleSupplier;
  *       把宽度对齐（19.2 × 1.15 ≈ 22），再同心到描边那枚上。</li>
  * </ul>
  */
-final class LikeButton {
+public final class LikeButton {
 
     /** 描边那枚的边长。宿主排自己那一排时按这个宽度算间距。 */
     static final double BOX = 20.0;
@@ -108,84 +111,157 @@ final class LikeButton {
         return likeable;
     }
 
-    /**
-     * 喜欢 / 取消收藏这一个动作唯一的家。网易云改本地红心表再异步回写，B 站走它自己的收藏夹，
-     * 其余按酷狗处理；两边的失败都要把本地判断回滚掉，否则界面会停在一颗点亮的红心上，
-     * 而服务器那边什么都没发生。
-     *
-     * @param burst 播一次爆心动画的那枚控件；宿主没有动画时传 {@code null}，只走数据那一半。
-     */
+    /** 同一首歌的曲行、FM 与灵动岛共用请求占位和确认票据。 */
+    private static final PendingLikes PENDING = new PendingLikes();
+
+    @FunctionalInterface
+    public interface ConfirmationHost {
+        void open(String title, String message, String confirmText, Runnable onConfirm);
+    }
+
+    /** @param burst 爆心动画的控件；没有动画时传 {@code null}。 */
     static boolean toggleLiked(Music music, AnimatedSvgWidget burst) {
+        return toggleLiked(music, burst == null ? null
+                : () -> burst.setPlayback(AnimatedIcons.likeBurst()),
+                (title, message, confirmText, onConfirm) -> NCMScreen.getInstance()
+                        .openConfirmation(title, message, confirmText, onConfirm));
+    }
+
+    /**
+     * 歌曲行与灵动岛共用数据动作；在客户端线程调用，确认与爆心由各自可见的宿主承接。
+     * 同曲请求完成并在客户端线程处理结果前，重复点击只消费事件，不发相反请求。
+     */
+    public static boolean toggleLiked(Music music, Runnable onLiked, ConfirmationHost confirmation) {
+        if (!canFavourite(music)) return false;
+        String key = music.getStableKey();
+        if (PENDING.isPending(key)) return true;
         if (!isLiked(music)) {
-            if (burst != null) {
-                // 换一条新的一次性时钟：这一枚控件记的是自己那条墙上时钟的起点，不重开的话
-                // 第二次点心就不会再有粒子。走完停在 .47，正好就是平时那张常驻的实心帧。
-                burst.setPlayback(AnimatedIcons.likeBurst());
-            }
-            if (music.isNetease()) {
-                if (CloudMusic.likeList != null && !CloudMusic.likeList.contains(music.getId())) {
-                    CloudMusic.likeList.add(music.getId());
-                }
-                MultiThreadingUtil.runAsync(() -> music.setLike(true));
-            } else if (music.isQishui()) {
-                QishuiMusicService.noteTrackLikedLocal(music.getSourceId(), true);
-                MultiThreadingUtil.runAsync(() -> {
-                    if (!QishuiMusicService.setTrackLiked(music.getSourceId(), true)) {
-                        QishuiMusicService.noteTrackLikedLocal(music.getSourceId(), false);
-                    }
-                });
-            } else if (music.isBilibili()) {
-                noteBilibiliFavoured(music, true);
-                MultiThreadingUtil.runAsync(() -> {
-                    if (!BilibiliFavoriteService.setFavourite(music, true)) {
-                        noteBilibiliFavoured(music, false);
-                    }
-                });
-            } else {
-                noteKuGouLiked(music, true);
-                MultiThreadingUtil.runAsync(() -> {
-                    boolean ok = KuGouMusicService.likeTrack(music);
-                    if (!ok) noteKuGouLiked(music, false);
-                });
-            }
+            Object request = PENDING.begin(key, null);
+            if (request != null) changeLiked(music, key, request, true, onLiked);
             return true;
         }
 
-        NCMScreen.getInstance().openConfirmation(
+        if (confirmation == null) return false;
+        Object ticket = PENDING.confirmation(key);
+        if (ticket == null) return true;
+        confirmation.open(
                 "取消收藏歌曲？",
                 music.isBilibili()
                         ? "取消后，这首稿件将从你的默认收藏夹中移除。"
                         : "取消后，这首歌曲将从“我喜欢的音乐”中移除。",
                 "取消收藏",
                 () -> {
-                    if (music.isNetease()) {
-                        if (CloudMusic.likeList != null) {
-                            CloudMusic.likeList.remove(music.getId());
-                        }
-                        MultiThreadingUtil.runAsync(() -> music.setLike(false));
-                    } else if (music.isQishui()) {
-                        QishuiMusicService.noteTrackLikedLocal(music.getSourceId(), false);
-                        MultiThreadingUtil.runAsync(() -> {
-                            if (!QishuiMusicService.setTrackLiked(music.getSourceId(), false)) {
-                                QishuiMusicService.noteTrackLikedLocal(music.getSourceId(), true);
-                            }
-                        });
-                    } else if (music.isBilibili()) {
-                        noteBilibiliFavoured(music, false);
-                        MultiThreadingUtil.runAsync(() -> {
-                            if (!BilibiliFavoriteService.setFavourite(music, false)) {
-                                noteBilibiliFavoured(music, true);
-                            }
-                        });
-                    } else {
-                        noteKuGouLiked(music, false);
-                        MultiThreadingUtil.runAsync(() -> {
-                            boolean ok = KuGouMusicService.unlikeTrack(music);
-                            if (!ok) noteKuGouLiked(music, true);
-                        });
-                    }
+                    if (!key.equals(music.getStableKey()) || !canFavourite(music) || !isLiked(music)) return;
+                    Object request = PENDING.begin(key, ticket);
+                    if (request != null) changeLiked(music, key, request, false, null);
                 });
         return true;
+    }
+
+    private static void changeLiked(Music music, String key, Object request, boolean liked, Runnable onLiked) {
+        boolean submitted = false;
+        try {
+            if (onLiked != null) onLiked.run();
+            noteLiked(music, liked);
+            MultiThreadingUtil.runAsync(() -> {
+                boolean completed = false;
+                try {
+                    completed = writeLiked(music, liked);
+                    if (!completed) {
+                        MultiThreadingUtil.LOGGER.warn("Favourite request failed for {} (liked={})", key, liked);
+                    }
+                } finally {
+                    boolean rollback = !completed;
+                    MultiThreadingUtil.runOnMainThread(() -> finishLiked(music, key, request, liked, rollback));
+                }
+            }).whenComplete((unused, failure) -> {
+                if (failure != null) MultiThreadingUtil.LOGGER.catching(failure);
+            });
+            submitted = true;
+        } finally {
+            // 动画、乐观写入或提交任务抛错也不能留下永久占位；原异常继续向调用方传播。
+            if (!submitted) {
+                MultiThreadingUtil.runOnMainThread(() -> finishLiked(music, key, request, liked, true));
+            }
+        }
+    }
+
+    /** 这里只表示没有已知失败；网易云的 void 入口不能证明上游确认成功。 */
+    private static boolean writeLiked(Music music, boolean liked) {
+        if (music.isNetease()) {
+            music.setLike(liked);
+            return true;
+        }
+        if (music.isQishui()) return QishuiMusicService.setTrackLiked(music.getSourceId(), liked);
+        if (music.isBilibili()) return BilibiliFavoriteService.setFavourite(music, liked);
+        if (music.isKuGou()) return liked ? KuGouMusicService.likeTrack(music) : KuGouMusicService.unlikeTrack(music);
+        return false;
+    }
+
+    /** 仅由客户端线程执行；回滚仍须属于这次请求，且不能覆盖已改变的本地判断。 */
+    private static void finishLiked(Music music, String key, Object request, boolean liked, boolean rollback) {
+        if (!PENDING.owns(key, request)) return;
+        try {
+            if (rollback && key.equals(music.getStableKey()) && isLiked(music) == liked) {
+                noteLiked(music, !liked);
+            }
+        } finally {
+            PENDING.finish(key, request);
+        }
+    }
+
+    private static void noteLiked(Music music, boolean liked) {
+        if (music.isNetease()) {
+            var likes = CloudMusic.likeList;
+            if (likes != null) {
+                if (liked) {
+                    if (!likes.contains(music.getId())) likes.add(music.getId());
+                } else {
+                    likes.remove(music.getId());
+                }
+            }
+        } else if (music.isQishui()) {
+            QishuiMusicService.noteTrackLikedLocal(music.getSourceId(), liked);
+        } else if (music.isBilibili()) {
+            noteBilibiliFavoured(music, liked);
+        } else if (music.isKuGou()) {
+            noteKuGouLiked(music, liked);
+        }
+    }
+
+    /** 确认框可取消而没有通知，因此弱持有票据；只有实际请求才占 pending。 */
+    static final class PendingLikes {
+        private final Map<String, Object> pending = new HashMap<>();
+        private final Map<Object, String> confirmations = new WeakHashMap<>();
+
+        synchronized boolean isPending(String key) {
+            return pending.containsKey(key);
+        }
+
+        synchronized Object confirmation(String key) {
+            if (pending.containsKey(key)) return null;
+            Object ticket = new Object();
+            confirmations.put(ticket, key);
+            return ticket;
+        }
+
+        synchronized Object begin(String key, Object ticket) {
+            if (pending.containsKey(key)) return null;
+            if (ticket != null && !key.equals(confirmations.get(ticket))) return null;
+            // 即使本次失败后红心回到了原值，旧确认也不能重新生效。
+            confirmations.values().removeIf(key::equals);
+            Object request = new Object();
+            pending.put(key, request);
+            return request;
+        }
+
+        synchronized boolean owns(String key, Object request) {
+            return pending.get(key) == request;
+        }
+
+        synchronized void finish(String key, Object request) {
+            pending.remove(key, request);
+        }
     }
 
     /**
@@ -194,7 +270,7 @@ final class LikeButton {
      * <p>只读本地状态，绝不在这里发请求：这个方法每帧、每一行都要问一次，挂上去就是每帧一次
      * 网络往返。酷狗读 {@link KuGouLikedCache}，B 站读它自己的本地会话记忆。</p>
      */
-    static boolean isLiked(Music music) {
+    public static boolean isLiked(Music music) {
         if (music == null) return false;
         if (music.isNetease()) {
             return CloudMusic.likeList != null && CloudMusic.likeList.contains(music.getId());
@@ -218,7 +294,7 @@ final class LikeButton {
      * <p>B 站的收藏落在它自己的收藏夹上，和网易云那套是两条链路；而且没扫码时写入必然失败，
      * 与其点了闪一下又弹回来，不如不画。</p>
      */
-    static boolean canFavourite(Music music) {
+    public static boolean canFavourite(Music music) {
         if (music == null) return false;
         if (music.isQishui()) {
             return QishuiMusicService.isLoggedIn() && !QishuiMusicService.isReauthRequired();

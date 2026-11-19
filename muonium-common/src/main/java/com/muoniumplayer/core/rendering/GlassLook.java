@@ -49,9 +49,8 @@ public final class GlassLook {
         /** 播放器主面板（含它自己的二级弹窗，因为它们共用同一块底）。 */
         PLAYER,
         /**
-         * 顶部灵动岛。八款样式里有七款吃这一档（经典胶囊、通透玻璃、紧凑状态、浮层卡片、
-         * 系统通知、音乐聚焦共用 {@code drawIsland} 那一步铺底，液态玻璃在自己的 surface 里
-         * 铺同一档）；回弹胶囊除外——那是作者另一份稿子的 1:1 复刻，纯色平面是它造型的一部分。
+         * 顶部灵动岛。经典胶囊、紧凑状态共用 {@code drawIsland} 铺底，液态玻璃与音乐胶囊
+         * 在各自的绘制路径铺同一档；回弹胶囊保留自己的纯色平面。
          */
         ISLAND,
         /** 桌面歌词卡片（Blossom 那套毛玻璃面板）。 */
@@ -125,6 +124,29 @@ public final class GlassLook {
         float sigma = Math.min(blurSigma(Surface.PLAYER), 12f);
         return SkijaEffects.frostedBackdropCached(x, y, width, height, radius, sigma, amount);
     }
+    /** 聊天音乐卡使用高斯模糊，不受播放器主题限制，也不调用液态折射着色器。 */
+    public static boolean paintMusicCardFrost(double x, double y, double width, double height,
+                                              double radius, float opacity) {
+        if (GlassMobileTier.active() || PlayerIslandTransition.isRunning() || opacity <= .001f) return false;
+        boolean previousTopmost = GlassBackdrop.pushTopmost();
+        try {
+            // 与全局“背景模糊”零值保持一致；默认0.75对应手机卡片柔化尺度12。
+            float configured = GlassBackdrop.blurSigma();
+            float sigma = configured <= 0f ? 0f : Math.min(24f, configured * 16f);
+            return SkijaEffects.frostedBackdropCachedClipped(x, y, width, height, sigma, opacity);
+        } finally {
+            GlassBackdrop.popTopmost(previousTopmost);
+        }
+    }
+
+    /** 音乐卡转入播放器时继续沿用已缓存的高斯底图，不在形变帧新建透镜。 */
+    public static boolean paintMusicCardTransitionFrost(double x, double y, double width, double height, double radius) {
+        if (GlassMobileTier.active()) return false;
+        float configured = GlassBackdrop.blurSigma();
+        float sigma = configured <= 0f ? 0f : Math.min(24f, configured * 16f);
+        return SkijaEffects.frostedBackdropCachedClipped(x, y, width, height, sigma, 1f);
+    }
+
     /**
      * 兼容的历史方法名；现在绘制整面透镜折射，不再绘制磨砂底。
      *

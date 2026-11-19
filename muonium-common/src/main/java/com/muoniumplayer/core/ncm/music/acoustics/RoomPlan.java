@@ -1,84 +1,49 @@
 package com.muoniumplayer.core.ncm.music.acoustics;
 
 /**
- * 一轮推导的最终交付:音频网络该呈现的完整「房间」。由 {@link SceneResponse}
- * 在采样线程构建,经 volatile 引用交接给音频线程 —— 不可变,建好后不许改。
- *
- * <p>四个声学量(频带/湿声/响度/干声)之外,逐频带衰减时长是物理混响的核心:
- * 低/中/高三段独立 T60 驱动 FDN 尾的阻尼滤波(真房间低频留得久、高频被软面
- * 吃掉,一套 decaySec 表达不了);早期反射抽头随计划一起交付:抽头延迟是整数
- * 毫秒量化的采样位置、能量已归一并分配到双耳,音频线程只管读。</p>
+ * 一轮推导的完整声场。采样线程构建,通过一个 volatile 引用交给音频线程。
+ * 数值与抽头数组在构造时校验并复制,交接后不再改写。
  */
 public final class RoomPlan {
 
     public final double bandHz;
-    /** 湿声总量 0..1(尾部网络的驱动量;已含强度)。 */
+    /** 湿声总量 0..1,已含场景强度与传播稀释。 */
     public final float wet;
-    /** 干声系数(响度 × 干声让位;已含强度)。 */
+    /** 干声系数:整体响度 × 混响让位。 */
     public final float dryGain;
-    /** 整体响度系数 0..1(浸液/降水;1 = 不衰减)。 */
+    /** 浸液/降水的整体响度,也作用于湿声。 */
     public final float loudness;
-    /** 预延迟(秒):尾部网络的直湿间隔。 */
     public final float predelaySec;
-    /** 衰减时长(秒):中频带 T60;直方图拟合失败时的解析兜底。0 = 静息。 */
     public final float decaySec;
-    /** 音色 0..1(额外的高频让位,叠加在三频带 T60 之上;大 = 更暗)。 */
     public final float tone;
-    /** 低频带衰减时长(秒):低频比中频留得久(小房间模态、大房间混响都如此)。 */
     public final float decayLowSec;
-    /** 高频带衰减时长(秒):软面(羊毛/沙)高频衰减明显更快。 */
     public final float decayHighSec;
-    /** 扩散度 0..1:直方图有能量桶占比 —— 驱动 FDN 混合(离散回声 vs 漫散射)。 */
     public final float diffusion;
 
-    /** 早期反射抽头(左右能量已按等功率声像分好);空数组 = 没有抽头。 */
+    /** 相对直线传播时间的早期反射,分耳增益已按等功率声像分配。 */
     public final int tapCount;
     public final float[] tapDelaySec;
     public final float[] tapGainL;
     public final float[] tapGainR;
 
-    /** 直达声总增益 0..1(距离 × 遮挡);1 = 无声源或贴脸(不衰减)。 */
+    /** 距离 × 遮挡/绕射的直射增益,两种渲染后端共用。 */
     public final float directGain;
-    /** 直达声低通截止(Hz);≥20000 = 不压(无声源/近场无遮挡)。 */
     public final double directCutoffHz;
-    /** 直达声像 −1(源在左)..1(源在右)。 */
     public final float directPan;
-    /** 直达路程(米):抽头相对时序的基准(渲染里直达零延迟)。 */
+    /** 源到耳的直线距离,反射相对时序的基准。 */
     public final float directDistanceMeters;
-    /**
-     * 世界声源模式下湿声走 OpenAL EAX Reverb 总线(探针参数直驱);
-     * false = 自研 FDN 链(无声源/安卓/总线不可用)。EAX 参数由
-     * {@code SceneResponse} 从同一份几何推导,音频线程逐缓冲下放。
-     */
+    /** 实际直射路径长度:绕射时包含额外出程,用于传播延迟。 */
+    public final float directPathMeters;
+    /** 保留既有字段名;现在仅请求 HRTF 直射,湿声始终走 ER + FDN。 */
     public final boolean useOpenAlReverb;
-    /** EAX 混响 HF 衰减比(0.1..2):反射率越低(软面)尾越暗。 */
     public final float reverbDecayHfRatio;
-    /** EAX 混响 diffusion 0..1:材质粗糙度 —— 岩壁亮面 vs 羊毛漫射。 */
     public final float reverbDiffusion;
-    /** 有没有音箱锚点(false = 玩家即声源:source 贴头零衰减零方向)。 */
     public final boolean hasSpeakerAnchor;
-    /**
-     * 本计划的过渡时长(秒):音频线程按它决定朝目标收敛的快慢。
-     *
-     * <p>跨房间(围合度/衰减大跨度跳变)要快 —— 走进山洞的听感必须跟得上
-     * 脚步,慢了就是「人已经进去了,回响还在路上」;而房间内的微小抖动
-     * 要慢,否则参数一直追着噪声跑,听感发毛。行业做法就是按变化幅度
-     * 选时间常数(Wwise 的 Snapshot 过渡时间可配,跨房间 1.5s、小变化
-     * 200ms)。</p>
-     *
-     * <p>0 = 用音频线程的默认值(修前行为)。</p>
-     */
+    /** 0 = 使用音频线程的默认收敛时间。 */
     public final float transitionSec;
-
-    /**
-     * 直达声是否走了绕射路径(源→遮挡边缘→耳)。
-     *
-     * <p>只作诊断口径:<b>声学量已经折进</b> {@link #directGain} /
-     * {@link #directCutoffHz} / {@link #directPan}(绕射成立时它们是绕射路径
-     * 的值,不是穿透值)。渲染链不需要为它分支。</p>
-     */
+    /** 主直射路径确实选用了绕射,不是仅仅找到候选路径。 */
     public final boolean diffracted;
-    /** 声源世界坐标(EAX 总线的 3D 定位;无声源 0,0,0)。 */
+    /** 直射的到达方向坐标;绕射时为墙角/门缝,否则为音箱锚点。 */
     public final double speakerX;
     public final double speakerY;
     public final double speakerZ;
@@ -124,7 +89,6 @@ public final class RoomPlan {
                 hasSpeakerAnchor, speakerX, speakerY, speakerZ, 0f, false);
     }
 
-    /** 完整构造:多一个过渡时长(0 = 用音频线程默认值)。 */
     public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
                     float predelaySec, float decaySec, float tone,
                     float decayLowSec, float decayHighSec, float diffusion,
@@ -143,7 +107,6 @@ public final class RoomPlan {
                 hasSpeakerAnchor, speakerX, speakerY, speakerZ, transitionSec, false);
     }
 
-    /** 完整构造:多一个过渡时长(0 = 用音频线程默认值)与绕射标记。 */
     public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
                     float predelaySec, float decaySec, float tone,
                     float decayLowSec, float decayHighSec, float diffusion,
@@ -154,42 +117,87 @@ public final class RoomPlan {
                     boolean hasSpeakerAnchor,
                     double speakerX, double speakerY, double speakerZ,
                     float transitionSec, boolean diffracted) {
-        this.bandHz = bandHz;
-        this.wet = wet;
-        this.dryGain = dryGain;
-        this.loudness = loudness;
-        this.predelaySec = predelaySec;
-        this.decaySec = decaySec;
-        this.tone = tone;
-        this.decayLowSec = decayLowSec;
-        this.decayHighSec = decayHighSec;
-        this.diffusion = diffusion;
-        this.tapCount = tapDelaySec.length;
-        this.tapDelaySec = tapDelaySec;
-        this.tapGainL = tapGainL;
-        this.tapGainR = tapGainR;
-        this.directGain = directGain;
-        this.directCutoffHz = directCutoffHz;
-        this.directPan = directPan;
-        this.directDistanceMeters = directDistanceMeters;
-        this.useOpenAlReverb = useOpenAlReverb;
-        this.reverbDecayHfRatio = reverbDecayHfRatio;
-        this.reverbDiffusion = reverbDiffusion;
-        this.hasSpeakerAnchor = hasSpeakerAnchor;
-        this.transitionSec = Math.max(0f, transitionSec);
-        this.diffracted = diffracted;
-        this.speakerX = speakerX;
-        this.speakerY = speakerY;
-        this.speakerZ = speakerZ;
+        this(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
+                decayLowSec, decayHighSec, diffusion,
+                tapDelaySec, tapGainL, tapGainR,
+                directGain, directCutoffHz, directPan, directDistanceMeters,
+                useOpenAlReverb, reverbDecayHfRatio, reverbDiffusion,
+                hasSpeakerAnchor, speakerX, speakerY, speakerZ,
+                transitionSec, diffracted, directDistanceMeters);
     }
 
-    /** 静息计划:直通。 */
+    public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
+                    float predelaySec, float decaySec, float tone,
+                    float decayLowSec, float decayHighSec, float diffusion,
+                    float[] tapDelaySec, float[] tapGainL, float[] tapGainR,
+                    float directGain, double directCutoffHz, float directPan,
+                    float directDistanceMeters,
+                    boolean useOpenAlReverb, float reverbDecayHfRatio, float reverbDiffusion,
+                    boolean hasSpeakerAnchor,
+                    double speakerX, double speakerY, double speakerZ,
+                    float transitionSec, boolean diffracted, float directPathMeters) {
+        this.bandHz = finiteClamp(bandHz, SceneAcoustics.bandFloorHz(),
+                SceneAcoustics.bandOpenHz(), SceneAcoustics.bandOpenHz());
+        this.wet = (float) finiteClamp(wet, 0, 1, 0);
+        this.dryGain = (float) finiteClamp(dryGain, 0, 1, 1);
+        this.loudness = (float) finiteClamp(loudness, 0, 1, 1);
+        this.predelaySec = (float) finiteClamp(predelaySec, 0, 0.060, 0);
+        this.decaySec = (float) finiteClamp(decaySec, 0, 5.6, 0);
+        this.tone = (float) finiteClamp(tone, 0.10, 0.45, SceneResponse.NEUTRAL_TONE);
+        this.decayLowSec = (float) finiteClamp(decayLowSec, 0, 5.6, 0);
+        this.decayHighSec = (float) finiteClamp(decayHighSec, 0, 5.6, 0);
+        this.diffusion = (float) finiteClamp(diffusion, 0, 1, 1);
+        this.tapCount = Math.min(192, Math.min(length(tapDelaySec),
+                Math.min(length(tapGainL), length(tapGainR))));
+        this.tapDelaySec = new float[tapCount];
+        this.tapGainL = new float[tapCount];
+        this.tapGainR = new float[tapCount];
+        for (int i = 0; i < tapCount; i++) {
+            this.tapDelaySec[i] = (float) finiteClamp(tapDelaySec[i], 0, 0.24, 0);
+            this.tapGainL[i] = (float) finiteClamp(tapGainL[i], 0, 2, 0);
+            this.tapGainR[i] = (float) finiteClamp(tapGainR[i], 0, 2, 0);
+        }
+        this.directGain = (float) finiteClamp(directGain, 0, 1, 1);
+        this.directCutoffHz = finiteClamp(directCutoffHz, 200, DirectPath.FC_OPEN, DirectPath.FC_OPEN);
+        this.directPan = DirectPath.clampPan(directPan);
+        this.directDistanceMeters = (float) finiteClamp(directDistanceMeters, 0, 160, 0);
+        this.directPathMeters = (float) finiteClamp(directPathMeters,
+                this.directDistanceMeters, 168, this.directDistanceMeters);
+        this.reverbDecayHfRatio = (float) finiteClamp(reverbDecayHfRatio, 0.1, 2, 1);
+        this.reverbDiffusion = (float) finiteClamp(reverbDiffusion, 0, 1, 0.5);
+        this.hasSpeakerAnchor = hasSpeakerAnchor && Double.isFinite(speakerX)
+                && Double.isFinite(speakerY) && Double.isFinite(speakerZ);
+        this.useOpenAlReverb = useOpenAlReverb && this.hasSpeakerAnchor;
+        this.transitionSec = (float) finiteClamp(transitionSec, 0, 1.2, 0);
+        this.diffracted = diffracted && this.hasSpeakerAnchor;
+        this.speakerX = this.hasSpeakerAnchor ? speakerX : 0;
+        this.speakerY = this.hasSpeakerAnchor ? speakerY : 0;
+        this.speakerZ = this.hasSpeakerAnchor ? speakerZ : 0;
+    }
+
+    /** 只补过渡时长,不丢绕射标记、到达方向或路径长度。 */
+    public RoomPlan withTransition(float seconds) {
+        return new RoomPlan(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
+                decayLowSec, decayHighSec, diffusion, tapDelaySec, tapGainL, tapGainR,
+                directGain, directCutoffHz, directPan, directDistanceMeters,
+                useOpenAlReverb, reverbDecayHfRatio, reverbDiffusion,
+                hasSpeakerAnchor, speakerX, speakerY, speakerZ,
+                seconds, diffracted, directPathMeters);
+    }
+
+    private static int length(float[] values) {
+        return values == null ? 0 : values.length;
+    }
+
+    private static double finiteClamp(double value, double min, double max, double fallback) {
+        return Double.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+    }
+
+    /** 静息计划:不改变音乐。 */
     public static RoomPlan idle() {
         return new RoomPlan(SceneAcoustics.bandOpenHz(), 0f, 1f, 1f, 0f, 0f,
                 SceneResponse.NEUTRAL_TONE, 0f, 0f, 1f,
-                new float[0], new float[0], new float[0],
-                1f, DirectPath.FC_OPEN, 0f, 0f,
-                false, 1f, 0.5f, false, 0, 0, 0);
+                new float[0], new float[0], new float[0]);
     }
 
     @Override

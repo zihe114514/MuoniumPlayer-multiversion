@@ -2,6 +2,7 @@ package com.muoniumplayer.core.utils.network;
 
 import java.io.BufferedInputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,7 +15,9 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntConsumer;
@@ -69,6 +72,8 @@ public final class HttpDownloadRace {
     static final int CONNECT_TIMEOUT_MILLIS = 20_000;
     /** 单路读空闲超时（与各下载器旧值一致）：60 秒一个字节都没到才算这路挂了。 */
     static final int READ_TIMEOUT_MILLIS = 60_000;
+    /** 跨竞速轮次的网络恢复退避上限。 */
+    static final long MAX_RETRY_BACKOFF_MILLIS = 5L * 60L * 1_000L;
     /** 最多跟 6 跳重定向（镜像会 30x 到 CDN）。 */
     private static final int MAX_REDIRECTS = 6;
     /** 临时文件后缀 + 槽位：{@code <目标>.race<N>}。 */
@@ -138,6 +143,40 @@ public final class HttpDownloadRace {
      */
     public static Winner fetch(List<String> urls, long expectedBytes, String expectedSha256,
                                File target, IntConsumer onProgress) throws IOException {
+        validate(urls, expectedBytes, expectedSha256, target);
+        ACTIVE_DOWNLOADS.incrementAndGet();
+        AtomicLong leaderBytes = new AtomicLong(0L);
+        int retry = 0;
+        try {
+            while (true) {
+                try {
+                    Winner winner = fetchRound(urls, expectedBytes, expectedSha256, target, leaderBytes, onProgress);
+                    lastNetworkFailure = "";
+                    return winner;
+                } catch (RetryableDownloadException transientFailure) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        throw new IOException("下载已停止；已收数据保留供下次继续", transientFailure);
+                    }
+                    long delay = retryDelayMillis(retry++);
+                    lastNetworkFailure = safeMessage(transientFailure);
+                    ACTIVE_NETWORK_RETRIES.incrementAndGet();
+                    try {
+                        Thread.sleep(delay);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("下载已停止；已收数据保留供下次继续", interrupted);
+                    } finally {
+                        ACTIVE_NETWORK_RETRIES.decrementAndGet();
+                    }
+                }
+            }
+        } finally {
+            ACTIVE_DOWNLOADS.decrementAndGet();
+        }
+    }
+
+    private static void validate(List<String> urls, long expectedBytes, String expectedSha256,
+                                 File target) throws IOException {
         if (urls == null || urls.isEmpty()) {
             throw new IOException("镜像列表为空");
         }
@@ -148,12 +187,16 @@ public final class HttpDownloadRace {
         if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.isDirectory()) {
             throw new IOException("建不了下载目录：" + parent);
         }
+    }
+
+    private static Winner fetchRound(List<String> urls, long expectedBytes, String expectedSha256,
+                                    File target, AtomicLong leaderBytes, IntConsumer onProgress) throws IOException {
 
         final int count = urls.size();
         List<AtomicReference<String>> failures = new ArrayList<AtomicReference<String>>(count);
         // 冠军闸：第一条完整通过校验的路 CAS 成功，其余路看到闸落下就退场。
         AtomicBoolean settled = new AtomicBoolean(false);
-        AtomicLong leaderBytes = new AtomicLong(0L);
+        Object winnerLock = new Object();
         AtomicReference<String> winnerUrl = new AtomicReference<>();
         // 每路的失败记录与线程在 spawn 时登记；join 只覆盖「实际启动过」的线程。
         final AtomicReference<String>[] failureRefs = new AtomicReference[count];
@@ -179,19 +222,19 @@ public final class HttpDownloadRace {
                         if (failure.get() != null) {
                             return;
                         }
-                        // 这一路完整通过了校验。抢冠：抢到的人原子改名、记 URL；没抢到的退场。
-                        if (settled.compareAndSet(false, true)) {
-                            Files.move(part.toPath(), target.toPath(),
-                                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-                            winnerUrl.set(url);
-                        } else {
-                            failure.set("别路先到，本路到终点了也没用");
+                        synchronized (winnerLock) {
+                            if (!settled.get()) {
+                                Files.move(part.toPath(), target.toPath(),
+                                        StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                                winnerUrl.set(url);
+                                settled.set(true);
+                            } else {
+                                failure.set("别路先到，本路到终点了也没用");
+                            }
                         }
                     } catch (Throwable thrown) {
                         failure.set(thrown.getClass().getSimpleName()
                                 + (thrown.getMessage() == null ? "" : (": " + thrown.getMessage())));
-                    } finally {
-                        deleteQuietly(part);
                     }
                 }
             }, "muonium-download-race-" + (slot + 1));
@@ -271,13 +314,27 @@ public final class HttpDownloadRace {
 
         String winner = winnerUrl.get();
         if (winner == null) {
+            boolean retryable = false;
+            String firstRetryable = null;
             for (int index = 0; index < count; index++) {
                 if (allWorkers[index] != null && started.contains(allWorkers[index])) {
+                    String failure = failureRefs[index].get();
                     System.out.println("[MuoniumPlayer/DownloadRace] 源 " + (index + 1)
-                            + "（" + hostOf(urls.get(index)) + "）：" + failureRefs[index].get());
+                            + "（" + hostOf(urls.get(index)) + "）:" + failure);
+                    if (isRetryable(failure) && !isReservedInvalidHost(urls.get(index))) {
+                        retryable = true;
+                        if (firstRetryable == null) firstRetryable = failure;
+                    }
                 }
             }
+            if (retryable) {
+                throw new RetryableDownloadException(firstRetryable == null
+                        ? "镜像暂时不可用" : firstRetryable);
+            }
             throw new IOException("全部已启动的 " + started.size() + " 条线路都失败了（详见上方日志）");
+        }
+        for (int index = 0; index < count; index++) {
+            if (started.contains(allWorkers[index])) deleteQuietly(partFile(target, index));
         }
         return new Winner(winner, expectedBytes);
     }
@@ -312,9 +369,19 @@ public final class HttpDownloadRace {
      * 会自动挂 {@code Range} 从断点接上，不是从头再来。</p>
      */
     private static final int PER_MIRROR_ATTEMPTS = 3;
-
-    /** 单路重试之间的退避基数：第 n 次失败后等 {@code n * 该值} 毫秒。 */
     static final long RETRY_BACKOFF_MILLIS = 400L;
+
+    private static final AtomicInteger ACTIVE_DOWNLOADS = new AtomicInteger();
+    private static final AtomicInteger ACTIVE_NETWORK_RETRIES = new AtomicInteger();
+    private static volatile String lastNetworkFailure = "";
+
+    /** 下载菜单可读取的任务与网络恢复状态。 */
+    public record NetworkState(int activeTasks, int waitingTasks, String lastFailure) {
+    }
+
+    public static NetworkState networkState() {
+        return new NetworkState(ACTIVE_DOWNLOADS.get(), ACTIVE_NETWORK_RETRIES.get(), lastNetworkFailure);
+    }
 
     /**
      * 带重试的单路下载：断开就立刻续传，最多 {@link #PER_MIRROR_ATTEMPTS} 次。
@@ -339,6 +406,10 @@ public final class HttpDownloadRace {
                         + (thrown.getMessage() == null ? "" : (": " + thrown.getMessage()));
                 // 别路已夺冠：本路的重试没有意义，残片留给下次启动续传
                 if (settled.get()) {
+                    failure.set(last);
+                    return;
+                }
+                if (isTerminal(last)) {
                     failure.set(last);
                     return;
                 }
@@ -368,9 +439,25 @@ public final class HttpDownloadRace {
                                     AtomicBoolean settled, AtomicLong leaderBytes,
                                     IntConsumer onProgress) throws IOException {
         long already = resumeBytes(part, expectedBytes);
+        if (already == expectedBytes) {
+            verifyCompletePart(part, expectedBytes, expectedSha256);
+            return;
+        }
         HttpURLConnection connection = openFollowing(URI.create(url).toURL(), 0, already);
         try {
             int code = connection.getResponseCode();
+            if (already > 0L && code == 416) {
+                try {
+                    verifyCompletePart(part, expectedBytes, expectedSha256);
+                    return;
+                } catch (IOException invalidCompletePart) {
+                    connection.disconnect();
+                    deleteQuietly(part);
+                    already = 0L;
+                    connection = openFollowing(URI.create(url).toURL(), 0, 0L);
+                    code = connection.getResponseCode();
+                }
+            }
             if (already > 0L && code == 200) {
                 // 服务端不认 Range（回全量 200）：残片清掉按从头下处理。
                 connection.disconnect();
@@ -390,22 +477,23 @@ public final class HttpDownloadRace {
                 throw new IOException("Content-Length 不符：得到 " + contentLength
                         + "，应为 " + (expectedBytes - already));
             }
+            if (already > 0L) {
+                validateContentRange(connection.getHeaderField("Content-Range"), already, expectedBytes);
+            }
             MessageDigest digest;
             try {
                 digest = MessageDigest.getInstance("SHA-256");
             } catch (Exception broken) {
                 throw new IOException("JVM 缺 SHA-256", broken);
             }
+            if (already > 0L) updateDigestFromFile(digest, part);
             long done = already;
             try (InputStream input = new BufferedInputStream(connection.getInputStream());
                  FileOutputStream output = new FileOutputStream(part, already > 0L)) {
-                // 已收前缀在续传时不再过哈希：整包 sha256 校验在收完后照做，前缀损坏
-                // （内容被污染 / 上次版本不符）会在那里被抓住、本路判负、残片被清。
                 byte[] buffer = new byte[64 * 1024];
                 int read;
                 while ((read = input.read(buffer)) >= 0) {
                     if (settled.get()) {
-                        // 别路先到：立刻停写停读。文件层不冲突（各写各的），下一行抛出即可。
                         throw new IOException("别路先到，本路中途退出");
                     }
                     output.write(buffer, 0, read);
@@ -418,16 +506,18 @@ public final class HttpDownloadRace {
                 }
             }
             if (done != expectedBytes) {
-                throw new IOException("字节数不符：收到 " + done + "，应为 " + expectedBytes);
+                throw new RetryableDownloadException("响应提前结束：收到 " + done + "，应为 " + expectedBytes);
             }
             String actual = hex(digest.digest());
             if (!actual.equalsIgnoreCase(expectedSha256)) {
+                deleteQuietly(part);
                 throw new IOException("sha256 不符：本路内容与发布包不一致（得到 " + actual + "）");
             }
         } finally {
             connection.disconnect();
         }
     }
+
 
     /**
      * 本槽位残片可续传的字节数：0 = 从头下。残片超过钉死字节数视为外来异物，清掉；
@@ -438,11 +528,107 @@ public final class HttpDownloadRace {
             return 0L;
         }
         long length = part.length();
-        if (length <= 0L || length >= expectedBytes) {
+        if (length <= 0L || length > expectedBytes) {
             deleteQuietly(part);
             return 0L;
         }
         return length;
+    }
+
+    private static void validateContentRange(String value, long expectedStart, long expectedTotal)
+            throws IOException {
+        if (value == null || !value.regionMatches(true, 0, "bytes ", 0, 6)) {
+            throw new IOException("续传响应缺少有效 Content-Range");
+        }
+        try {
+            String[] rangeAndTotal = value.substring(6).split("/", -1);
+            String[] startAndEnd = rangeAndTotal[0].split("-", -1);
+            if (rangeAndTotal.length != 2 || startAndEnd.length != 2
+                    || Long.parseLong(startAndEnd[0]) != expectedStart
+                    || Long.parseLong(rangeAndTotal[1]) != expectedTotal) {
+                throw new IOException("Content-Range 与本地断点或目标大小不符：" + value);
+            }
+            long end = Long.parseLong(startAndEnd[1]);
+            if (end < expectedStart || end != expectedTotal - 1L) {
+                throw new IOException("Content-Range 未覆盖到目标末尾：" + value);
+            }
+        } catch (NumberFormatException malformed) {
+            throw new IOException("Content-Range 格式无效：" + value, malformed);
+        }
+    }
+
+    private static void updateDigestFromFile(MessageDigest digest, File file) throws IOException {
+        try (InputStream input = new BufferedInputStream(new FileInputStream(file))) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) digest.update(buffer, 0, read);
+        }
+    }
+
+    private static void verifyCompletePart(File part, long expectedBytes, String expectedSha256)
+            throws IOException {
+        if (!part.isFile() || part.length() != expectedBytes
+                || !sha256(part).equalsIgnoreCase(expectedSha256)) {
+            deleteQuietly(part);
+            throw new IOException("完整临时文件校验失败，已清除并重新下载");
+        }
+    }
+
+    private static String sha256(File file) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            updateDigestFromFile(digest, file);
+            return hex(digest.digest());
+        } catch (java.security.NoSuchAlgorithmException unavailable) {
+            throw new IOException("JVM 缺 SHA-256", unavailable);
+        }
+    }
+
+    private static boolean isRetryable(String failure) {
+        if (failure == null) return false;
+        if (failure.contains("HTTP 408") || failure.contains("HTTP 425")
+                || failure.contains("HTTP 429") || failure.matches("(?s).*HTTP 5\\d\\d.*")) {
+            return true;
+        }
+        return failure.contains("SocketTimeoutException") || failure.contains("UnknownHostException")
+                || failure.contains("ConnectException") || failure.contains("NoRouteToHostException")
+                || failure.contains("Connection reset") || failure.contains("Connection refused")
+                || failure.contains("Premature EOF") || failure.contains("Unexpected end")
+                || failure.contains("响应提前结束") || failure.contains("Read timed out") || failure.contains("Connection timed out")
+                || failure.contains("全部已启动");
+    }
+
+    private static boolean isTerminal(String failure) {
+        return failure != null && (failure.contains("HTTP 401") || failure.contains("HTTP 403")
+                || failure.contains("HTTP 404") || failure.contains("HTTP 410")
+                || failure.contains("sha256 不符") || failure.contains("Content-Range 与本地断点"));
+    }
+
+    private static boolean isReservedInvalidHost(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            return host != null && (host.endsWith(".invalid") || host.endsWith(".example"));
+        } catch (RuntimeException malformed) {
+            return false;
+        }
+    }
+
+    private static long retryDelayMillis(int retry) {
+        int shift = Math.min(8, Math.max(0, retry));
+        long base = Math.min(MAX_RETRY_BACKOFF_MILLIS, 2_000L << shift);
+        long jitter = ThreadLocalRandom.current().nextLong(Math.max(1L, base / 5L));
+        return Math.min(MAX_RETRY_BACKOFF_MILLIS, base + jitter);
+    }
+
+    private static String safeMessage(Throwable failure) {
+        String message = failure.getMessage();
+        return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message;
+    }
+
+    private static final class RetryableDownloadException extends IOException {
+        private RetryableDownloadException(String message) {
+            super(message);
+        }
     }
 
     /**
@@ -490,7 +676,7 @@ public final class HttpDownloadRace {
                 if (location == null) {
                     throw new IOException("重定向没有 Location");
                 }
-                return openFollowing(new URL(url, location), depth + 1);
+                return openFollowing(new URL(url, location), depth + 1, rangeFrom);
             }
             return connection;
         } catch (IOException failure) {

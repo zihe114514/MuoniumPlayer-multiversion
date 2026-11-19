@@ -134,11 +134,12 @@ class BilibiliPartyPageTrackTest {
     @DisplayName("房间安全判据钉在客户端预检里：新格式过、旧格式挡、委托的是 SourceGuard")
     void clientPrecheckIsWiredToTheSharedGuard() throws Exception {
         // mpparty-common 不在 ProjectPaths 的两个源码根里，用 repoRoot 直接定位。
+        // 读字节后先归一成 LF：Windows autocrlf 检出是 CRLF，期望串里只有 \n。
         java.nio.file.Path clientFile = com.muoniumplayer.testsupport.ProjectPaths.repoRoot()
                 .resolve(java.nio.file.Paths.get("mpparty-common", "src", "main", "java",
                         "com", "muoniumplayer", "party", "MpPartyClient.java"));
         String client = new String(java.nio.file.Files.readAllBytes(clientFile),
-                java.nio.charset.StandardCharsets.UTF_8);
+                java.nio.charset.StandardCharsets.UTF_8).replace("\r\n", "\n");
         assertTrue(client.contains("private static boolean isUsableSongId(String id) {\n        return SourceGuard.isValidSongId(id);"),
                 "预检必须委托给服务端镜像的 SourceGuard，不许再手抄一份会漂移的副本");
         assertTrue(client.contains("isUsableSongId(MpTrack.roomSongId(song))"),

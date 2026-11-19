@@ -108,6 +108,10 @@ public final class TouchGestures {
      * 「事件丢了点按就凭空消失」和「拖动被当成点按」两种错都不许发生。</p>
      */
     private Boolean pendingTapAnswer;
+    /** 只改变消费者读取坐标，不改变识别、按压、点按与独占认领状态。 */
+    private double viewScale = 1;
+    private double viewOffsetX;
+    private double viewOffsetY;
     /** 长按边沿：仅在跨越阈值的那一次 advance 里为 true。 */
     private boolean longPressEdge;
     private boolean longPressFired;
@@ -262,13 +266,33 @@ public final class TouchGestures {
         return pressed;
     }
 
+    /** 提示换轴期间提供局部坐标视图；嵌套或异常退出也恢复原视图，认领结果仍保留。 */
+    public void withCoordinateSpace(double originX, double originY, double scale, Runnable action) {
+        if (!Double.isFinite(originX) || !Double.isFinite(originY) || !(scale > 0) || !Double.isFinite(scale)) {
+            throw new IllegalArgumentException("Invalid gesture coordinate space");
+        }
+        double previousScale = viewScale;
+        double previousX = viewOffsetX;
+        double previousY = viewOffsetY;
+        viewScale /= scale;
+        viewOffsetX = originX + (previousX - originX) / scale;
+        viewOffsetY = originY + (previousY - originY) / scale;
+        try {
+            action.run();
+        } finally {
+            viewScale = previousScale;
+            viewOffsetX = previousX;
+            viewOffsetY = previousY;
+        }
+    }
+
     /** 按压起点（布局坐标）；无按压时返回值无意义。 */
     public double startX() {
-        return startX;
+        return startX * viewScale + viewOffsetX;
     }
 
     public double startY() {
-        return startY;
+        return startY * viewScale + viewOffsetY;
     }
 
     /** 当前锁定的主轴；未超阈值时为 {@link Axis#NONE}。 */
@@ -291,12 +315,12 @@ public final class TouchGestures {
      * 其余情况为 0。数值来自锁轴后的原始 dy——滚动容器自己带符号取用。
      */
     public double dy() {
-        return isVerticalDrag() ? frameDy : 0;
+        return isVerticalDrag() ? frameDy * viewScale : 0;
     }
 
     /** 本帧横向增量，语义同 {@link #dy()}。 */
     public double dx() {
-        return isHorizontalDrag() ? frameDx : 0;
+        return isHorizontalDrag() ? frameDx * viewScale : 0;
     }
 
     /**
@@ -306,7 +330,7 @@ public final class TouchGestures {
      * {@code distance = v² / (2·TouchSettings.FLING_DECEL)} 由滚动容器套方向后使用。</p>
      */
     public double velocityY() {
-        return velocityY;
+        return velocityY * viewScale;
     }
 
     /** 本轮按压是否<b>从未</b>超过拖动阈值（可能是点按）。配合 {@link #consumeTap()}。 */

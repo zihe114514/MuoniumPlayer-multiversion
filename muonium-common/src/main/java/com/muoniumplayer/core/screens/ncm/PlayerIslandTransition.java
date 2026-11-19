@@ -4,19 +4,17 @@ import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.GlassLook;
+import com.muoniumplayer.core.rendering.MusicCapsuleCard;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.settings.HudConfig;
 
 import java.awt.Color;
+
 /**
- * 播放器主界面 从 灵动岛 展开 / 收回 的整屏转场。
+ * 播放器主界面从灵动岛展开 / 收回的整屏转场。
  *
- * <p>这条转场是时间驱动的：只有一个 {@code t ∈ [0,1]} 的时钟，几何和透明度都是
- * {@code t} 的纯函数。这样中途反向是连续的 —— 进场没播完就按 ESC，界面会从当前位置原路折回，
- * 不会因为退场换了一套曲线而跳一下。</p>
- *
- * <p>分层节奏：先变形表面，再让内容浮起，最后用边界光交代落定。收起时同一组曲线反序播放，
- * 因此“回到灵动岛”和“从灵动岛展开”是同一条路径的两个方向。</p>
+ * <p>几何由独立的解析高阻尼运动驱动，反向继承当前矩形及速度。
+ * 内容与材质交接读取同一可见帧时钟；附近时间采样不会推进生命周期。</p>
  */
 public final class PlayerIslandTransition implements SharedRenderingConstants, SharedConstants {
 
@@ -28,31 +26,27 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
 
     private static final int IDLE = 0, OPENING = 1, OPEN = 2, CLOSING = 3;
 
-    /**
-     * 默认 3x 下约为 293/217ms。几何曲线本身已经有 emphasized 减速；
-     * 收起末段的胶囊交接和撞击反馈另有更短的专用节奏。
-     */
-    private static final double OPEN_MS = 880.0;
-    private static final double CLOSE_MS = 650.0;
+    /** 默认 3x 下展开约 293ms、关闭约 217ms，正常帧不强制十二步。 */
+    private static final double OPEN_MS = PlayerIslandMotion.OPEN_MILLIS;
+    private static final double CLOSE_MS = PlayerIslandMotion.CLOSE_MILLIS;
 
     private static final TransitionCurveCache.CachedBezier MOTION = TransitionCurveCache.MOTION;
-    private static final TransitionCurveCache.CachedBezier MOTION_LAGGING = TransitionCurveCache.MOTION_LAGGING;
+    private static final PlayerIslandMotion MOVEMENT = new PlayerIslandMotion();
+    private static final PlayerIslandMotion.Sample FRAME = new PlayerIslandMotion.Sample();
 
     private static int state = IDLE;
+    private static boolean openingFromMusicCard;
+    private static double[] musicCardStartBounds;
 
-    /** 1 = 完全展开。全部曲线都读它，一帧只在 {@link #tick()} 里推进一次。 */
+    /** 材质和旧绘制细节的有界内容相位，不再决定几何。 */
     private static double t = 0.0;
-    /** 平滑的灵动岛 → 胶囊交接；在关闭被中途逆转时保留。 */
-    private static double capsuleHandoffMix = 0.0;
 
     /**
      * 落定材质交接窗，毫秒。
      *
-     * <p>转场期间播放器表面贴的是「预糊背景贴图」（廉价、无折射），透镜液态玻璃整面关闭；
-     * 动画一结束透镜立刻接管。两种材质对同一背景的亮度与边缘折射不同，瞬间切换读起来就是
-     * 「落定那一下闪/顿」。这个窗口让表面落定后两种材质交叉淡变：贴图淡出、透镜按同一比例
-     * 淡入（{@link #surfaceHandoff()}）。打开放完与关闭落定（CLOSING→IDLE 的撞击交给岛，
-     * 表面消失）各自适用；中途反向不重置窗口，混合是双向连续的。</p>
+     * <p>转场期间使用预糊背景，整面液态折射关闭。几何落定且常规底板就绪后，
+     * 保持转场底图垫底，让常规玻璃按 {@link #surfaceHandoff()} 覆盖接管；
+     * 交接完成才移除底图。两层不是相加为一的交叉淡化。</p>
      */
     private static final double SURFACE_HANDOFF_MS = 180.0;
 
@@ -62,23 +56,8 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
      */
     private static double surfaceHandoff = 1.0;
 
-    private static final FrameClock CLOCK = new FrameClock();
-
-    /** 首次实际绘制才开始计时；长帧最多走十二分之一条曲线。 */
-    static final class FrameClock {
-        private long previousNanos;
-
-        void reset() {
-            previousNanos = 0L;
-        }
-
-        double step(long now, double durationMillis) {
-            long previous = previousNanos;
-            previousNanos = now;
-            if (previous == 0L) return 0.0;
-            double elapsed = Math.max(0.0, (now - previous) / 1_000_000.0);
-            return Math.min(elapsed, Math.min(1000.0 / 30.0, durationMillis / 12.0));
-        }
+    /** 保留包内测试入口；与纯运动类使用完全相同的时钟合同。 */
+    static final class FrameClock extends PlayerIslandMotion.FrameClock {
     }
 
     private static float speed = 1.0f;
@@ -116,60 +95,60 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     // ------------------------------------------------------------------ 生命周期
 
     /**
-     * 从当前灵动岛锚点开始一次展开。
-     *
-     * <p>如果上一轮收起还没播完就重新打开，状态会直接从 CLOSING 翻回 OPENING，
-     * {@code t} 保留当前值 —— 也就是说界面会从当前位置继续展开，而不是跳回岛里重播。</p>
-     */
-    /**
-     * 岛上音乐胶囊迷你卡的打开入口：展开速度取「播放器开关动画」同一档。
-     *
-     * <p>把 {@code HudConfig.playerFadeSpeed} 的读取收在这一个白名单文件里——探针测试
-     * （{@code PlayerFadeSpeedProbeTest}）钉住这个倍率只调播放器进出场的淡入淡出，
-     * 新消费方一律走本接缝，不许各自再读一遍配置。</p>
+     * 岛上音乐胶囊迷你卡的打开入口：沿用播放器动画入口与配置倍率，
+     * 不给卡片另开一套时钟或新增配置消费方。
      */
     public static void openFromIslandCard() {
-        open(HudConfig.playerFadeSpeed);
+        openingFromMusicCard = DownloadDynamicIsland.isMusicCardOpen();
+        musicCardStartBounds = openingFromMusicCard ? DownloadDynamicIsland.musicCardBounds() : null;
+        // 先切宿主，由 NCMScreen.initGui 捕获当前卡片轮廓并启动唯一的转场时钟。
+        // 只调用 open() 会藏起岛，却没有真正打开播放器。
+        com.muoniumplayer.core.screens.onboarding.OnboardingManager.openPlayerEntry();
     }
 
+    /** 从当前轮廓展开；收起中再次打开保留几何和速度。 */
     public static void open(float speedMultiplier) {
+        float previousSpeed = speed;
         speed = clampSpeed(speedMultiplier);
-        // 只有全新打开才从岛开始。关闭期间重新打开必须保留当前
-        //几何；重新捕获陈旧锚点会使表面横向跳变或改变大小。
-        if (state == IDLE) {
+        boolean fresh = state == IDLE;
+        if (fresh) {
             captureStart();
             captureCapsule();
             captureSurfacePalette();
-            capsuleHandoffMix = 0.0;
             surfaceHandoff = 0.0;
+            MOVEMENT.snap(startX, startY, startWidth, startHeight, startRadius, 0.0);
         }
-        CLOCK.reset();
+        captureTarget();
         if (state == OPEN) {
+            MOVEMENT.snap(targetX, targetY, targetWidth, targetHeight, targetRadius, 1.0);
+            MOVEMENT.resetClock();
             DownloadDynamicIsland.finishPlayerSurfaceTransition();
         } else {
             DownloadDynamicIsland.beginPlayerSurfaceTransition();
-        }
-        captureTarget();
-
-        if (state == IDLE) {
-            state = OPENING;
-            t = 0.0;
-        } else if (state == CLOSING) {
-            state = OPENING;
+            if (fresh || state == CLOSING) {
+                MOVEMENT.retarget(targetX, targetY, targetWidth, targetHeight, targetRadius, 1.0,
+                        openDuration(), false, true);
+                state = OPENING;
+            } else if (state == OPENING && (previousSpeed != speed || !MOVEMENT.targets(
+                    targetX, targetY, targetWidth, targetHeight, targetRadius))) {
+                MOVEMENT.retarget(targetX, targetY, targetWidth, targetHeight, targetRadius, 1.0,
+                        Math.max(MOVEMENT.remainingMillis() * previousSpeed / speed, openDuration() * .20),
+                        false, false);
+            }
         }
         refreshFrameCache();
     }
 
-    /** 开始收回。已经完全打开时才有效；正在展开时按下 ESC 会立刻反向。 */
+    /** 收回到紧凑胶囊；反向不翻转或清空当前速度，而是自然制动。 */
     public static void close() {
         if (state == OPENING || state == OPEN) {
-            // 常驻岛可被展开，但 Apple 的交接落到紧凑胶囊。
-            // 现在捕获该目标；tick() 淡入它而不改变当前帧。
             captureCapsule();
             captureSurfacePalette();
-            CLOCK.reset();
+            MOVEMENT.retarget(capsuleX, capsuleY, capsuleWidth, capsuleHeight, capsuleRadius, 0.0,
+                    closeDuration(), true, true);
             DownloadDynamicIsland.preparePlayerAbsorb();
             state = CLOSING;
+            refreshFrameCache();
         }
     }
 
@@ -179,90 +158,72 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         //真实岛刚收到吸收脉冲，必须保留它；在此中止会
         //取消冲击，使表面看起来像戛然而止。
         if (state == IDLE && t == 0.0) {
+            openingFromMusicCard = false;
+            musicCardStartBounds = null;
             refreshFrameCache();
             return;
         }
         DownloadDynamicIsland.cancelPlayerSurfaceTransition();
         state = IDLE;
         t = 0.0;
-        capsuleHandoffMix = 0.0;
         surfaceHandoff = 0.0;
-        CLOCK.reset();
+        openingFromMusicCard = false;
+        musicCardStartBounds = null;
+        MOVEMENT.snap(capsuleX, capsuleY, capsuleWidth, capsuleHeight, capsuleRadius, 0.0);
+        MOVEMENT.resetClock();
         refreshFrameCache();
     }
 
-    /** 每帧推进一次时钟。必须在读取任何曲线之前调用。 */
+    /** 每帧推进一次可见时钟；渲染与邻近采样只读。 */
     public static void tick() {
-        captureTarget();
-
-        double duration = state == CLOSING ? closeDuration()
-                : state == OPENING ? openDuration() : Double.POSITIVE_INFINITY;
-        double deltaMs = CLOCK.step(System.nanoTime(), duration);
-
-        // 完全打开后，普通面板拥有渲染权。仅刷新四个缓存输出；
-        // 这样可避免在每个空闲的玩家帧上重新求解两条贝塞尔曲线并重建脉冲。
+        boolean layoutChanged = captureTarget();
         if (state == OPEN) {
-            // 屏幕调整大小/初始化可能在播放器已打开时再次调用 open()。完成任何
-            // 重新武装的表面过渡，使通知不会被无限期阻塞。
+            // 已打开时普通布局拥有几何；resize 不重新启动通知表面所有权。
+            if (layoutChanged) MOVEMENT.snap(targetX, targetY, targetWidth, targetHeight, targetRadius, 1.0);
             DownloadDynamicIsland.finishPlayerSurfaceTransition();
-            surfaceBoundsCache[0] = targetX;
-            surfaceBoundsCache[1] = targetY;
-            surfaceBoundsCache[2] = targetWidth;
-            surfaceBoundsCache[3] = targetHeight;
-            surfaceBoundsCache[4] = targetRadius;
-            cachedContentAlpha = 1.0;
-            cachedContentScale = 1.0;
-            cachedSettlePulse = 0.0;
-            // 落定后的材质交接窗在 OPEN 态继续走完（180ms）：透镜淡入的最后一段
-            // 发生在面板完全展开之后，不能因为 OPEN 态提前 return 而冻结在半途。
-            advanceSurfaceHandoff(deltaMs);
-            return;
+        } else if (state == OPENING && !MOVEMENT.targets(
+                targetX, targetY, targetWidth, targetHeight, targetRadius)) {
+            MOVEMENT.retarget(targetX, targetY, targetWidth, targetHeight, targetRadius, 1.0,
+                    Math.max(MOVEMENT.remainingMillis(), openDuration() * .20), false, false);
+        } else if (state == CLOSING && layoutChanged) {
+            // 锚点查询返回数组，只在真实布局改变时重捕获，不逐动画帧分配。
+            captureCapsule();
+            if (!MOVEMENT.targets(capsuleX, capsuleY, capsuleWidth, capsuleHeight, capsuleRadius)) {
+                MOVEMENT.retarget(capsuleX, capsuleY, capsuleWidth, capsuleHeight, capsuleRadius, 0.0,
+                        Math.max(MOVEMENT.remainingMillis(), closeDuration() * .20), true, false);
+            }
         }
-
+        boolean wasOpening = state == OPENING;
+        double remaining = MOVEMENT.remainingMillis();
+        double deltaMs = MOVEMENT.tick(System.nanoTime());
         double handoffDeltaMs = deltaMs;
-        if (state == OPENING) {
-            handoffDeltaMs = Math.max(0.0, deltaMs - (1.0 - t) * openDuration());
-            t = Math.min(1.0, t + deltaMs / openDuration());
-            if (t >= 1.0) {
-                t = 1.0;
-                state = OPEN;
-                DownloadDynamicIsland.finishPlayerSurfaceTransition();
-            }
-        } else if (state == CLOSING) {
-            t = Math.max(0.0, t - deltaMs / closeDuration());
-            if (t <= 0.0) {
-                t = 0.0;
-                state = IDLE;
-                capsuleHandoffMix = 1.0;
-                DownloadDynamicIsland.beginPlayerAbsorbImpact();
-            }
-        }
-
-        // 材质交接窗：表面落定（展开到 1）后开始走，转场动画期间反向回卷到 0 ——
-        // 正在形变的表面必须按贴图路径画，透镜只在停稳后逐帧淡入。
-        advanceSurfaceHandoff(t >= 1.0 ? handoffDeltaMs : deltaMs);
-
-        // 保持锚点变化基于时间。中途逆转关闭绝不能在一帧内把原点
-        //从胶囊猛地拉回更大的常驻岛。
-        if (state == OPENING || state == CLOSING) {
-            // 在主折叠内启动紧凑胶囊交接，而非等待一个
-            //单独的最终阶段。逆转仍平滑穿过这个保留的混合。
-            double capsuleTarget = state == CLOSING ? MOTION.at(sub(1.0 - t, .32, .74)) : 0.0;
-            capsuleHandoffMix += (capsuleTarget - capsuleHandoffMix) * Math.min(1.0, deltaMs / 45.0);
+        if (wasOpening && !MOVEMENT.isRunning()) {
+            state = OPEN;
+            openingFromMusicCard = false;
+            musicCardStartBounds = null;
+            handoffDeltaMs = Math.max(0.0, deltaMs - remaining);
+            DownloadDynamicIsland.finishPlayerSurfaceTransition();
+        } else if (state == CLOSING && !MOVEMENT.isRunning()) {
+            // MOVEMENT 已精确落到合法紧凑胶囊；只在这一个状态边沿触发冲击。
+            state = IDLE;
+            DownloadDynamicIsland.beginPlayerAbsorbImpact();
         }
         refreshFrameCache();
+        advanceSurfaceHandoff(state == OPEN ? handoffDeltaMs : deltaMs);
     }
 
     /**
      * 推进落定材质交接：0 = 转场贴图，1 = 常规玻璃路径完全接管。
-     *
-     * <p>窗口只在「表面已落定」（{@code t >= 1}）后向前走；转场重新开始（OPENING/CLOSING
-     * 且 {@code t < 1}）时按同一时间常数回卷 —— 关闭被中途逆转、或者落定后立刻再关，
-     * 表面都在移动，必须整体回到贴图路径，不允许带着半透明透镜叠画。</p>
+     * 只有几何生命周期落定到 OPEN 后向前走；运动期间沿同一可见 delta 回卷。
+     * 内容 alpha 可先到 1，不能把它误当几何已经停止。
      */
     private static void advanceSurfaceHandoff(double deltaMs) {
-        if (t >= 1.0) {
-            surfaceHandoff = Math.min(1.0, surfaceHandoff + deltaMs / SURFACE_HANDOFF_MS);
+        if (state == OPEN) {
+            // Cold content may still be attaching after the geometry stops. Keep the
+            // transition backing until the regular surface can actually cover it.
+            if (NCMScreen.getInstance().isOpeningSurfaceReady()) {
+                surfaceHandoff = Math.min(1.0, surfaceHandoff + deltaMs / SURFACE_HANDOFF_MS);
+            }
         } else if (surfaceHandoff > 0.0) {
             surfaceHandoff = Math.max(0.0, surfaceHandoff - deltaMs / SURFACE_HANDOFF_MS);
         }
@@ -271,10 +232,8 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     /**
      * 本帧表面该按多大比例交给常规玻璃路径（0..1）。
      *
-     * <p>0 = 仍按转场贴图画（形变中或刚落定）；1 = 常规透镜完全接管。消费方：
-     * {@code GlassLook#paintPlayerTransitionSurface} 用它给预糊贴图乘淡出系数，
-     * {@code NCMScreen} 的透镜表面控件用它给液态玻璃乘淡入系数 —— 两个系数相加为 1，
-     * 材质切换在视觉上是一条连续的交叉淡化，而不是落定帧的一次跳变。</p>
+     * <p>0 = 转场底图拥有表面，1 = 常规玻璃接管完成。中间阶段底图保持全浓度，
+     * NCMScreen 的常规材质在上方淡入；此值也控制转场描边退出，不同时淡掉两张底。</p>
      */
     public static double surfaceHandoff() {
         return surfaceHandoff;
@@ -321,53 +280,36 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     }
     // ------------------------------------------------------------------ 几何
 
-    /** 当前表面矩形：x、y、width、height、radius。 */
+    /** 当前表面矩形：x、y、width、height、radius；沿用同一个共享数组，不是快照。 */
     public static double[] surfaceBounds() {
         return surfaceBoundsCache;
     }
 
+    /**
+     * 当前 / 附近时间的纯数据输出，调用方复用 out；不推进动画、不分配数组。
+     * offsetMillis 限制在 +/-33.33ms，历史不能跨本次 retarget 边界。
+     * 位置为布局坐标，速度为布局单位/秒；内容变换是 scale*p+translate。
+     */
+    public static void sampleMotion(double offsetMillis, PlayerIslandMotion.Sample out) {
+        MOVEMENT.sample(offsetMillis, out);
+    }
+
+    /** 最近一帧消费的有界可见时间（毫秒），不是阻塞前的墙钟间隔。 */
+    public static double lastFrameMillis() {
+        return MOVEMENT.lastFrameMillis();
+    }
+
     private static void refreshFrameCache() {
-        double fx = MOTION_LAGGING.at(t);
-        double fy = MOTION.at(t);
-        double fw = fy;
-        double fh = fx;
-
-        // 关闭刻意不对称：它沿灵动岛路径往回走，然后
-        //最后一段把表面交给紧凑胶囊。重新打开逆转这个混合。
-        double capsuleMix = Math.max(0.0, Math.min(1.0, capsuleHandoffMix));
-        double originX = lerp(startX, capsuleX, capsuleMix);
-        double originY = lerp(startY, capsuleY, capsuleMix);
-        double originWidth = lerp(startWidth, capsuleWidth, capsuleMix);
-        double originHeight = lerp(startHeight, capsuleHeight, capsuleMix);
-        double originRadius = lerp(startRadius, capsuleRadius, capsuleMix);
-
-        double bulge = 1.0 + Math.sin(Math.PI * t) * Math.pow(t, 1.7) * .048;
-        double width = lerp(originWidth, targetWidth, fw) * bulge;
-        double height = lerp(originHeight, targetHeight, fh) * bulge;
-        double x = lerp(originX + originWidth * .5, targetX + targetWidth * .5, fx) - width * .5;
-        double y = lerp(originY + originHeight * .5, targetY + targetHeight * .5, fy) - height * .5;
-        double radius = lerp(originRadius, targetRadius, fy);
-
-        // 打开没有二次回弹：强调曲线简单地落到确切目标。
-        // 只有关闭在真实岛接管前保留一段冲击前压缩。
-        double landing = settlePulseRaw();
-        if (state == CLOSING) {
-            width *= 1.0 + landing * .080;
-            height *= 1.0 - landing * .105;
-            y += landing * 1.20;
-            radius += landing * .80;
-        }
-
-        surfaceBoundsCache[0] = x;
-        surfaceBoundsCache[1] = y;
-        surfaceBoundsCache[2] = width;
-        surfaceBoundsCache[3] = height;
-        surfaceBoundsCache[4] = radius;
-        cachedContentAlpha = MOTION.at(sub(t, .10, .86));
-        cachedContentScale = targetWidth <= 1.0 || targetHeight <= 1.0
-                ? 1.0
-                : Math.max(width / targetWidth, height / targetHeight);
-        cachedSettlePulse = landing;
+        MOVEMENT.sample(0.0, FRAME);
+        surfaceBoundsCache[0] = FRAME.x;
+        surfaceBoundsCache[1] = FRAME.y;
+        surfaceBoundsCache[2] = FRAME.width;
+        surfaceBoundsCache[3] = FRAME.height;
+        surfaceBoundsCache[4] = FRAME.radius;
+        cachedContentAlpha = FRAME.contentAlpha;
+        cachedContentScale = FRAME.contentScale;
+        cachedSettlePulse = 0.0;
+        t = cachedContentAlpha;
     }
     /**
      * 内容缩放：取宽高比中较大的那个，保证内容永远能盖住当前表面。
@@ -380,19 +322,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
 
     // ------------------------------------------------------------------ 末尾细节
 
-    /**
-     * 末尾落地脉冲。
-     *
-     * <p>打开时看 t 的最后 26%；关闭时看 1-t 的最后 26%。这样“展开到播放器”和“收回进岛”
-     * 两端都有一小段呼吸，而不是只有中段有动感。</p>
-     */
-    private static double settlePulseRaw() {
-        // 打开必须无额外弹跳地恰好落到目标。脉冲仅用于
-        //关闭，在那里它预示紧凑岛的冲击。
-        if (state != CLOSING) return 0.0;
-        return Math.sin(Math.PI * sub(1.0 - t, .74, 1.0));
-    }
-
+    // 关闭冲击由真实岛在吸收边沿负责；形变本身不叠加鼓胀或预压缩。
 
     /**
      * 绘制形变表面本身，独立于播放器内容 alpha。
@@ -430,10 +360,34 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         // 远小于「所有机器观感不一致」的代价，恒画（fps 分档已整体移除）。
         GFX.roundedRect(x + 1.0, y + 1.8, width, height, radius, SHADOW_STRONG);
         GFX.roundedRect(x + 2.0, y + 3.0, width, height, radius, SHADOW_SOFT);
-        boolean liquid = GlassLook.paintPlayerTransitionSurface(x, y, width, height, radius, 1f);
-        GFX.roundedRect(x, y, width, height, radius,
-                liquid ? new Color(GlassLook.tintedArgb(GlassLook.Surface.PLAYER, color.getRGB()), true) : color);
-        if (!liquid) GFX.roundedOutline(x, y, width, height, radius, .72,
+        boolean liquid;
+        if (openingFromMusicCard) {
+            io.github.humbleui.skija.Canvas canvas = com.muoniumplayer.render.skija.SkijaGfx.canvas();
+            int save = canvas == null ? -1 : canvas.save();
+            try (io.github.humbleui.skija.Path shape = com.muoniumplayer.core.rendering.MusicCardShape.outline(
+                    x, y, width, height, radius)) {
+                if (canvas != null) canvas.clipPath(shape, true);
+                liquid = GlassLook.paintMusicCardTransitionFrost(x, y, width, height, radius);
+                float cardMix = (float) (1.0 - MOTION.at(sub(t, 0.0, .30)));
+                MusicCapsuleCard.INSTANCE.drawTransitionSurface(x, y, width, height, radius, cardMix, color, liquid);
+            } finally {
+                if (canvas != null) canvas.restoreToCount(save);
+            }
+        } else {
+            liquid = GlassLook.paintPlayerTransitionSurface(x, y, width, height, radius, 1f);
+            GFX.roundedRect(x, y, width, height, radius,
+                    liquid ? new Color(GlassLook.tintedArgb(GlassLook.Surface.PLAYER, color.getRGB()), true) : color);
+        }
+        if (openingFromMusicCard && musicCardStartBounds != null) {
+            double amount = 1.0 - MOTION.at(sub(t, .03, .26));
+            if (amount > .001) {
+                double cardWidth = musicCardStartBounds[2];
+                double cardHeight = musicCardStartBounds[3];
+                MusicCapsuleCard.INSTANCE.drawCard(x + (width - cardWidth) * .5,
+                        y + Math.min(0.0, (height - cardHeight) * .5), cardWidth, cardHeight, (float) amount, false);
+            }
+        }
+        if (!liquid && !openingFromMusicCard) GFX.roundedOutline(x, y, width, height, radius, .72,
                 alphaScaled(SURFACE_EDGE, (float) keep));
     }
 
@@ -443,9 +397,21 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         return new Color(color.getRed(), color.getGreen(), color.getBlue(),
                 Math.max(0, Math.min(255, Math.round(color.getAlpha() * scale))));
     }
-    /** 收起末段的边界光：只服务于胶囊撞击前的压缩，不再给打开动画叠加落地回弹。 */
+    /** 打开时沿边缘短暂提亮；收起沿用原有末段细节分支。 */
     public static void renderSurfaceDetail() {
         if (state == IDLE || state == OPEN) return;
+        if (state == OPENING) {
+            // A narrow highlight rides the unfolding edge, then disappears before
+            // the regular glass takes over. No blur, offscreen layer or trailing copies.
+            double reveal = Math.sin(Math.PI * Math.max(0.0, Math.min(1.0, t)));
+            double inset = surfaceBoundsCache[4] + 2.0;
+            double span = Math.max(0.0, surfaceBoundsCache[2] - inset * 2.0);
+            if (span > 1.0 && reveal > .01) {
+                GFX.roundedRect(surfaceBoundsCache[0] + inset, surfaceBoundsCache[1] + .8,
+                        span, .65, .325, whiteAlpha((float) (reveal * 18.0)));
+            }
+            return;
+        }
         double landing = cachedSettlePulse;
         if (landing <= .01) return;
 
@@ -474,7 +440,8 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     // ------------------------------------------------------------------ 私有工具
 
     private static void captureStart() {
-        double[] island = DownloadDynamicIsland.getLiveAnchorBounds();
+        double[] island = openingFromMusicCard && musicCardStartBounds != null
+                ? musicCardStartBounds : DownloadDynamicIsland.getLiveAnchorBounds();
         // 岛锚点恒按布局轴上报；islandToCurrent* 把它折算成「本捕获发生时的上下文坐标」，
         // 再由 toLayout* 换回布局轴 —— 两段相乘在括号内/外、开关开/关下都是恒等闭环。
         startX = WindowAdaptiveScale.toLayoutX(WindowAdaptiveScale.islandToCurrentX(island[0]));
@@ -495,7 +462,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
 
     /** 仅在源主题/样式颜色变化时重建小型不可变颜色渐变。 */
     private static void captureSurfacePalette() {
-        int islandColor = DownloadDynamicIsland.getAnchorSurfaceColor();
+        int islandColor = openingFromMusicCard ? 0xFF080B11 : DownloadDynamicIsland.getAnchorSurfaceColor();
         int playerColor = NCMTheme.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND);
         int accentColor = NCMTheme.getAccentColor();
 
@@ -527,10 +494,12 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         return ACCENT_ALPHA_CACHE[index];
     }
 
-    private static void captureTarget() {
+    private static boolean captureTarget() {
         // open() 从 initGui 运行，在 drawScreen 进入自适应布局之前。
         // tick() 在 drawScreen 已进入之后运行。两者都必须在
-        //完全相同的坐标系，否则形变会落偏中心。
+        // 完全相同的坐标系，否则形变会落偏中心。
+        double previousX = targetX, previousY = targetY;
+        double previousWidth = targetWidth, previousHeight = targetHeight, previousRadius = targetRadius;
         boolean ownedLayout = !WindowAdaptiveScale.isTransforming();
         WindowAdaptiveScale.begin();
         try {
@@ -543,6 +512,9 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         } finally {
             if (ownedLayout) WindowAdaptiveScale.end();
         }
+        MOVEMENT.setPanel(targetX, targetY, targetWidth, targetHeight);
+        return previousX != targetX || previousY != targetY || previousWidth != targetWidth
+                || previousHeight != targetHeight || previousRadius != targetRadius;
     }
 
     private static double openDuration() {
@@ -554,7 +526,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     }
 
     private static float clampSpeed(float value) {
-        return Math.max(.30f, Math.min(3.00f, value));
+        return Float.isFinite(value) ? Math.max(.30f, Math.min(3.00f, value)) : 1.0f;
     }
 
     private static double lerp(double from, double to, double fraction) {
@@ -562,6 +534,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     }
 
     private static int mixColor(int from, int to, double fraction) {
+        fraction = Math.max(0.0, Math.min(1.0, fraction));
         int a = (int) Math.round(lerp((from >> 24) & 0xFF, (to >> 24) & 0xFF, fraction));
         int r = (int) Math.round(lerp((from >> 16) & 0xFF, (to >> 16) & 0xFF, fraction));
         int g = (int) Math.round(lerp((from >> 8) & 0xFF, (to >> 8) & 0xFF, fraction));

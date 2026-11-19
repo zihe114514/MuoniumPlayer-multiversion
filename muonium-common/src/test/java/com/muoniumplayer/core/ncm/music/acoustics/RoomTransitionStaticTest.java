@@ -149,10 +149,11 @@ class RoomTransitionStaticTest {
         assertTrue(runtime.contains("looksLikeRoomChange"), "缺跨房间判定");
 
         final String dsp = shared("com/muoniumplayer/core/ncm/music/acoustics/SceneAcoustics.java");
-        assertTrue(dsp.contains("targetTransitionSec"), "SceneAcoustics 没接过渡时长");
-        // 必须真的参与一阶收敛的系数计算,而不是只存着
-        assertTrue(dsp.contains("Math.min(TRANSITION_MAX_SEC, tTransition)")
-                        || dsp.contains("transitionSec"),
+        assertTrue(dsp.contains("final RoomPlan plan = targetPlan"),
+                "音频缓冲必须读取单个完整计划,不能混读各帧 volatile 标量");
+        assertTrue(dsp.contains("final double transitionSec = plan.transitionSec"),
+                "SceneAcoustics 没消费过渡时长");
+        assertTrue(dsp.contains("Math.min(TRANSITION_MAX_SEC, transitionSec)"),
                 "过渡时长没参与收敛系数");
     }
 

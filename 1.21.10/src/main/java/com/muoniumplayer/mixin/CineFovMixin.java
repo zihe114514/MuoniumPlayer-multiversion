@@ -1,6 +1,7 @@
 package com.muoniumplayer.mixin;
 
 import com.muoniumplayer.core.cine.CineDirector;
+import net.minecraft.client.Camera;
 import net.minecraft.client.renderer.GameRenderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -8,19 +9,20 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * 「卡点运镜」的 FOV 脉冲。26.x 前 之前 FOV 在
- * {@code GameRenderer.getFov(Camera, float, boolean)}(private,由 renderLevel
- * 每帧调一次算投影)——注入其 RETURN 叠加偏移。26.x 的写法见 26.3 树同名文件。
+ * 仅对世界主投影叠加同一 partialTick 的 FOV 脉冲，保留手部投影的原值。
+ * 返回类型为 float；setReturnValue 需要 cancellable，避免脉冲非零时抛出取消异常。
  */
 @Mixin(GameRenderer.class)
 abstract class CineFovMixin {
 
-    @Inject(method = "getFov", at = @At("RETURN"))
-    private void muonium$cineFovPunch(CallbackInfoReturnable<Float> cir) {
-        if (!CineDirector.isActive()) return;
-        float offset = CineDirector.fovOffsetDeg();
+    @Inject(method = "getFov(Lnet/minecraft/client/Camera;FZ)F", at = @At("RETURN"),
+            cancellable = true, require = 1)
+    private void muonium$cineFovPunch(Camera camera, float partialTick, boolean worldFov,
+                                      CallbackInfoReturnable<Float> cir) {
+        if (!worldFov || !CineDirector.isActive()) return;
+        float offset = CineDirector.fovOffsetDeg(partialTick);
         if (offset != 0f) {
-            cir.setReturnValue((float) (cir.getReturnValue() + offset));
+            cir.setReturnValue(cir.getReturnValue() + offset);
         }
     }
 }

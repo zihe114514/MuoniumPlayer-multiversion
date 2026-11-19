@@ -25,6 +25,54 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
     /** A fixed sentinel stays outside the viewport even when the panel is resized next frame. */
     private static final double OUTSIDE_VIEWPORT_Y = -1_000_000.0;
 
+    /** Null means unrestricted; the rendering host may scope raw touch polling to one modal tree. */
+    private static final ThreadLocal<AbstractWidget<?>> TOUCH_INPUT_ROOT = new ThreadLocal<>();
+
+    /**
+     * Restrict raw touch drag polling to {@code root} and its descendants on the calling thread.
+     * A null root explicitly permits all scroll panels. Always close the scope, preferably with
+     * try-with-resources; nested scopes restore the previous restriction, including after errors.
+     */
+    public static TouchInputScope restrictTouchInputTo(AbstractWidget<?> root) {
+        return new TouchInputScope(root);
+    }
+
+    /** Same-thread, lexically nested touch restriction; close is idempotent. */
+    public static final class TouchInputScope implements AutoCloseable {
+        private final AbstractWidget<?> previous;
+        private boolean closed;
+
+        private TouchInputScope(AbstractWidget<?> root) {
+            previous = TOUCH_INPUT_ROOT.get();
+            if (root == null) TOUCH_INPUT_ROOT.remove();
+            else TOUCH_INPUT_ROOT.set(root);
+        }
+
+        @Override
+        public void close() {
+            if (closed) return;
+            closed = true;
+            if (previous == null) TOUCH_INPUT_ROOT.remove();
+            else TOUCH_INPUT_ROOT.set(previous);
+        }
+    }
+
+    /** Subclasses can deny raw touch polling during entrance, exit or another local input lock. */
+    protected boolean acceptsTouchInput() {
+        return true;
+    }
+
+    /** Package-private pure gate for tests; never consults Minecraft, native state or gestures. */
+    final boolean canPollTouchInput() {
+        if (!acceptsTouchInput()) return false;
+        AbstractWidget<?> root = TOUCH_INPUT_ROOT.get();
+        if (root == null) return true;
+        for (AbstractWidget<?> widget = this; widget != null; widget = widget.getParent()) {
+            if (widget == root) return true;
+        }
+        return false;
+    }
+
     @Getter
     private double spacing = 0;
     @Getter
@@ -399,6 +447,11 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
      * 平滑会变成橡皮筋。甩动时把惯性距离一次性记进 target，让既有平滑自然接管减速尾。</h2>
      */
     private void advanceTouchDrag() {
+        if (!canPollTouchInput()) {
+            // A modal change must not finish an underlying drag with somebody else's release/fling.
+            this.touchDragging = false;
+            return;
+        }
         TouchGestures gestures = TouchGestures.get();
         if (!TouchSettings.ENABLED) {
             this.touchDragging = false;

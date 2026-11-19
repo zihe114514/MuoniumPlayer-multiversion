@@ -99,6 +99,22 @@ public final class ClosureCompilerDownload {
         return state;
     }
 
+    public static String catalogPhase() {
+        return state.phase().name();
+    }
+
+    public static int catalogProgress() {
+        return state.percent();
+    }
+
+    public static boolean isDownloading() {
+        return state.phase() == Phase.DOWNLOADING;
+    }
+
+    public static String catalogFailure() {
+        return state.phase() == Phase.FAILED ? state.detail() : null;
+    }
+
     /** 转译器缓存目录，与字体缓存（fonts/）、模型缓存（models/）同一层级约定。 */
     public static File libCacheDir() {
         return new File(new File("config", "muonium"), "libs");

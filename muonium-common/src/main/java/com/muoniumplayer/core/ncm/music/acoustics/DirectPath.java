@@ -12,11 +12,11 @@ package com.muoniumplayer.core.ncm.music.acoustics;
  *   <li><b>遮挡低通</b> = sonicether/Sound-Physics 的指数式
  *       {@code fcRatio = exp(−遮挡×3)}:实心方块遮挡量 1.0、非实心 0.15,
  *       一块实心墙 ≈ fc 1kHz,两块 ≈ 200Hz —— 穿墙的「闷」;</li>
- *   <li><b>空气吸收</b> = {@code 18kHz·e^(−(d−6m)/16m)},与
- *       {@link SceneAcoustics} 的抽头空气吸收同一条曲线(近场不染色);</li>
+ *   <li><b>空气吸收</b>:近场全带宽,中远距温和减少高频,不把无遮挡的远声
+ *       压成墙后的闷响;与反射抽头共用同一条曲线。</li>
  *   <li><b>声像</b> = 等功率律,与 {@link SceneResponse} 抽头同款;M/S 域
- *       实现:中置分量(定位)按等功率对衰减分配,侧分量(立体声宽度)原样
- *       保留 —— pan=0 且满增益时逐样本恒等,无声源零染色。</li>
+ *       实现:中置与宽度分量共用传播衰减与滤波,围绕同一声源方向分配;
+ *       pan=0、满增益、无遮挡且零距离时恒等,无声源零染色。</li>
  * </ul>
  */
 public final class DirectPath {
@@ -41,8 +41,8 @@ public final class DirectPath {
     private static final double SOLID_TRANSMISSION_DB_PER_BLOCK = 40.0;
     /** 遮挡低通的截止下限(Hz):再闷也留低频体感。 */
     private static final double OCCLUSION_FC_MIN = 200.0;
-    /** 直射空气吸收的截止下限(Hz)。 */
-    private static final double AIR_FC_MIN = 500.0;
+    /** 直射空气吸收的截止下限(Hz):远处变柔,不是无遮挡也只剩低频。 */
+    private static final double AIR_FC_MIN = 6000.0;
     /** 总截止下限(两者取 min 后再兜底):数值防御,理论到不了。 */
     private static final double TOTAL_FC_MIN = 200.0;
     /** 全开截止(Hz):等于这个视为「不压」,音频侧跳过滤波。 */
@@ -76,12 +76,13 @@ public final class DirectPath {
         return Math.exp(-occlusion * OCCLUSION_RATE);
     }
 
-    /** 直射空气吸收的截止(Hz):6m 内不染色,之后指数下滑,下限 500Hz。 */
+    /** 直射空气吸收的截止(Hz):近场保持全带宽,远距温和减少高频。
+     *  这是音乐传播的近似,不是按真实湿度/温度逐频带求解的空气吸收。 */
     public static double airAbsorptionFc(double meters) {
         if (!(meters > AIR_FREE)) {
             return FC_OPEN;
         }
-        return Math.max(AIR_FC_MIN, AIR_FC_REF * Math.exp(-(meters - AIR_FREE) / AIR_DECAY));
+        return Math.max(AIR_FC_MIN, FC_OPEN * Math.exp(-(meters - AIR_FREE) / AIR_DECAY));
     }
 
     /** 遮挡截止(Hz):{@code 20kHz × occlusionFcRatio},下限 200Hz。 */
@@ -237,7 +238,8 @@ public final class DirectPath {
         if (!hasDiffraction) {
             return straight;
         }
-        final double diffracted = diffractionCutoffHz(pathExcess);
+        final double diffracted = Math.min(airAbsorptionFc(meters + Math.max(0.0, pathExcess)),
+                diffractionCutoffHz(pathExcess));
         return Math.max(straight, diffracted);
     }
 
@@ -281,9 +283,41 @@ public final class DirectPath {
         return Math.sin((clampPan(pan) + 1f) * (Math.PI / 4.0));
     }
 
-    // 与 SceneAcoustics 的空气吸收常量同源(复制一份避免跨类读私有;
-    // 数值改动须两处同步 —— 常量处有注释互指)。
-    private static final double AIR_FREE = 6.0;
-    private static final double AIR_DECAY = 16.0;
-    private static final double AIR_FC_REF = 18000.0;
+    /** 绕射是否比穿透更响:增益、截止、方向与传播时间必须选同一路径。 */
+    public static boolean prefersDiffraction(double directMeters, double occlusion,
+                                            double diffractionMeters, double pathExcess,
+                                            double bendDegrees) {
+        final double around = distanceAttenuation(diffractionMeters)
+                * diffractionGain(pathExcess, bendDegrees);
+        return around > directGain(directMeters, occlusion);
+    }
+
+    /** 从分耳等功率增益恢复声像,用于反射 ITD;方向与 ILD 保持一致。 */
+    public static float panFromGains(float left, float right) {
+        final double l = Math.max(0.0, left);
+        final double r = Math.max(0.0, right);
+        if (!(l + r > 1e-9) || !Double.isFinite(l + r)) {
+            return 0f;
+        }
+        return clampPan((float) (4.0 * Math.atan2(r, l) / Math.PI - 1.0));
+    }
+
+    /** 来声方向的水平投影。向量为声源到耳,与 MC yaw 的西向右手轴相配。 */
+    public static float arrivalPan(double arrivalX, double arrivalZ, double yawRadians) {
+        final double length = Math.hypot(arrivalX, arrivalZ);
+        if (!(length > 1e-6) || !Double.isFinite(length) || !Double.isFinite(yawRadians)) {
+            return 0f;
+        }
+        return clampPan((float) ((arrivalX * Math.cos(yawRadians)
+                + arrivalZ * Math.sin(yawRadians)) / length));
+    }
+
+    /** 点声源的有限宽度:两条立体声通路围绕同一到达方向,不留头锁定 side。 */
+    public static double sourceHalfWidthRadians(double meters) {
+        final double distance = Double.isFinite(meters) ? Math.max(0.25, meters) : 0.25;
+        return Math.atan2(0.35, distance);
+    }
+
+    private static final double AIR_FREE = 8.0;
+    private static final double AIR_DECAY = 96.0;
 }

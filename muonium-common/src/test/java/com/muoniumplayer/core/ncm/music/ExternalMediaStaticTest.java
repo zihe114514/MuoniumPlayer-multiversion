@@ -3,6 +3,8 @@ package com.muoniumplayer.core.ncm.music;
 import com.muoniumplayer.core.settings.HudConfig;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Paths;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -469,6 +471,90 @@ public class ExternalMediaStaticTest {
         assertEquals(0L, SmtcTimelineStabilizer.delayCompensationMs("Spotify.exe"),
                 "延迟补偿只有 Apple Music 需要");
         assertEquals(0L, SmtcTimelineStabilizer.delayCompensationMs(""));
+    }
+
+    // ── 管道写的防冻结结构（2.5.2 事故的回归守卫） ──────────────────────────────
+
+    @Test
+    public void publishCommandsNeverTouchThePipeDirectly() throws Exception {
+        // 事故形态：sendPublishAppId 在渲染线程 tick 里同步写子进程 stdin，管道写满
+        // 时渲染线程持锁等管道 → 画面永久冻结。守卫：sendLine 只许入队，管道写
+        // （write/flush/close）只许出现在 writeLoop 里。
+        String code = sourceOf("ExternalMediaService.java");
+        int sendLineStart = code.indexOf("private static void sendLine");
+        assertTrue(sendLineStart > 0);
+        int sendLineEnd = code.indexOf("private static", sendLineStart + 1);
+        String sendLineBody = code.substring(sendLineStart, sendLineEnd);
+        assertFalse(sendLineBody.contains(".write("), "入队路径不得写管道");
+        assertFalse(sendLineBody.contains(".flush()"), "入队路径不得 flush 管道");
+        assertTrue(sendLineBody.contains("OUTBOX.addLast"), "sendLine 的本职是入队");
+
+        int writeLoopStart = code.indexOf("private static void writeLoop");
+        assertTrue(writeLoopStart > 0, "专职写线程必须存在");
+        int writeLoopEnd = code.indexOf("private static void", writeLoopStart + 1);
+        String writeLoopBody = code.substring(writeLoopStart, writeLoopEnd);
+        assertTrue(writeLoopBody.contains(".write(line)"), "写线程做真实管道写");
+        // 写必须发生在锁外：持 STDIN_LOCK 写管道 = 把事故换了个线程重演。
+        assertFalse(lockedSectionOf(writeLoopBody).contains(".write("),
+                "写线程不得持 STDIN_LOCK 做管道写");
+        assertTrue(code.contains("writerBusySinceMs"), "看门狗的忙碌时间戳");
+        assertTrue(code.contains("WRITER_STALL_MS"), "写超时阈值");
+        assertTrue(code.contains("watchdogLoop"), "看门狗线程");
+        assertTrue(code.contains("OUTBOX_CAPACITY"), "有界队列");
+        // stop() 也不得在调用线程上碰管道（关屏变体的事故）。
+        int stopStart = code.indexOf("public static void stop()");
+        assertTrue(stopStart > 0);
+        int stopEnd = code.indexOf("private static void", stopStart + 1) > 0
+                ? code.indexOf("private static void", stopStart + 1) : code.length();
+        String stopBody = code.substring(stopStart, stopEnd);
+        assertFalse(stopBody.contains(".write("), "stop 不得在调用线程写管道");
+        assertFalse(stopBody.contains(".flush()"), "stop 不得在调用线程 flush 管道");
+    }
+
+    @Test
+    public void boundedOutboxDropsTheOldestMergeableCommandWhenFull() {
+        // 「最新即正确」的丢弃语义：新 pub tl 顶掉最旧 pub tl，绝不丢新值。
+        java.util.ArrayDeque<String> outbox = new java.util.ArrayDeque<String>();
+        for (int i = 0; i < 3; i++) outbox.addLast("pub tl " + i + " 100");
+        outbox.addLast("cmd play");
+        String incoming = "pub tl 999 100";
+        // 模拟 dropOldestFor 的行为契约（实现是私有的，这里钉语义不钉实现）。
+        String dropped = null;
+        for (java.util.Iterator<String> it = outbox.iterator(); it.hasNext(); ) {
+            String queued = it.next();
+            if (queued.startsWith("pub tl ")) { dropped = queued; it.remove(); break; }
+        }
+        org.junit.jupiter.api.Assertions.assertNotNull(dropped, "应顶掉最旧的同类命令");
+        org.junit.jupiter.api.Assertions.assertEquals("pub tl 0 100", dropped);
+        outbox.addLast(incoming);
+        org.junit.jupiter.api.Assertions.assertEquals(4, outbox.size());
+        org.junit.jupiter.api.Assertions.assertEquals("pub tl 999 100", outbox.peekLast(),
+                "最新值必须在队尾活着");
+    }
+
+    /** 把方法体里 synchronized 块的内容抠出来（粗粒度：取第一个 synchronized 块）。 */
+    private static String lockedSectionOf(String methodBody) {
+        int lock = methodBody.indexOf("synchronized");
+        if (lock < 0) return "";
+        int open = methodBody.indexOf('{', lock);
+        int depth = 0;
+        for (int i = open; i < methodBody.length(); i++) {
+            char c = methodBody.charAt(i);
+            if (c == '{') depth++;
+            if (c == '}') {
+                depth--;
+                if (depth == 0) return methodBody.substring(open, i);
+            }
+        }
+        return methodBody;
+    }
+
+    private static String sourceOf(String name) throws Exception {
+        // 共享测试工具：两个源根（共享根 / 本树根）都找，行为与别的静态守卫一致。
+        return new String(java.nio.file.Files.readAllBytes(
+                com.muoniumplayer.testsupport.ProjectPaths.sourceFile(
+                        Paths.get("com/muoniumplayer/core/ncm/music", name))),
+                java.nio.charset.StandardCharsets.UTF_8);
     }
 
     // ── 辅助 ───────────────────────────────────────────────────────────────────

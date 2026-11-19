@@ -332,8 +332,8 @@ public final class UiFontLibrary {
             statusBad = true;
             return;
         }
-        wire(prepared);
         active = font;
+        wire(prepared);
         status = "已换成 " + font.getDisplayName()
                 + (font.hasCjk() ? "" : "（这款字体没有汉字，中文仍由内置字体绘制）");
         statusBad = false;
@@ -370,15 +370,17 @@ public final class UiFontLibrary {
 
     /** 同步装配（启动时用；这时还没有渲染线程要让）。 */
     private static boolean install(UiFont font) {
+        UiFont previous = active;
         try {
             Prepared prepared = prepare(font);
             if (prepared == null) {
                 return false;
             }
-            wire(prepared);
             active = font;
+            wire(prepared);
             return true;
         } catch (Throwable failure) {
+            active = previous;
             return false;
         }
     }

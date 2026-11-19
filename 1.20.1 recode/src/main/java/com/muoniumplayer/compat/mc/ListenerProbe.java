@@ -17,6 +17,7 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 
 import com.muoniumplayer.core.ncm.music.acoustics.AcousticsRuntime;
 import com.muoniumplayer.core.ncm.music.acoustics.EnergyField;
+import com.muoniumplayer.core.ncm.music.acoustics.DirectPath;
 import com.muoniumplayer.core.ncm.music.acoustics.ListenerSample;
 import com.muoniumplayer.core.ncm.music.acoustics.SpeakerState;
 
@@ -57,17 +58,11 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
      * 射线条数,两档自适应(照 Wwise 的 CPU Limit Mode:移动时降密保响应,
      * 站定时升密保精度)。
      *
-     * <p>为什么移动时 256 够:判「我进没进洞」只需要围合度/首命中的量级,
-     * 256 条斐波那契分布的围合度估计误差 &lt;3% —— 房间判定不会因为降密而
-     * 翻面。1024 条的真正价值是<b>直方图统计密度</b>(T60 拟合每桶 ~64 条
-     * 命中),那是站定后才需要的东西。</p>
-     *
-     * <p>为什么站定也降到 512:512 条时每桶仍有 ~32 条命中,拟合噪声只
-     * 比 1024 高 1.4 倍,听感上不可辨;而射线工作量砍一半。需要极限精度时
-     * 把它调回 1024 即可。</p>
+     * <p>移动档 384 条,在采样响应和直方图质量间取平衡;站定档 1024 条用于提高
+     * 多频带能量直方图密度,为 T60 拟合和长尾扩散提供更稳定的统计。</p>
      */
-    private static final int RAY_COUNT_SETTLED = 512;
-    private static final int RAY_COUNT_MOVING = 256;
+    private static final int RAY_COUNT_SETTLED = 1024;
+    private static final int RAY_COUNT_MOVING = 384;
 
     /** 首次命中之后最多再弹几次:直方图窗 3s ⇒ 路径要追到 ~1km 才不缺
      *  尾部。16 弹 × 160m 上限 ≈ 2.5km,真实大厅/峡谷的多次回声(3-4 次可闻
@@ -117,7 +112,15 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
     private static Level cachedWorld;
     private static int capturesSinceCast;
 
-    private ListenerProbe() {
+    private final Level expectedWorld;
+
+    private ListenerProbe(Level world) {
+        expectedWorld = world;
+    }
+
+    @Override
+    public Object contextKey() {
+        return expectedWorld;
     }
 
     /** 采一帧;不在世界里返回 null。 */
@@ -125,14 +128,14 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         if (client == null || client.player == null || client.level == null) {
             return null;
         }
-        return new ListenerProbe();
+        return new ListenerProbe(client.level);
     }
 
     @Override
     public ListenerSample capture() {
         final Minecraft client = Minecraft.getInstance();
         final Level world = client.level;
-        if (world == null || client.player == null) {
+        if (world == null || world != expectedWorld || client.player == null) {
             // 退出世界回主菜单:静态缓存别钉住已卸载的 ClientLevel(整包 chunk)
             cachedStats = null;
             cachedOrigin = null;
@@ -207,11 +210,7 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
             // 源方向在玩家右手方向上的投影(与抽头声像同款投影)
             final double dx = eye.x - origin.x;
             final double dz = eye.z - origin.z;
-            final double horiz = Math.sqrt(dx * dx + dz * dz);
-            directPan = horiz > 1e-6
-                    ? (float) Math.max(-1.0, Math.min(1.0,
-                            (dx * -Math.cos(yawRad) + dz * -Math.sin(yawRad)) / horiz))
-                    : 0f;
+            directPan = DirectPath.arrivalPan(dx, dz, yawRad);
             // 有实心遮挡才值得找绕射路径:0.15 档(栅栏/玻璃)不挡声波拐弯。
             if (directOccl >= 1.0f) {
                 diffraction = findDiffraction(world, origin, eye);
@@ -220,12 +219,7 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
                     // 定位在缺口/墙角处,这是「听出从哪儿绕过来」的线索。
                     final double ex = eye.x - diffraction.edge.x;
                     final double ez = eye.z - diffraction.edge.z;
-                    final double edgeHoriz = Math.sqrt(ex * ex + ez * ez);
-                    diffractionPan = edgeHoriz > 1e-6
-                            ? (float) Math.max(-1.0, Math.min(1.0,
-                                    (ex * -Math.cos(yawRad) + ez * -Math.sin(yawRad))
-                                            / edgeHoriz))
-                            : 0f;
+                    diffractionPan = DirectPath.arrivalPan(ex, ez, yawRad);
                 }
             }
         } else {
@@ -282,8 +276,8 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
     }
 
     /**
-     * 采样原点(共享层据此判站定、切采样周期):世界声源在用时返回锚点,
-     * 否则返回眼位。
+     * 节流位姿:返回听者眼位与 yaw/pitch 弧度。音箱位置固定也不代表
+     * 听者站定,移动或转头时仍应按快周期更新直射与反射。
      *
      * <p><b>主线程每 tick 调用</b> —— 因此复用同一个数组,不新建。返回值
      * 的持有者只读不存,不存在跨线程共享问题(游戏线程写、游戏线程读)。</p>
@@ -295,17 +289,12 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
             if (client == null || client.player == null) {
                 return null;
             }
-            final SpeakerState speaker = SpeakerManager.samplingOrigin(client.level);
-            if (speaker != null) {
-                ORIGIN[0] = speaker.x();
-                ORIGIN[1] = speaker.y();
-                ORIGIN[2] = speaker.z();
-                return ORIGIN;
-            }
             final Vec3 eye = client.player.getEyePosition();
             ORIGIN[0] = eye.x;
             ORIGIN[1] = eye.y;
             ORIGIN[2] = eye.z;
+            ORIGIN[3] = Math.toRadians(client.player.getYRot());
+            ORIGIN[4] = Math.toRadians(client.player.getXRot());
             return ORIGIN;
         } catch (Throwable ignored) {
             return null;   // 采不到就不参与站定判定(退化为快周期)
@@ -313,7 +302,7 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
     }
 
     /** 站定判定的复用缓冲(仅游戏线程读写)。 */
-    private static final double[] ORIGIN = new double[3];
+    private static final double[] ORIGIN = new double[5];
 
     /** 射线场的统计摘要;{@link #NONE} 即「没采/旷野」。 */
     private static final class GeomStats {
@@ -393,8 +382,8 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
             // 固定偏移打破高纬度的环状对称(纯斐波那契格的伪影)。
             final double idx = (rays - 1 - i) + 0.5;
             final double longitude = GOLDEN_ANGLE * idx;
-            final double latitude = Math.asin((double) idx / rays * 2.0 - 1.0
-                    + 0.0033 * Math.sin(idx * 12.9898));
+            final double latitude = Math.asin(Math.max(-1.0, Math.min(1.0,
+                    (double) idx / rays * 2.0 - 1.0 + 0.0033 * Math.sin(idx * 12.9898))));
             Vec3 dir = new Vec3(
                     Math.cos(latitude) * Math.cos(longitude),
                     Math.sin(latitude),
@@ -496,15 +485,9 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
     /** 声像 −1(正左)..1(正右):到达方向在玩家右手方向上的投影。 */
     private static float[] computePans(GeomStats stats, float yawRad) {
         final float[] pans = new float[stats.tapCount];
-        // 玩家右手方向:朝向水平旋转 −90°(yaw=0 面南时右手在西)。
-        final double rightX = -Math.cos(yawRad);
-        final double rightZ = -Math.sin(yawRad);
+        // 缓存向量是墙→耳,不是耳→墙;投影符号必须与 HRTF 的声源方位一致。
         for (int i = 0; i < stats.tapCount; i++) {
-            final double horiz = stats.tapHoriz[i];
-            pans[i] = horiz > 1e-6
-                    ? (float) Math.max(-1.0, Math.min(1.0,
-                            (stats.tapArrX[i] * rightX + stats.tapArrZ[i] * rightZ) / horiz))
-                    : 0f;
+            pans[i] = DirectPath.arrivalPan(stats.tapArrX[i], stats.tapArrZ[i], yawRad);
         }
         return pans;
     }
@@ -563,7 +546,8 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
                 return null;
             }
             VoxelShape shape = ClipContext.Block.COLLIDER.get(state, getter, pos, CollisionContext.empty());
-            if (!shape.isEmpty()) {
+            if (!shape.isEmpty() && shape.clip(from, to, pos) != null) {
+                // 经过体素不等于命中碰撞箱:穿过栅栏/楼梯空隙不能记成遮挡。
                 // 实心整块 1.0、非完整碰撞箱(栅栏/玻璃板/楼梯)0.15 —— Sound
                 // Physics 同款记账。
                 occlusion[0] += state.isCollisionShapeFullBlock(getter, pos) ? 1.0 : 0.15;

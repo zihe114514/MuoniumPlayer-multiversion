@@ -127,7 +127,11 @@ public enum HudSetting {
     /** 每个拍点步进的转角（度）：90 就是一圈四拍。开关与档位存共享层 MusicSpin，这里只出滑条。 */
     SPIN_STEP("陀螺模式 每拍转角", 30.0f, 360.0f),
     /** 不按节拍时的基础恒速（度/秒）：0 退回纯拍点步进，节拍间完全停住。 */
-    SPIN_BASE_SPEED("陀螺模式 过渡转速", 0.0f, 360.0f);
+    SPIN_BASE_SPEED("陀螺模式 过渡转速", 0.0f, 360.0f),
+    // ---- 灵动岛音乐卡（只在末尾追加，保留本树已发布枚举序号）----
+    ISLAND_MINI_CARD_SCALE("音乐卡缩放", 0.50f, 2.00f),
+    // ---- 音乐胶囊（只在末尾追加，保留本树已发布枚举序号）----
+    ISLAND_MUSIC_CAPSULE_MAX_WIDTH("音乐胶囊最大长度", 160.0f, 720.0f);
 
     private final String label;
     private final float min;
@@ -230,6 +234,8 @@ public enum HudSetting {
             case TRANSPARENT_WIDTH: return TransparentMode.widthPercent();
             case SPIN_STEP: return MusicSpin.stepDegrees();
             case SPIN_BASE_SPEED: return MusicSpin.baseSpeed();
+            case ISLAND_MINI_CARD_SCALE: return HudConfig.islandMiniCardScale;
+            case ISLAND_MUSIC_CAPSULE_MAX_WIDTH: return HudConfig.islandMusicCapsuleMaxWidth;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -318,6 +324,10 @@ public enum HudSetting {
             case TRANSPARENT_WIDTH: TransparentMode.setWidthPercent(clamped); break;
             case SPIN_STEP: MusicSpin.setStepDegrees(clamped); break;
             case SPIN_BASE_SPEED: MusicSpin.setBaseSpeed(clamped); break;
+            case ISLAND_MINI_CARD_SCALE: HudConfig.islandMiniCardScale = clamped; break;
+            case ISLAND_MUSIC_CAPSULE_MAX_WIDTH:
+                if (Float.isFinite(value)) HudConfig.islandMusicCapsuleMaxWidth = clamped;
+                break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }

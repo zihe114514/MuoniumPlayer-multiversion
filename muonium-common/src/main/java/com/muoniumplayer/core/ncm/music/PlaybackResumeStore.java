@@ -221,7 +221,13 @@ public final class PlaybackResumeStore {
                 for (Music music : snapshot) {
                     if (music == null) continue;
                     if (count >= MAX_QUEUE) break;
-                    tracks.add(LocalPlaylistStore.serializeTrack(music));
+                    JsonObject track = LocalPlaylistStore.serializeTrack(music);
+                    // 会话展示元数据与歌单存档分开：解码时长仍保留其来源，不能伪装成上游 dt。
+                    JsonObject metadata = new JsonObject();
+                    metadata.addProperty("durationMillis", Math.max(0L, music.getDuration()));
+                    metadata.addProperty("foreignCover", music.isForeignCover());
+                    track.add("_resume", metadata);
+                    tracks.add(track);
                     count++;
                 }
             }
@@ -282,7 +288,23 @@ public final class PlaybackResumeStore {
                 for (JsonElement element : root.getAsJsonArray("queue")) {
                     if (queue.size() >= MAX_QUEUE) break;
                     Music music = LocalPlaylistStore.deserializeTrack(element);
-                    if (music != null) queue.add(music);
+                    if (music != null) {
+                        if (element.isJsonObject()) {
+                            JsonElement extra = element.getAsJsonObject().get("_resume");
+                            if (extra != null && extra.isJsonObject()) {
+                                JsonObject metadata = extra.getAsJsonObject();
+                                music.applyDecodedDuration(Math.max(0L, readLong(metadata, "durationMillis", 0L)));
+                                // 可选字段损坏不丢整首歌；旧快照无此字段时沿用默认值。
+                                try {
+                                    if (metadata.has("foreignCover")) {
+                                        music.setForeignCover(metadata.get("foreignCover").getAsBoolean());
+                                    }
+                                } catch (RuntimeException ignored) {
+                                }
+                            }
+                        }
+                        queue.add(music);
+                    }
                 }
             }
             if (queue.isEmpty()) return null;

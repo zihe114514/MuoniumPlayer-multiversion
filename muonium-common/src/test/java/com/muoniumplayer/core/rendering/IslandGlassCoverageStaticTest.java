@@ -18,12 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 灵动岛的八款样式里，真背景到底铺上了几款。
+ * 灵动岛常规样式的真背景接线。
  *
  * <h2>为什么单独钉这个</h2>
- * 2026-09-30 玩家报「HUD 界面的不是实时渲染，例如歌词 HUD、灵动岛」。查下来跟采集、坐标、
- * 帧率闸都没关系：八款岛形样式里只有「液态玻璃」那一款调过 {@code paintFrost}，其余各款
- * 画的是自己那套按时间摆动的假渐变——它当然不会跟着身后的画面走。而他用的是默认的经典胶囊。
+ * 2026-09-30 玩家报「HUD 界面的不是实时渲染，例如歌词 HUD、灵动岛」。当时只有「液态玻璃」
+ * 那一款调过 {@code paintFrost}，经典胶囊等常规样式没有铺背景，无法跟随身后的画面。
  *
  * <p>这类漏接<em>不会</em>让任何东西报错，也不会让构建变红：样式分派是 if-else 链，新增一款
  * 或者搬运某一款时忘记接玻璃，症状只是「那一款没有玻璃」，而截图上一块没有玻璃的岛和一块
@@ -51,7 +50,7 @@ class IslandGlassCoverageStaticTest {
         assertTrue(start >= 0, "找不到 drawIsland，改动方式变了要一起改这份测试");
         int frost = src.indexOf("GlassLook.paintFrost(GlassLook.Surface.ISLAND", start);
         assertTrue(frost >= 0, "灵动岛主体里已经没有铺真背景这一步了");
-        int end = src.indexOf("if (absorbGlow > .01)", frost);
+        int end = src.indexOf("if (!musicCapsule && absorbGlow > .01)", frost);
         assertTrue(end > frost, "找不到主体结尾的锚点");
         return src.substring(frost, end);
     }
@@ -89,8 +88,8 @@ class IslandGlassCoverageStaticTest {
         while (m.find()) {
             plates.add(m.group(1));
         }
-        // 通透玻璃 / 浮层卡片 / 音乐聚焦 / 系统通知 / 经典胶囊与紧凑状态（同一张 else 底）。
-        assertEquals(5, plates.size(), "整岛尺寸的底板数量变了：" + plates);
+        // 经典胶囊与紧凑状态共用同一张底，音乐胶囊使用独立表面。
+        assertEquals(1, plates.size(), "整岛尺寸的底板数量变了：" + plates);
         for (String plate : plates) {
             assertTrue(plate.contains("thin"), "这块岛形底没按玻璃浓度压薄，铺上背景也看不见: " + plate);
         }
@@ -109,10 +108,25 @@ class IslandGlassCoverageStaticTest {
     }
 
     @Test
+    @DisplayName("音乐胶囊通知态保留所选音乐胶囊表面，不落入通用胶囊底板")
+    void musicCapsuleNoticesKeepTheirSelectedSurface() throws Exception {
+        String src = read(island());
+        int draw = src.indexOf("private void drawIsland(");
+        int musicSurface = src.indexOf("if (musicCapsule && !musicRow)", draw);
+        int genericPlate = src.indexOf("boolean frosted = !liquidGlass && !musicCapsule", musicSurface);
+        int musicSurfaceMethod = src.indexOf("private void drawMusicCapsuleSurface(");
+        assertTrue(musicSurface > draw && genericPlate > musicSurface);
+        assertTrue(src.substring(musicSurface, genericPlate).contains("drawMusicCapsuleSurface("));
+        assertTrue(musicSurfaceMethod > 0, "所选胶囊表面需有独立材质路径");
+        assertTrue(src.substring(genericPlate, genericPlate + 1_000).contains("else if (!musicCapsule)"),
+                "通用底板不能再次覆盖音乐胶囊通知态");
+    }
+
+    @Test
     @DisplayName("描边与高光不受浓度影响，只有镜面高光跟着压薄")
     void outlinesStayWhileSheenFollowsTint() throws Exception {
         String src = read(island());
-        int sheen = src.indexOf("if (!systemCard && !musicFocus && !liquidGlass) {");
+        int sheen = src.indexOf("// 顶部镜面高光随玻璃浓度压薄。");
         assertTrue(sheen > 0);
         assertTrue(src.substring(sheen, sheen + 600).contains("* thin"),
                 "顶部那条镜面高光必须跟着浓度走，否则它会在真背景上挡出一条不透明的膜");

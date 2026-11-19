@@ -586,8 +586,8 @@ public class ControlsBar extends NCMPanel {
                     // 系统播放器镜像态与「总时长还没落地」时进度条仍要画出来，那时候它也得跟着主题走。
                     progressBar.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
 
-                    // 镜像态下没有内部引擎，进度与总长都取自快照（见 CloudMusic 那两个 Now 方法）。
-                    if (presentation.preparing || !CloudMusic.hasPlaybackClock()) {
+                    // 恢复态也有冻结的进度快照，但没有可操作的音频时钟。
+                    if (presentation.preparing) {
                         progressBar.setWidth(0).setRadius(0);
                         return;
                     }
@@ -611,8 +611,6 @@ public class ControlsBar extends NCMPanel {
                     // 直播：左侧时间标是已收听时长（右侧让位给 LIVE 徽标）。
                     if (com.muoniumplayer.core.ncm.music.LiveStreamSession.isActive())
                         return formatDuration((float) com.muoniumplayer.core.ncm.music.LiveStreamSession.elapsedMillis());
-                    if (!CloudMusic.hasPlaybackClock())
-                        return "00:00";
                     return formatDuration((float) CloudMusic.positionMsNow());
                 },
                 FontManager.pf12
@@ -633,8 +631,6 @@ public class ControlsBar extends NCMPanel {
                     // 直播态：没有总时长，右侧时间标让位给 LIVE 徽标；左侧照旧走已收听时长。
                     if (com.muoniumplayer.core.ncm.music.LiveStreamSession.isActive()) return "LIVE";
                     if (presentation.preparing) return "--:--";
-                    if (!CloudMusic.hasPlaybackClock())
-                        return "00:00";
                     float total = (float) CloudMusic.durationMsNow();
                     if (total <= 0.0f)
                         return "00:00";
@@ -879,6 +875,7 @@ public class ControlsBar extends NCMPanel {
                             Math.max(1.0, (viperToggle.getParentHeight() - 18.0) * .5 - iconBandLift));
             viperToggle
                     .setColor(ViperRuntime.isEnabled()
+                            || com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings.isEnabled()
                             ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                             : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
         });
@@ -887,12 +884,11 @@ public class ControlsBar extends NCMPanel {
             NCMScreen.getInstance().openViperEffects();
             return true;
         });
-        // 与点亮状态同步：图标亮着说明两条链至少一条在跑（蝰蛇或场景声学），
-        // 说明里的「开启中」让这层含义不用猜。面板里蝰蛇与场景声学各占一页。
+        // ViPER 或场景声学任一开启时点亮；环境选曲不是输出音效，不参与这个指示。
         viperToggle.setTooltip(() -> ViperRuntime.isEnabled()
                         || com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings.isEnabled()
-                ? "音效调音台（蝰蛇 · 场景声学 · 开启中）"
-                : "音效调音台（蝰蛇 · 场景声学）");
+                ? "音效工作台（ViPER · 图形 EQ · 场景声学 · 音效开启中）"
+                : "音效工作台（ViPER · 图形 EQ · 场景声学）");
 
         // 下一首播放列表：队列抽屉的开关排在音质按钮左边，沿用右下角次级控件的同一条锚点链。
         // 用「播放三角 + 列表」（player-action-icons U+E144）而不是歌曲行那枚「下一首播放」

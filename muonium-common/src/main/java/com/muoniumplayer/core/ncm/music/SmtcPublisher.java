@@ -58,6 +58,8 @@ public final class SmtcPublisher {
     private static String pushedState = "";
     private static String pushedArtPath = "";
     private static long lastTimelinePushMs;
+    /** 上一次整套重推时的助手世代号；换代（崩溃重启/看门狗强杀）后增量状态全部作废。 */
+    private static int pushedGeneration = -1;
     /** 镜像/无播放时已经收起过一次的记号，避免每 tick 重复发 pub off。 */
     private static boolean collapsed;
     /** 发布图标落盘后的绝对路径；null 表示还没解出来（浮窗暂时没图标，不影响显示名）。 */
@@ -116,11 +118,16 @@ public final class SmtcPublisher {
 
             String trackKey = track.getStableKey();
             boolean trackChanged = !trackKey.equals(pushedTrackKey);
-            if (collapsed || trackChanged) {
+            // 助手换代（崩溃重启、看门狗强杀）= 增量状态全丢：整套重推一次。
+            // 不这么做的话，新助手进程里「身份」还是上一次那套、元数据却停在
+            // 换代前的最后一拍，浮窗里挂着一条不知何时才更新的僵尸会话。
+            boolean helperRebirth = ExternalMediaService.helperGeneration() != pushedGeneration;
+            if (collapsed || trackChanged || helperRebirth) {
                 collapsed = false;
                 pushedTrackKey = trackKey;
                 pushedState = "";
                 pushedArtPath = "";
+                pushedGeneration = ExternalMediaService.helperGeneration();
                 // 身份先行：AUMID 必须在会话创建前定型（helper 侧拿到才建会话），
                 // 同时它也是镜像端「不镜像自己」的排除键。
                 ensureIconAsync();
@@ -169,6 +176,15 @@ public final class SmtcPublisher {
         pushedState = "";
         pushedArtPath = "";
         ExternalMediaService.sendPublishOff();
+    }
+
+    /** 测试入口：清空推送基线。生产代码不需要调它（世代号初始 -1 自带首推语义）。 */
+    static void resetPushBaselineForTest() {
+        pushedTrackKey = "";
+        pushedState = "";
+        pushedArtPath = "";
+        pushedGeneration = -1;
+        collapsed = false;
     }
 
     /** 把媒体键回传落进 CloudMusic 的播控。主线程，每 tick 清一次队列。 */

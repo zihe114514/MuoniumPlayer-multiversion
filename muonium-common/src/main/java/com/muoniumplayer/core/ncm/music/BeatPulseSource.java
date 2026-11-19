@@ -80,15 +80,14 @@ public final class BeatPulseSource {
             recordOnset(now - (long) phase);
             return pulseAtPhase((float) (phase / grid.periodNanos()));
         }
-        // 无网格：实时估算收敛了就用估算拍，否则退能量脉冲。
+        // 估算收敛后仍持续消费真实 onset，BPM/相位不能从此冻结在第一次估算上。
+        float energy = PlaybackPulse.beat();
+        noteEnergyOnset(energy, now);
         if (estimatedPeriodNanos > 0f && estimatedConfidence >= 0.55f) {
             double elapsed = now - lastBeatNanos;
             double phase = elapsed - Math.floor(elapsed / estimatedPeriodNanos) * estimatedPeriodNanos;
             return pulseAtPhase((float) (phase / estimatedPeriodNanos));
         }
-        float energy = PlaybackPulse.beat();
-        // 能量回退期把 onset 事件喂给估算器养节拍：PlaybackPulse.pulse 升沿即拍。
-        noteEnergyOnset(energy);
         return energy;
     }
 
@@ -136,8 +135,8 @@ public final class BeatPulseSource {
 
     /** 能量脉冲升沿检测：上一帧低、这一帧高，视为一次 onset。 */
     private static float lastEnergy;
-    private static void noteEnergyOnset(float energy) {
-        if (energy > 0.35f && lastEnergy <= 0.35f) recordOnset(System.nanoTime());
+    private static void noteEnergyOnset(float energy, long now) {
+        if (energy > 0.35f && lastEnergy <= 0.35f) recordOnset(now);
         lastEnergy = energy;
     }
 
@@ -201,14 +200,12 @@ public final class BeatPulseSource {
 
     // ---------------- 二级：实时估算（onset 自相关） ----------------
 
-    private static void recordOnset(long now) {
-        // 测试时钟重定向：advanceClockForTest 之后取测试值，生产恒走 System.nanoTime()。
-        long stamp = testClockHooked ? testNowNanos : System.nanoTime();
+    private static void recordOnset(long stamp) {
+        // 使用事件自己的时间戳；网格可能由同帧多个消费者重复读取同一拍点。
+        if (lastOnsetNanos != 0L && stamp - lastOnsetNanos < 250_000_000L) return;
         if (lastOnsetNanos != 0L) {
             double interval = stamp - lastOnsetNanos;
-            // 网格拍是周期喂的：间隔恒等于周期本身。能量 onset 是人肉拍：
-            // 0.25~2s 视作乐理拍（30~240 BPM），更密的当 trill 丢掉。
-            if (interval >= 0.25e9 && interval <= 2e9) {
+            if (interval <= 2e9) {
                 ONSET_NANOS[onsetCount % ONSET_WINDOW] = (float) interval;
                 onsetCount++;
                 if (onsetCount >= 8) recomputeEstimate(stamp);
@@ -253,8 +250,7 @@ public final class BeatPulseSource {
      *  否则 recordOnset 会拿真实 nanoTime 当样本，与后续测试时钟的间隔变成负数全丢。 */
     static void feedEnergyForTest(float energy) {
         if (!testClockHooked) return;
-        if (energy > 0.35f && lastEnergy <= 0.35f) recordOnset(testNowNanos);
-        lastEnergy = energy;
+        noteEnergyOnset(energy, testNowNanos);
     }
 
     private static long testNowNanos = 1_000_000_000L;
@@ -263,6 +259,10 @@ public final class BeatPulseSource {
     static void advanceClockForTest(long nanos) {
         testNowNanos = nanos;
         testClockHooked = true;
+    }
+
+    static void feedGridBeatForTest(long beatNanos) {
+        recordOnset(beatNanos);
     }
 
     static float estimatedPeriodNanosForTest() {

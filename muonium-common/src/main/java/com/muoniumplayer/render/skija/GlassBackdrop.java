@@ -248,6 +248,10 @@ public final class GlassBackdrop {
         if (com.muoniumplayer.core.rendering.GlassMobileTier.active()) {
             return false;
         }
+        // 聊天音乐卡只借用预糊背景，不依赖琉璃主题或液态折射着色器是否可编译。
+        if (com.muoniumplayer.core.rendering.DownloadDynamicIsland.needsMusicCardBackdrop()) {
+            return true;
+        }
         if (com.muoniumplayer.core.screens.ncm.NCMTheme.getTrueGlassAmount() <= 0.001f) {
             return false;
         }

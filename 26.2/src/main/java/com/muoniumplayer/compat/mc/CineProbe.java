@@ -2,7 +2,10 @@ package com.muoniumplayer.compat.mc;
 
 import com.muoniumplayer.core.cine.CineDirector;
 import com.muoniumplayer.core.cine.CineDirector.MobSample;
+import com.muoniumplayer.core.cine.CineDirector.Vec3Holder;
+import com.muoniumplayer.core.cine.CineInput;
 import com.muoniumplayer.core.cine.CineSettings;
+import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.Entity;
@@ -10,234 +13,265 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
-/**
- * 「卡点运镜」的场景采样器 + 相机执行器 shim：把 26.3 的 MC 状态翻译成
- * common 侧的 {@link CineDirector.SceneProbe} 纯数据。
- *
- * <p>照 {@code ListenerProbe}/{@code CameraAccess} 的 compat 模式：世界状态住在
- * 树侧，common 只认接口。26.3 的 API 形态（javap 核对 merged jar 26.3）：
- * {@code mc.gui.screen()}、{@code Camera.position()}、{@code Hud.isHidden()/toggle()}、
- * {@code mc.options.getCameraType()}。回打旧树时的差异集中在这几处
- * （{@code mc.currentScreen}、{@code getPosition()}、{@code mc.options.hideGui}）。</p>
- *
- * <h2>输入/受伤沿检测</h2>
- * <p>闲置检测要的是「事件沿」不是「状态」：{@link #onKeyMouseActivity()} 由树侧的
- * 输入桥调用（MuoniumPlayerClient 已有按键/鼠标事件路径），置 {@code activityLatch}；
- * tick 桥消费后清零。受伤同理走 {@link LocalPlayer#hurtTime} 的降沿。</p>
- */
+/** 26.2 的主线程场景快照与相机/HUD 归还；不会传入渲染帧。 */
 public final class CineProbe implements CineDirector.SceneProbe {
 
-    // ---- 沿锁存（主线程 tick 桥单消费）----
-    /** 输入活动沿：视角/位置/速度变化推断，onClientTick 消费后清零。 */
-    private static volatile boolean activityLatch;
-    /** 上一次的玩家 hurtTime（降沿检测受伤）。 */
+    private static final CineInput INPUT = new CineInput();
+    private static LocalPlayer hurtPlayer;
     private static int lastHurtTime;
-    /** 上一 tick 的视角/位置快照（闲置推断的差分基线）。 */
-    private static double lastX, lastY, lastZ;
-    private static float lastYaw, lastPitch;
-    private static boolean poseBaselineValid;
-    /** 运镜进入前的相机视角与 HUD 状态（退出时恢复）。 */
-    private static net.minecraft.client.CameraType previousCameraType;
-    private static boolean hudStateOverridden;
-    private static boolean hudWasHiddenBefore;
+    private static CameraType previousCameraType;
+    private static boolean owned;
+    private static boolean hudOverridden;
 
-    private CineProbe() {
+    private final Minecraft mc;
+    private final LocalPlayer player;
+    private final Level level;
+    private final Object screen;
+    private final boolean input;
+    private final boolean hurt;
+    private final boolean skyVisible;
+    private final int dimensionKind;
+    private final String biomeKey;
+    private final long timeOfDay;
+
+    private CineProbe(Minecraft mc) {
+        this.mc = mc;
+        this.player = mc.player;
+        this.level = mc.level;
+        this.screen = mc.gui.screen();
+        this.skyVisible = level != null && player != null
+                && level.canSeeSky(net.minecraft.core.BlockPos.containing(player.getX(), player.getEyeY(), player.getZ()));
+        this.dimensionKind = level == null ? -1 : level.dimensionTypeRegistration().unwrapKey()
+                .map(key -> key.identifier().getPath().contains("nether") ? 1
+                        : key.identifier().getPath().contains("end") ? 2 : 0).orElse(3);
+        this.biomeKey = level == null || player == null ? "" : level.getBiome(player.blockPosition())
+                .unwrapKey().map(key -> key.identifier().getPath()).orElse("");
+        this.timeOfDay = level == null || player == null ? 6000L : level.environmentAttributes()
+                .getValue(net.minecraft.world.attribute.EnvironmentAttributes.SKY_LIGHT_LEVEL,
+                        player.blockPosition()) < 4f ? 18000L : 6000L;
+        var options = mc.options;
+        boolean held = options.keyUp.isDown() || options.keyDown.isDown()
+                || options.keyLeft.isDown() || options.keyRight.isDown()
+                || options.keyJump.isDown();
+        this.input = INPUT.consume(mc.isWindowActive(), held);
+        int hurtTime = player == null ? 0 : player.hurtTime;
+        this.hurt = hurtPlayer == player && hurtTime > lastHurtTime;
+        hurtPlayer = player;
+        lastHurtTime = hurtTime;
     }
 
-    /** 构造当帧/当 tick 的 probe。主线程调用。 */
     public static CineProbe of(Minecraft mc) {
-        return new CineProbe();
+        return new CineProbe(mc);
     }
 
-    /** 输入桥（保留给树侧显式事件路径；当前闲置推断走 inputThisTick 的差分）。 */
-    public static void onKeyMouseActivity() {
-        activityLatch = true;
+    public static void onKey(int key, int action) {
+        INPUT.key(key, action);
     }
 
-    /**
-     * 运镜刚启动时树侧调：切第三人称背后 + 可选隐藏 HUD。
-     * （mixin 只在 isActive 时接管，相机类型必须是第三人称才能看到玩家。）
-     */
+    public static void onButton(int button, int action) {
+        INPUT.button(button, action);
+    }
+
+    public static void onScroll(double x, double y) {
+        INPUT.scroll(x, y);
+    }
+
+    public static void onMove(double x, double y) {
+        INPUT.move(x, y);
+    }
+
+    public static void onRelativeMove(double dx, double dy) {
+        INPUT.relativeMove(dx, dy);
+    }
+
+    /** 每 tick 对账，异常退出也能归还；不依赖调用前后的布尔翻转恰好被观察到。 */
+    public static void sync() {
+        if (CineDirector.isActive()) {
+            if (!owned) entered();
+        } else if (owned) {
+            left();
+        }
+    }
+
     public static void entered() {
+        if (owned) return;
         Minecraft mc = Minecraft.getInstance();
-        if (mc == null || mc.player == null) return;
+        if (mc.player == null) return;
         previousCameraType = mc.options.getCameraType();
-        if (previousCameraType != net.minecraft.client.CameraType.THIRD_PERSON_BACK) {
-            mc.options.setCameraType(net.minecraft.client.CameraType.THIRD_PERSON_BACK);
-        }
+        owned = true;
+        mc.options.setCameraType(CameraType.THIRD_PERSON_BACK);
         if (CineSettings.hideHud() && !mc.gui.hud.isHidden()) {
-            hudWasHiddenBefore = false;
-            hudStateOverridden = true;
+            hudOverridden = true;
             mc.gui.hud.toggle();
         }
-        poseBaselineValid = false;
-        lastHurtTime = 0;
-        // 进入瞬间不置输入闩：start() 里闲置计时本来就归零了，这里再置闩会被
-        // 下一 tick 的 inputThisTick() 消费成「玩家动了」→ 立即 stop（2026-11-04
-        // 实机复盘：启动→0s 退出每 10s 循环）。基线也必须重置——切第三人称
-        // 前后视角差分无意义。
-        activityLatch = false;
-        poseBaselineValid = false;
     }
 
-    /**
-     * 运镜退出时树侧调：恢复相机视角与 HUD。
-     */
     public static void left() {
+        if (!owned) return;
         Minecraft mc = Minecraft.getInstance();
-        if (mc == null) return;
-        if (previousCameraType != null) {
-            mc.options.setCameraType(previousCameraType);
+        try {
+            // 用户或其他相机已经更改视角时，不把新选择覆盖成进入前的旧视角。
+            if (previousCameraType != null && mc.options.getCameraType() == CameraType.THIRD_PERSON_BACK) {
+                mc.options.setCameraType(previousCameraType);
+            }
+            if (hudOverridden) {
+                if (mc.gui.hud.isHidden()) mc.gui.hud.toggle();
+            }
+        } finally {
             previousCameraType = null;
+            owned = false;
+            hudOverridden = false;
         }
-        if (hudStateOverridden && mc.gui.hud.isHidden()) {
-            mc.gui.hud.toggle();
-        }
-        hudStateOverridden = false;
-        activityLatch = false;
-        lastHurtTime = 0;
-        poseBaselineValid = false;
     }
 
-    // ---------------- SceneProbe 实现 ----------------
+    @Override
+    public Object worldIdentity() {
+        return level;
+    }
+
+    @Override
+    public Object playerIdentity() {
+        return player;
+    }
 
     @Override
     public double playerX() {
-        LocalPlayer player = Minecraft.getInstance().player;
         return player == null ? Double.NaN : player.getX();
     }
 
     @Override
     public double playerY() {
-        LocalPlayer player = Minecraft.getInstance().player;
         return player == null ? Double.NaN : player.getY();
     }
 
     @Override
     public double playerZ() {
-        LocalPlayer player = Minecraft.getInstance().player;
         return player == null ? Double.NaN : player.getZ();
     }
 
     @Override
+    public double playerEyeY() {
+        return player == null ? Double.NaN : player.getEyeY();
+    }
+
+    @Override
     public float playerYaw() {
-        LocalPlayer player = Minecraft.getInstance().player;
         return player == null ? 0f : player.getYRot();
     }
 
     @Override
     public float playerPitch() {
-        LocalPlayer player = Minecraft.getInstance().player;
         return player == null ? 0f : player.getXRot();
     }
 
     @Override
     public Object openScreen() {
-        return Minecraft.getInstance().gui.screen();
+        return screen;
     }
 
     @Override
     public boolean hurtThisTick() {
-        LocalPlayer player = Minecraft.getInstance().player;
-        if (player == null) return false;
-        int hurtTime = player.hurtTime;
-        boolean fallingEdge = lastHurtTime > 0 && hurtTime == 0;
-        boolean risingEdge = hurtTime > 0 && lastHurtTime == 0;
-        lastHurtTime = hurtTime;
-        return risingEdge || fallingEdge;
+        return hurt;
     }
 
     @Override
     public boolean inputThisTick() {
-        boolean hadLatch = activityLatch;
-        activityLatch = false;
+        return input;
+    }
 
-        // 差分推断：视角或位置相对上一 tick 变了 = 玩家在动（走路/转头/被推挤都算）。
-        // 这比挂键鼠事件桥便宜且不漏：前进键按住时位置每 tick 在变，光标晃动时 yaw/pitch 在变。
-        LocalPlayer player = Minecraft.getInstance().player;
-        boolean moved = false;
-        if (player != null) {
-            double x = player.getX();
-            double y = player.getY();
-            double z = player.getZ();
-            float yaw = player.getYRot();
-            float pitch = player.getXRot();
-            if (poseBaselineValid) {
-                double dx = x - lastX;
-                double dy = y - lastY;
-                double dz = z - lastZ;
-                moved = dx * dx + dy * dy + dz * dz > 1.0e-6
-                        || Math.abs(yaw - lastYaw) > 0.05f
-                        || Math.abs(pitch - lastPitch) > 0.05f;
-            }
-            lastX = x;
-            lastY = y;
-            lastZ = z;
-            lastYaw = yaw;
-            lastPitch = pitch;
-            poseBaselineValid = true;
-        } else {
-            poseBaselineValid = false;
-        }
-        return hadLatch || moved;
+    @Override
+    public boolean skyVisible() {
+        return skyVisible;
+    }
+
+    @Override
+    public int dimensionKind() {
+        return dimensionKind;
+    }
+
+    @Override
+    public String biomeKey() {
+        return biomeKey;
+    }
+
+    @Override
+    public long timeOfDay() {
+        return timeOfDay;
     }
 
     @Override
     public boolean playerAlive() {
-        LocalPlayer player = Minecraft.getInstance().player;
-        return player != null && player.isAlive();
+        return player != null && level != null && player.isAlive() && !player.isSpectator()
+                && mc.getCameraEntity() == player && !mc.isPaused();
     }
 
     @Override
-    public boolean clipBlocked(double fromX, double fromY, double fromZ,
-                               double toX, double toY, double toZ) {
-        Level level = Minecraft.getInstance().level;
-        if (level == null) return false;
-        Vec3 from = new Vec3(fromX, fromY, fromZ);
-        Vec3 to = new Vec3(toX, toY, toZ);
-        var hit = level.clip(new ClipContext(from, to,
-                ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, Minecraft.getInstance().player));
-        return hit.getType() != net.minecraft.world.phys.HitResult.Type.MISS;
+    public Vec3Holder clipCamera(double fromX, double fromY, double fromZ,
+                                 double toX, double toY, double toZ) {
+        if (level == null) return new Vec3Holder(fromX, fromY, fromZ);
+        double dx = toX - fromX, dy = toY - fromY, dz = toZ - fromZ;
+        double length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (!Double.isFinite(length)) throw new IllegalArgumentException("非有限运镜射线");
+        if (length < 1.0e-5d) return new Vec3Holder(fromX, fromY, fromZ);
+        double fraction = 1d;
+        // 中心与八角射线约束近裁面，命中后退 0.25 格，避免镜头贴进墙体。
+        for (int i = -1; i < 8; i++) {
+            double ox = i < 0 ? 0d : ((i & 1) == 0 ? -0.1d : 0.1d);
+            double oy = i < 0 ? 0d : ((i & 2) == 0 ? -0.1d : 0.1d);
+            double oz = i < 0 ? 0d : ((i & 4) == 0 ? -0.1d : 0.1d);
+            Vec3 from = new Vec3(fromX + ox, fromY + oy, fromZ + oz);
+            Vec3 to = new Vec3(toX + ox, toY + oy, toZ + oz);
+            var hit = level.clip(new ClipContext(from, to,
+                    ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, player));
+            if (hit.getType() == HitResult.Type.MISS) continue;
+            Vec3 point = hit.getLocation();
+            double t = ((point.x - from.x) * dx + (point.y - from.y) * dy + (point.z - from.z) * dz)
+                    / (length * length) - 0.25d / length;
+            fraction = Math.max(0d, Math.min(fraction, t));
+        }
+        return new Vec3Holder(fromX + dx * fraction, fromY + dy * fraction, fromZ + dz * fraction);
     }
 
     @Override
     public MobSample nearestMovingMob(double rangeBlocks) {
-        Minecraft mc = Minecraft.getInstance();
-        LocalPlayer player = mc.player;
-        Level level = mc.level;
         if (player == null || level == null) return null;
-        double vertical = Math.max(8d, rangeBlocks * 0.6d);
-        AABB box = player.getBoundingBox().inflate(rangeBlocks, vertical, rangeBlocks);
+        AABB box = player.getBoundingBox().inflate(rangeBlocks, Math.max(8d, rangeBlocks * 0.6d), rangeBlocks);
         Mob best = null;
         double bestScore = Double.NEGATIVE_INFINITY;
-        for (Entity entity : level.getEntitiesOfClass(Mob.class, box, mob -> isAllowedMob(mob, player, rangeBlocks))) {
-            if (!(entity instanceof Mob mob)) continue;
-            double frameMove = (mob.getX() - mob.xo) * (mob.getX() - mob.xo)
-                    + (mob.getY() - mob.yo) * (mob.getY() - mob.yo)
-                    + (mob.getZ() - mob.zo) * (mob.getZ() - mob.zo);
-            double motion = mob.getDeltaMovement().lengthSqr();
-            double movement = Math.max(frameMove, motion);
-            if (movement < 4.0e-4) continue;
-            // 评分：移动量占大头、近距加成 —— 照 AmbientCameraClient.movingMobScore 的比例。
+        for (Mob mob : level.getEntitiesOfClass(Mob.class, box, candidate -> isAllowedMob(candidate, rangeBlocks))) {
+            double dx = mob.getX() - mob.xo, dy = mob.getY() - mob.yo, dz = mob.getZ() - mob.zo;
+            double movement = Math.max(dx * dx + dy * dy + dz * dz, mob.getDeltaMovement().lengthSqr());
+            if (movement < 4.0e-4d) continue;
+            var sight = level.clip(new ClipContext(new Vec3(player.getX(), player.getEyeY(), player.getZ()),
+                    new Vec3(mob.getX(), mob.getY() + mob.getBbHeight() * 0.55d, mob.getZ()),
+                    ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, player));
+            if (sight.getType() != HitResult.Type.MISS) continue;
             double score = movement * 600d - mob.distanceToSqr(player) / (rangeBlocks * rangeBlocks);
             if (score > bestScore) {
                 bestScore = score;
                 best = mob;
             }
         }
-        if (best == null) return null;
-        return new MobSample(best.getX(), best.getY(), best.getZ(),
-                best.getBbHeight(), best instanceof net.minecraft.world.entity.monster.Enemy);
+        return best == null ? null : sample(best);
     }
 
-    private static boolean isAllowedMob(Mob mob, LocalPlayer player, double range) {
-        if (!mob.isAlive() || mob.isRemoved() || mob.isInvisible()) return false;
-        if (mob.distanceToSqr(player) > range * range) return false;
-        if (CineSettings.excludeHostileMobs() && mob instanceof net.minecraft.world.entity.monster.Enemy) {
-            return false;
-        }
+    @Override
+    public MobSample trackedMob(int entityId, double rangeBlocks) {
+        if (player == null || level == null) return null;
+        Entity entity = level.getEntity(entityId);
+        return entity instanceof Mob mob && isAllowedMob(mob, rangeBlocks) ? sample(mob) : null;
+    }
+
+    private static MobSample sample(Mob mob) {
+        return new MobSample(mob.getId(), mob.getX(), mob.getY(), mob.getZ(), mob.getBbHeight());
+    }
+
+    private boolean isAllowedMob(Mob mob, double range) {
+        if (!mob.isAlive() || mob.isRemoved() || mob.isInvisible() || mob.distanceToSqr(player) > range * range) return false;
+        if (CineSettings.excludeHostileMobs() && mob instanceof net.minecraft.world.entity.monster.Enemy) return false;
         return !CineSettings.excludeBats() || !(mob instanceof net.minecraft.world.entity.ambient.Bat);
     }
 }

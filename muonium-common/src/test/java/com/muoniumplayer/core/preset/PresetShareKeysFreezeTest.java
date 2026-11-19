@@ -15,7 +15,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Fixed PR#13 published MPP2 prefixes. Append-only changes must leave these exact fingerprints untouched. */
+/** Published MPP2 prefixes, including HUD card keys 167..169. Append-only changes retain these fingerprints. */
 class PresetShareKeysFreezeTest {
     private static final class Frozen {
         final int count; final String sha256Prefix;
@@ -23,7 +23,7 @@ class PresetShareKeysFreezeTest {
     }
     private static final Map<String, Frozen> FROZEN = new HashMap<String, Frozen>();
     static {
-        FROZEN.put("hud", new Frozen(166, "7c93be7afcd9ab86"));
+        FROZEN.put("hud", new Frozen(169, "917080c805928553"));
         FROZEN.put("theme", new Frozen(2, "7c0e005032b3e66f"));
         FROZEN.put("foliaBg", new Frozen(45, "25b4e17a614327fc"));
         FROZEN.put("font", new Frozen(1, "a56145270ce6b3be"));

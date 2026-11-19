@@ -66,24 +66,44 @@ class PlaybackResumeWiringStaticTest {
     }
 
     @Test
-    @DisplayName("续播偏移：restore 写入、startNewPlayThread 一次性转交、startPlayback 消费 playFrom")
+    @DisplayName("续播偏移绑定曲目与意图，一次性转交；起播前再次校验身份")
     void resumeOffsetConsumedExactlyOnce() throws Exception {
         String cloud = shared("com.muoniumplayer.core.ncm.music", "CloudMusic.java");
-        int restoreWrite = cloud.indexOf("pendingResumeOffsetMillis = Math.max(0L, snapshot.positionMillis);");
+        int restoreWrite = cloud.indexOf("pendingResume.set(resume);");
         int transfer = cloud.indexOf("playThread = new PlayThread(songs, startIdx, Math.max(0L, resumeOffset));");
         int consume = cloud.indexOf("activePlayer.playFrom(target);");
-        assertTrue(restoreWrite >= 0, "restore 必须写入续播偏移");
+        assertTrue(restoreWrite >= 0, "restore 必须写入带曲目身份的续播位置");
         assertTrue(transfer > restoreWrite, "startNewPlayThread 必须把偏移一次性转交给 PlayThread");
         assertTrue(consume > transfer, "startPlayback 必须用 playFrom 消费偏移（automix 同款路径）");
-        // 用户主动动作作废偏移
-        assertTrue(cloud.contains("discardResumeOffset();"),
-                "prev/next/重启选歌要作废续播偏移");
-        // 偏移 clamp 到曲长，不许照单全收
+        assertTrue(cloud.contains("startPlaybackList(songs, startIdx, false);"), "普通点歌不能隐式续播");
+        assertTrue(cloud.contains("startPlaybackList(playList, curIdx, true);"), "恢复态播放按钮才请求续播");
+        assertTrue(cloud.contains("takeResumeOffset(safeSongList.get(startIdx), resumeLastSession)"),
+                "必须在最终选曲确定后校验偏移归属");
+        assertTrue(cloud.contains("pendingResume.getAndSet(null)"), "转交必须是原子的一次性消费");
+        assertTrue(cloud.contains("song.getStableKey().equals(startTrackKey)"), "相同槽位的换源替身不能继承偏移");
+        assertTrue(cloud.contains("discardResumeOffset();"), "prev/next/重启选歌要作废续播偏移");
         assertTrue(cloud.contains("Math.min((float) offset"), "起播偏移必须 clamp 到曲长");
     }
 
     @Test
-    @DisplayName("restore 零副作用：不起线程、不发网络、快照只读不写")
+    void restoredProgressIsDisplayableWithoutMakingTheAudioClockSeekable() throws Exception {
+        String controls = shared("com.muoniumplayer.core.screens.ncm.panels", "ControlsBar.java");
+        int start = controls.indexOf("RoundedRectWidget progressBar =");
+        int end = controls.indexOf("LabelWidget lblMusicName", start);
+        assertTrue(start >= 0 && end > start);
+        String display = controls.substring(start, end);
+        assertFalse(display.contains("hasPlaybackClock()"), "恢复态的进度和时间标不能被音频时钟闸清零");
+        assertTrue(display.contains("CloudMusic.positionMsNow()"));
+        assertTrue(display.contains("CloudMusic.durationMsNow()"));
+        String lyrics = shared("com.muoniumplayer.core.screens.ncm", "MusicLyricsPanel.java");
+        assertTrue(lyrics.contains("double perc = presentation.preparing || totalTimeMillis <= 0.0 ? 0"),
+                "歌词页恢复态也要显示冻结进度");
+        assertTrue(lyrics.contains("if (clockReady && hoveringProgressBar && lmbDown && lmbPressEdge)"),
+                "展示记忆不能绕过拖动 seek 的音频时钟守卫");
+    }
+
+    @Test
+    @DisplayName("restore 不起播、不解析音频 URL，快照只读不写")
     void restoreIsSideEffectFree() throws Exception {
         String cloud = shared("com.muoniumplayer.core.ncm.music", "CloudMusic.java");
         int start = cloud.indexOf("private static void restoreLastSession()");

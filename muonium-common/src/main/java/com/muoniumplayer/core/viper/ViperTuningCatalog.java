@@ -200,7 +200,7 @@ public final class ViperTuningCatalog {
         INT_CHOICES.put("clarity.mode", new int[] {0, 1, 2});
         INT_CHOICES.put("analogX.mode", new int[] {0, 1, 2});
         INT_CHOICES.put("cure.crossfeedPreset", new int[] {0, 1, 2, 3, 4, 5});
-        INT_CHOICES.put("equalizer.bandCount", new int[] {10});
+        INT_CHOICES.put("equalizer.bandCount", com.muoniumplayer.core.viper.dsp.MinPhaseIIRCoeffs.supportedBandCounts());
         INT_CHOICES.put("dynamicEq.bandCount", new int[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
         // 扩展：JamesDSP 混响——19 个预设（档位名见 INT_CHOICE_NAMES）+ 过采样倍率。
         INT_CHOICES.put("jdspReverb.preset",

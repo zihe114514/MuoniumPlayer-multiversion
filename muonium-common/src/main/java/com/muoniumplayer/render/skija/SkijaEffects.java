@@ -306,6 +306,12 @@ public final class SkijaEffects {
         return frostedBackdrop(x, y, width, height, radius, sigma, opacity, true);
     }
 
+    /** 音乐卡由调用方提供连续曲率剪形，背景贴图不再自行叠加圆弧裁剪。 */
+    public static boolean frostedBackdropCachedClipped(double x, double y, double width, double height,
+                                                       float sigma, float opacity) {
+        return frostedBackdrop(x, y, width, height, 0.0, sigma, opacity, true);
+    }
+
     private static boolean frostedBackdrop(double x, double y, double width, double height,
                                            double radius, float sigma, float opacity,
                                            boolean cachedOnly) {

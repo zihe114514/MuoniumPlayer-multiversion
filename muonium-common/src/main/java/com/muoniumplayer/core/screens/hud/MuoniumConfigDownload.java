@@ -277,7 +277,6 @@ public final class MuoniumConfigDownload {
         return state;
     }
 
-    /** 本会话是否已装好、需要重启才生效。 */
     public static boolean isRestartRequired() {
         return restartRequired;
     }

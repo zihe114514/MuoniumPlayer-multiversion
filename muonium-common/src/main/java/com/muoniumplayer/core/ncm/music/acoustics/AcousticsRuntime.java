@@ -9,17 +9,13 @@ import repackage.processing.sound.Engine;
  *
  * <h2>线程与闸门</h2>
  * <ul>
- *   <li><b>游戏线程</b>:{@link #onClientTick(Object)} 由各版本树的共享 tick 桥调进来
- *       (参数是树的 {@code Minecraft} 实例)。每 tick 只做:开关判断、节流、
- *       <b>把采样任务投递到后台池</b>(latest-wins)—— 主线程零方块读,射线
- *       的几十上百次体素投射全部发生在 MIN_PRIORITY 工作线程上,画面对采样
- *       完全无感。全部 try/Throwable 包住 —— tick 上的任何异常都不能带崩游戏。</li>
- *   <li><b>后台线程</b>:消费树侧采样器 {@code capture()}(那里才知道树的
- *       Minecraft),把一帧 {@link ListenerSample} 交给推导,结果写进
- *       {@link SceneAcoustics} 的 volatile 目标量。同一时刻至多一个采样任务在飞
- *       (AtomicBoolean 闸):任务没跑完时新 tick 的投递被<b>跳过</b>(busy-skip)
- *       —— 采样周期拉长为 max(200ms, 采样+排队时长),没有待办记忆,但下一个
- *       达标 tick 必然重采,不存在永久丢失;采样幂等,乱序无意义。</li>
+ *   <li><b>游戏线程</b>:{@link #onClientTick(ListenerSampler)} 由各版本树的共享 tick
+ *       桥调进来。每 tick 检查开关/上下文、目标有效期与节流,把最新采样请求
+ *       交给后台池;主线程不做方块读和射线采样。异常只令目标回静息。</li>
+ *   <li><b>后台线程</b>:消费树侧采样器 {@code capture()},把一帧
+ *       {@link ListenerSample} 交给推导。调度锁只保护 epoch、最新待办和发布;
+ *       几何采样在锁外,同刻至多一轮。关闭/换世界不提前拆闸,旧结果与旧异常
+ *       都不能写目标;排队或执行超过 2s 的结果也不能重新发布。</li>
  *   <li><b>音频线程</b>:{@link OutputChain} 只做 double→float→double 的搬运和最终
  *       交付,具体滤波在 {@link SceneAcoustics#render} 里,实时纪律见那边的类注释。</li>
  * </ul>
@@ -37,15 +33,14 @@ public final class AcousticsRuntime {
 
     private static final Object LOCK = new Object();
 
-    private static boolean installed;
+    private static volatile boolean installed;
 
     /**
      * 采样节流窗口(毫秒)。两档自适应 —— 照 Wwise 的 CPU Limit Mode 思路:
      * 移动/环境在变时短周期快跟上,站定后拉长省 CPU。
      *
-     * <p>为什么不再固定 200ms:玩家走进山洞是「几秒内完成的瞬态」,而混响
-     * 参数一阶收敛另要 0.3s、抽头组交叉淡化还要 0.4s —— 采样周期叠上去,
-     * 感知延迟能到 2s。移动时压到 150ms 是这条链上最便宜的一刀。</p>
+     * <p>移动或转头时缩短到 150ms,站定后拉长到 500ms。参数收敛与抽头
+     * 淡化独立推进;新计划不会重启正在进行的反射淡化。</p>
      */
     private static final long INTERVAL_MOVING_MS = 150;
     /** 站定后的长周期:环境不再变,射线只用来兜「方块被挖了」这类延迟变化。 */
@@ -53,28 +48,29 @@ public final class AcousticsRuntime {
     /** 站定判据(毫秒没挪动):连续这么久位置不变就切长周期。 */
     private static final long SETTLE_AFTER_MS = 1000;
 
-    private static long lastSampleMs;
-    /** 最近一次观察到的采样原点(仅游戏线程读写):判站定用。 */
-    private static double lastOriginX, lastOriginY, lastOriginZ;
-    /** 上次位置变化/首次采样的时刻(毫秒)。 */
-    private static long lastMoveMs;
-    /** 当前是否处于站定态(仅游戏线程读写)。 */
-    private static boolean settled;
+    /** latest-wins 的 PENDING 请求槽与在飞 token 都由调度器的锁保护。 */
+    private static final AcousticsSamplerScheduler SAMPLER = new AcousticsSamplerScheduler(
+            () -> System.nanoTime() / 1_000_000L, BackgroundWork::submit,
+            new AcousticsSamplerScheduler.TargetSink() {
+                @Override
+                public void apply(ListenerSample sample, RoomPlan plan) {
+                    SceneAcoustics.applyTarget(plan);
+                    logSample(sample, plan);
+                }
 
-    /** 采样任务在飞标记(latest-wins 的闸):true = 后台还有一轮没跑完。 */
-    private static final java.util.concurrent.atomic.AtomicBoolean SAMPLING =
-            new java.util.concurrent.atomic.AtomicBoolean(false);
-    /**
-     * 「跑完这一轮还要再来一轮」的标志。
-     *
-     * <p>修前是 busy-skip:采样在飞时新 tick 直接跳过 —— 若射线要 250ms,
-     * 实际周期就变成「等 200 + 跑 250 + 再等 200」≈ 400ms,移动时白白慢
-     * 一倍。改成 latest-wins:在飞时只记一个待办位,任务结束时若置位就
-     * 立刻续投一轮。最坏延迟回到「一次射线时长」。</p>
-     */
-    private static final java.util.concurrent.atomic.AtomicBoolean PENDING =
-            new java.util.concurrent.atomic.AtomicBoolean(false);
-    /** 一次性诊断:首次成功采样 / 首次采样异常 / 房间跨越,各自只打一条。 */
+                @Override
+                public void clear() {
+                    roomLogged = false;
+                    SceneAcoustics.clearTarget();
+                }
+
+                @Override
+                public void failed(Throwable failure) {
+                    logFailure(failure);
+                }
+            }, AcousticsRuntime::withTransition,
+            INTERVAL_MOVING_MS, INTERVAL_SETTLED_MS, SETTLE_AFTER_MS);
+    /** 一次性诊断(只在调度锁内):首次成功采样 / 首次采样异常 / 房间跨越。 */
     private static boolean sampleLogged;
     private static boolean sampleFailureLogged;
     private static boolean roomLogged;
@@ -127,127 +123,30 @@ public final class AcousticsRuntime {
      */
     public static void onClientTick(ListenerSampler sampler) {
         try {
-            if (!AcousticsSettings.isEnabled() || sampler == null) {
-                // 关闭/采不到(主菜单):目标量回静息。闸不主动清 —— 在飞任务
-                // 的 finally 自会复位;清早了会与在飞任务竞态出第二个采样
-                // (BackgroundWork 并发 2),破坏「至多一个在飞」的契约。
-                // lastSampleMs 清零:下次进世界/重开开关立刻可采。
-                lastSampleMs = 0L;
-                lastSettleProbeMs = 0L;
-                lastMoveMs = 0L;
-                PENDING.set(false);
-                settled = false;
-                lastPlan = null;   // 关闭期间不留基准,重开首帧不算「跨房间」
-                SceneAcoustics.clearTarget();
-                return;
+            final boolean enabled = AcousticsSettings.isEnabled();
+            final float strength = enabled && sampler != null ? AcousticsSettings.strength() : 0f;
+            SAMPLER.onClientTick(enabled, sampler, strength);
+            if (enabled && sampler != null) {
+                SceneAcoustics.prepareSpatialAudio();
             }
-            final long now = System.currentTimeMillis();
-            updateSettleState(now, sampler);
-            final long interval = settled ? INTERVAL_SETTLED_MS : INTERVAL_MOVING_MS;if (now - lastSampleMs < interval) {
-                return; // 节流窗口内不投递;目标量保持上一帧,收敛交给音频线程。
+        } catch (Throwable failure) {
+            // tick 失败只撤销 epoch/目标;真实 capture 的结束才有权释放在飞闸。
+            try {
+                SAMPLER.invalidate();
+            } catch (Throwable ignored) {
             }
-            lastSampleMs = now;
-            submitSample(sampler);
-        } catch (Throwable failure) {
-            // 投递失败(池关闭等)不当回事:下个 tick 再试。
-            SAMPLING.set(false);
         }
     }
 
-    /**
-     * 站定判定(仅游戏线程):位置连续 {@link #SETTLE_AFTER_MS} 没变才算站定。
-     *
-     * <p>只看位置不看视角 —— 转头会改声像但不会改房间几何,而探针的几何
-     * 缓存本来就在每次采样重算声像,所以转头不需要加密采样。</p>
-     *
-     * <p>判定本身每 {@link #SETTLE_PROBE_MS} 才做一次:读玩家眼位在 MC 里会
-     * 新建 Vec3,没必要每个 tick 都付这笔钱。200ms 的判定粒度对「1s 才算
-     * 站定」的阈值绰绰有余。</p>
-     */
-    private static long lastSettleProbeMs;
-    private static final long SETTLE_PROBE_MS = 200;
-
-    private static void updateSettleState(long now, ListenerSampler sampler) {
-        if (now - lastSettleProbeMs < SETTLE_PROBE_MS && lastMoveMs != 0L) {
-            return;   // 判定窗口内复用上次结论(首帧 lastMoveMs=0 一定判一次)
-        }
-        lastSettleProbeMs = now;
-        final double[] pose;
+    /** 只诊断已获准发布的采样,与开关清态共享调度锁。 */
+    private static void logSample(ListenerSample sample, RoomPlan plan) {
         try {
-            pose = sampler.originMeters();
-        } catch (Throwable ignored) {
-            settled = false;
-            return;
-        }
-        if (pose == null || pose.length < 3) {
-            // 树没提供原点:不判站定,一律快周期。
-            settled = false;
-            return;
-        }
-        final double dx = pose[0] - lastOriginX;
-        final double dy = pose[1] - lastOriginY;
-        final double dz = pose[2] - lastOriginZ;
-        // 0.5 格:与探针的 STATIONARY_SQ 同一量级 —— 低于它几何不会变。
-        if (Double.isNaN(dx) || dx * dx + dy * dy + dz * dz > 0.25) {
-            lastOriginX = pose[0];
-            lastOriginY = pose[1];
-            lastOriginZ = pose[2];
-            lastMoveMs = now;
-            settled = false;
-            return;
-        }
-        settled = now - lastMoveMs >= SETTLE_AFTER_MS;
-    }
-
-    /**
-     * 投递一轮采样。在飞时不排队、只置待办位(latest-wins):任务结束时
-     * 若发现有待办就立刻续投 —— 移动中「采样要 250ms」时周期不再翻倍。
-     */
-    private static void submitSample(ListenerSampler sampler) {
-        if (!SAMPLING.compareAndSet(false, true)) {
-            PENDING.set(true);
-            return;
-        }
-        PENDING.set(false);
-        submitNow(sampler);
-    }
-
-    private static void submitNow(final ListenerSampler sampler) {
-        try {
-            BackgroundWork.submit(() -> {
-                try {
-                    runSample(sampler);
-                } finally {
-                    SAMPLING.set(false);
-                    // 待办位:这一轮期间有 tick 想要新数据 → 立刻再来一轮。
-                    // 只在还开着且采得到时续投(采样器可能已失效)。
-                    if (PENDING.compareAndSet(true, false)
-                            && AcousticsSettings.isEnabled()) {
-                        lastSampleMs = System.currentTimeMillis();
-                        submitSample(sampler);
-                    }
-                }
-            });
-        } catch (Throwable failure) {
-            SAMPLING.set(false);
-        }
-    }
-
-    /** 后台线程:采一帧 → 诊断 → 推导 → 写目标量。任何异常静默跳过本轮。 */
-    private static void runSample(ListenerSampler sampler) {
-        try {
-            ListenerSample sample = sampler.capture();
             if (sample != null && !sampleLogged) {
                 sampleLogged = true;
                 System.out.println("[MuoniumPlayer/Acoustics] 首次采样: 浸液=" + sample.submerged()
                         + " 天光=" + sample.openSky() + " 围合=" + String.format("%.2f", sample.enclosure())
                         + " 降水=" + sample.precipitation());
             }
-            final RoomPlan plan = SceneResponse.respond(sample, AcousticsSettings.strength());
-            // 变化幅度驱动的过渡时长(阶段二):与上一帧比,跨房间要大改就快收敛。
-            final RoomPlan withTransition = withTransition(plan);
-            // 房间跨越诊断:湿声从静息爬过可闻阈时打一条 —— 实机一眼看出
-            // 探针有没有「看见」房间,数值合不合理(回静息复位,可反复报)。
             if (plan.wet >= ROOM_LOG_WET && sample != null && !roomLogged) {
                 roomLogged = true;
                 System.out.println("[MuoniumPlayer/Acoustics] 房间声学: 围合="
@@ -256,18 +155,19 @@ public final class AcousticsRuntime {
                         + " 反射率=" + String.format("%.2f", sample.meanReflectivity())
                         + " 可达=" + String.format("%.2f", sample.reachableFraction())
                         + " 抽头=" + sample.tapCount()
-                        + " → " + withTransition);
+                        + " → " + plan);
             } else if (plan.wet < 0.02f) {
                 roomLogged = false;
             }
-            SceneAcoustics.applyTarget(withTransition);
-        } catch (Throwable failure) {
-            // 环境采样是锦上添花:任何异常都宁可让效果僵在上一帧,也不往上抛。
-            // 但静默吞掉会让「没效果」无从排查 —— 同一种异常只报一次。
-            if (!sampleFailureLogged) {
-                sampleFailureLogged = true;
-                System.out.println("[MuoniumPlayer/Acoustics] 采样异常(此后同类静默):" + failure);
-            }
+        } catch (Throwable ignored) {
+            // 诊断失败不能撤回已成功发布的声学计划。
+        }
+    }
+
+    private static void logFailure(Throwable failure) {
+        if (!sampleFailureLogged) {
+            sampleFailureLogged = true;
+            System.out.println("[MuoniumPlayer/Acoustics] 采样异常,已回静息(此后静默):" + failure);
         }
     }
 
@@ -275,9 +175,7 @@ public final class AcousticsRuntime {
 
     /** 小变化(房间内的抖动):沿用原有的慢收敛,参数不追噪声。 */
     private static final float TRANSITION_SMALL_SEC = 0.35f;
-    /** 大变化(跨房间):快跟上脚步。行业做法是跨房间 1.5s 量级的 Snapshot
-     *  过渡,但那条链还叠着 0.4s 抽头交叉淡化,这里取 0.18s 让总感知延迟
-     *  落在 0.6s 内。 */
+    /** 大变化(跨房间):采用 0.18s 参数收敛,不改变抽头组自己的交叉淡化。 */
     private static final float TRANSITION_LARGE_SEC = 0.18f;
     /** 判「大变化」的阈值:围合度或湿声的相对跳变。围合度 0.25 大约等于
      *  「从屋里跨出门」;湿声 0.2 是「本来几乎没有混响」。 */
@@ -286,31 +184,17 @@ public final class AcousticsRuntime {
     /** 判「大变化」的衰减时长相对跳变(进出大空间)。 */
     private static final float BIG_DECAY_RATIO = 1.8f;
 
-    /** 上一帧的关键量(仅采样线程读写):跨房间判定的基准。 */
-    private static RoomPlan lastPlan;
-
     /**
      * 给计划补一个过渡时长。纯比较,不改任何声学量。
      *
-     * <p>为什么不放进 {@link SceneResponse}:那个类是纯函数、可单测,加
-     * 跨帧记忆会破坏它的定位。这里做的是「与上一帧比较」,天然属于运行时。</p>
+     * <p>基准由调度器在锁内持有,只有已接纳的本 epoch 结果能推进它。</p>
      */
-    private static RoomPlan withTransition(RoomPlan plan) {
-        final RoomPlan prev = lastPlan;
-        lastPlan = plan;
+    static RoomPlan withTransition(RoomPlan plan, RoomPlan prev) {
         float sec = TRANSITION_SMALL_SEC;
         if (prev != null && looksLikeRoomChange(prev, plan)) {
             sec = TRANSITION_LARGE_SEC;
         }
-        return new RoomPlan(plan.bandHz, plan.wet, plan.dryGain, plan.loudness,
-                plan.predelaySec, plan.decaySec, plan.tone,
-                plan.decayLowSec, plan.decayHighSec, plan.diffusion,
-                plan.tapDelaySec, plan.tapGainL, plan.tapGainR,
-                plan.directGain, plan.directCutoffHz, plan.directPan,
-                plan.directDistanceMeters,
-                plan.useOpenAlReverb, plan.reverbDecayHfRatio, plan.reverbDiffusion,
-                plan.hasSpeakerAnchor, plan.speakerX, plan.speakerY, plan.speakerZ,
-                sec);
+        return plan.withTransition(sec);
     }
 
     /** 两帧之间是否算「换了个地方」。任一项跨过阈值即可,取宽松口径 ——
@@ -381,8 +265,17 @@ public final class AcousticsRuntime {
         ListenerSample capture();
 
         /**
-         * 采样原点(米,{x,y,z}):玩家眼位,或世界声源锚点。只用于<b>站定判定</b>
-         * —— 位置连续 1s 不变就把采样周期拉长省 CPU。
+         * 中立上下文身份(世界/会话等):每 tick 在游戏线程读取,按引用身份比较。
+         * 同一上下文返回同一对象,更换身份立即撤销旧结果;null = 未提供上下文键。
+         */
+        @Nullable
+        default Object contextKey() {
+            return null;
+        }
+
+        /**
+         * 听者位置(米,{x,y,z}),可选追加 {yaw,pitch}(弧度)。只用于<b>站定判定</b>,
+         * 不是射线声源原点;位置/角度连续 1s 不变才把采样周期拉长省 CPU。
          *
          * <p>default 返回 null = 「不参与站定判定」,此时一律按快周期采样
          * (等价于修前的固定周期,只是周期更短)。树侧覆盖它才有自适应收益;

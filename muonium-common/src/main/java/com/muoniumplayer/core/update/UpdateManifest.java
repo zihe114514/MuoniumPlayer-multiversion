@@ -25,7 +25,7 @@ import java.util.Set;
 public final class UpdateManifest {
 
     /** 本地认识的清单版本。清单声明得更高时仍然按已知字段读，未知字段忽略。 */
-    public static final int KNOWN_SCHEMA = 2;
+    public static final int KNOWN_SCHEMA = 3;
 
     /**
      * 一次最多读几条公告。
@@ -34,6 +34,8 @@ public final class UpdateManifest {
      * 而每一条都会在界面建一组组件。真要发更多条，说明该做分页而不是抬这个数。</p>
      */
     public static final int MAX_ANNOUNCEMENTS = 30;
+    /** Text-only manifest budget; images must remain external HTTPS assets. */
+    public static final int MAX_MANIFEST_CHARS = 2 * 1024 * 1024;
 
     private static final Gson GSON = new Gson();
 
@@ -77,18 +79,25 @@ public final class UpdateManifest {
     private final JsonObject channels;
     private final Entry fallback;
     private final List<Announcement> announcements;
+    private final List<Announcement> sponsorships;
+    private final List<Announcement> communities;
+    private final long contentRevision;
 
     private UpdateManifest(int schema, JsonObject channels, Entry fallback,
-                           List<Announcement> announcements) {
+                           List<Announcement> announcements, List<Announcement> sponsorships,
+                           List<Announcement> communities, long contentRevision) {
         this.schema = schema;
         this.channels = channels;
         this.fallback = fallback;
         this.announcements = announcements;
+        this.sponsorships = sponsorships;
+        this.communities = communities;
+        this.contentRevision = contentRevision;
     }
 
-    /** 解析失败、内容不是对象、既没有 channels 也没有可用 fallback、也没有可用公告时返回 {@code null}。 */
+    /** Invalid/non-object manifests or manifests with no update section and no usable cards are null. */
     public static UpdateManifest parse(String json) {
-        if (json == null) {
+        if (json == null || json.length() > MAX_MANIFEST_CHARS) {
             return null;
         }
         String trimmed = json.trim();
@@ -112,10 +121,14 @@ public final class UpdateManifest {
             JsonObject channels = childObject(root, "channels");
             Entry fallback = readEntry(childObject(root, "fallback"));
             List<Announcement> announcements = readAnnouncements(root.get("announcements"));
-            if (channels == null && fallback == null && announcements.isEmpty()) {
+            List<Announcement> sponsorships = readAnnouncements(root.get("sponsorships"));
+            List<Announcement> communities = readAnnouncements(root.get("communities"));
+            if (channels == null && fallback == null && announcements.isEmpty()
+                    && sponsorships.isEmpty() && communities.isEmpty()) {
                 return null;
             }
-            return new UpdateManifest(schema, channels, fallback, announcements);
+            return new UpdateManifest(schema, channels, fallback, announcements, sponsorships,
+                    communities, readContentRevision(root.get("contentRevision")));
         } catch (Throwable malformed) {
             return null;
         }
@@ -154,6 +167,35 @@ public final class UpdateManifest {
         return this.announcements;
     }
 
+    /** Passive cards: ids are scoped to this section and never enter announcement read tracking. */
+    public List<Announcement> sponsorships() {
+        return this.sponsorships;
+    }
+
+    public List<Announcement> communities() {
+        return this.communities;
+    }
+
+    /** Monotonic content revision, independent of the mod release. Missing/invalid means legacy 0. */
+    public long contentRevision() {
+        return this.contentRevision;
+    }
+
+    private static long readContentRevision(JsonElement element) {
+        if (element == null || !element.isJsonPrimitive()) {
+            return 0L;
+        }
+        try {
+            String text = element.getAsString();
+            if (!text.matches("[0-9]{1,19}")) {
+                return 0L;
+            }
+            return Long.parseLong(text);
+        } catch (RuntimeException invalid) {
+            return 0L;
+        }
+    }
+
     /**
      * 读公告数组。
      *
@@ -174,19 +216,46 @@ public final class UpdateManifest {
                 continue;
             }
             JsonObject object = item.getAsJsonObject();
-            String id = childString(object, "id");
-            String title = childString(object, "title");
-            String body = childString(object, "body");
-            if (id.isEmpty() || (title.isEmpty() && body.isEmpty())) {
+            String id = cardString(object, "id");
+            String title = cardString(object, "title");
+            String body = cardString(object, "body");
+            if (id.isEmpty() || id.length() > Announcement.MAX_ID_CHARS
+                    || (title.isEmpty() && body.isEmpty())) {
                 continue;
             }
             if (!seen.add(id)) {
                 continue;
             }
-            read.add(new Announcement(id, childString(object, "date"), childString(object, "kind"),
-                    title, body, childString(object, "link"), childString(object, "linkText")));
+            read.add(new Announcement(id, cardString(object, "date"), cardString(object, "kind"),
+                    title, body, cardString(object, "link"), cardString(object, "linkText"),
+                    cardString(object, "image"), cardString(object, "imageAlt"),
+                    cardString(object, "imageFit"), cardString(object, "badge"),
+                    readActions(object.get("actions"))));
         }
         return Collections.unmodifiableList(read);
+    }
+
+    private static List<Announcement.Action> readActions(JsonElement element) {
+        if (element == null || !element.isJsonArray()) {
+            return Collections.emptyList();
+        }
+        List<Announcement.Action> actions = new ArrayList<Announcement.Action>();
+        Set<String> seenUrls = new HashSet<String>();
+        JsonArray array = element.getAsJsonArray();
+        for (int index = 0; index < array.size() && actions.size() < Announcement.MAX_ACTIONS; index++) {
+            JsonElement item = array.get(index);
+            if (!item.isJsonObject()) {
+                continue;
+            }
+            JsonObject object = item.getAsJsonObject();
+            Announcement.Action action = new Announcement.Action(cardString(object, "text"),
+                    cardString(object, "url"));
+            if (action.url().isEmpty() || !seenUrls.add(action.url())) {
+                continue;
+            }
+            actions.add(action);
+        }
+        return Collections.unmodifiableList(actions);
     }
 
     private static Entry readEntry(JsonObject object) {
@@ -208,6 +277,12 @@ public final class UpdateManifest {
         }
         JsonElement element = parent.get(key);
         return element != null && element.isJsonObject() ? element.getAsJsonObject() : null;
+    }
+
+    private static String cardString(JsonObject parent, String key) {
+        JsonElement element = parent.get(key);
+        return element != null && element.isJsonPrimitive()
+                && element.getAsJsonPrimitive().isString() ? childString(parent, key) : "";
     }
 
     private static String childString(JsonObject parent, String key) {

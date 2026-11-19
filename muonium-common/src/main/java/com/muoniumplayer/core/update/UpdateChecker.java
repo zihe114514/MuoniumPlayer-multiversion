@@ -8,6 +8,8 @@ import com.muoniumplayer.core.utils.network.HttpUtils;
 
 import java.io.File;
 import java.io.InputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -153,6 +155,9 @@ public final class UpdateChecker {
             "jsdelivr.net",
             "modrinth.com",
             "gitee.com",
+            "qq.com",
+            "afdian.com",
+            "afdian.net",
     };
 
     private static final Object LOCK = new Object();
@@ -417,35 +422,33 @@ public final class UpdateChecker {
     /**
      * 下载页是否可以交给浏览器 / 剪贴板。
      *
-     * <p>规则：必须是 https；authority 里不许出现 {@code @}（{@code https://github.com@evil.com/}
-     * 这种写法真正的 host 是 {@code evil.com}）；host 必须等于白名单里的域名或是它的子域。</p>
+     * <p>规则：合法 HTTPS URI、无 credentials、默认端口或 443；host 等于白名单域名或是其子域。</p>
      */
     public static boolean isAllowedPage(String url) {
         if (url == null) {
             return false;
         }
         String trimmed = url.trim();
-        if (!trimmed.regionMatches(true, 0, "https://", 0, 8)) {
+        if (trimmed.length() > Announcement.MAX_URL_CHARS) {
             return false;
         }
-        String rest = trimmed.substring(8);
-        int cut = rest.length();
-        for (int index = 0; index < rest.length(); index++) {
-            char ch = rest.charAt(index);
-            if (ch == '/' || ch == '?' || ch == '#') {
-                cut = index;
-                break;
-            }
-        }
-        String authority = rest.substring(0, cut);
-        if (authority.isEmpty() || authority.indexOf('@') >= 0 || authority.indexOf('\\') >= 0) {
+        final URI uri;
+        try {
+            uri = new URI(trimmed).parseServerAuthority();
+        } catch (URISyntaxException invalid) {
             return false;
         }
-        int colon = authority.indexOf(':');
-        String host = (colon < 0 ? authority : authority.substring(0, colon)).toLowerCase(Locale.ROOT);
-        if (host.isEmpty()) {
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.isOpaque()
+                || uri.getRawUserInfo() != null || uri.getHost() == null
+                || (uri.getPort() != -1 && uri.getPort() != 443)) {
             return false;
         }
+        // Reject an empty port delimiter as malformed rather than interpreting it as default 443.
+        String authority = uri.getRawAuthority();
+        if (authority == null || authority.endsWith(":")) {
+            return false;
+        }
+        String host = uri.getHost().toLowerCase(Locale.ROOT);
         for (String allowed : ALLOWED_PAGE_HOSTS) {
             if (host.equals(allowed) || host.endsWith("." + allowed)) {
                 return true;

@@ -92,6 +92,59 @@ class PlaybackResumeStoreTest {
     }
 
     @Test
+    void resumeMetadataIncludesDecodedDurationAndForeignCoverWithoutPersistingRuntimeState() throws Exception {
+        pointStoreAt(temp.resolve("metadata.json").toFile());
+        Music track = new Music("完整歌名", "完整歌名", "", 123L,
+                List.of(new com.muoniumplayer.core.ncm.music.dto.Artist(7L, "歌手", List.of(), List.of())),
+                List.of(), new com.muoniumplayer.core.ncm.music.dto.Album(8L, "专辑", "", List.of()),
+                0L, 0L, 0L, List.of());
+        track.setSource(MusicPlatform.GD);
+        track.setSourceId("original-id");
+        track.setGdPlatform("netease");
+        track.setExternalCoverUrl("https://example.invalid/cover.jpg?token=cover");
+        track.setForeignCover(true);
+        track.applyDecodedDuration(234_567L);
+        track.setPartyStreamUrl("https://example.invalid/temporary-audio");
+        PlaybackResumeStore.noteTrackEvent(List.of(track), 0, 83_000L, CloudMusic.PlayMode.Sequential, null);
+
+        Music restored = PlaybackResumeStore.read().queue.get(0);
+        assertEquals(track.getStableKey(), restored.getStableKey());
+        assertEquals("完整歌名", restored.getName());
+        assertEquals("歌手", restored.getArtistsName());
+        assertEquals("专辑", restored.getAlbum().getName());
+        assertEquals(234_567L, restored.getDuration());
+        assertTrue(restored.durationCameFromDecoder(), "不能把解码时长冒充成源声明时长");
+        assertEquals(track.getCoverUrl(256), restored.getCoverUrl(256));
+        assertTrue(restored.isForeignCover());
+        assertNull(restored.getPartyStreamUrl(), "临时音频链接不属于恢复元数据");
+        Music playlistCopy = LocalPlaylistStore.deserializeTrack(LocalPlaylistStore.serializeTrack(track));
+        assertEquals(0L, playlistCopy.getDuration(), "会话元数据不能改变普通歌单存档的契约");
+    }
+
+    @Test
+    void legacySnapshotAndMalformedOptionalMetadataStillRestore() throws Exception {
+        java.io.File file = temp.resolve("legacy.json").toFile();
+        pointStoreAt(file);
+        JsonObject root = new JsonObject();
+        root.addProperty("version", 1);
+        root.addProperty("index", 0);
+        root.addProperty("positionMillis", 12_000L);
+        com.google.gson.JsonArray tracks = new com.google.gson.JsonArray();
+        JsonObject track = LocalPlaylistStore.serializeTrack(makeMusic("NETEASE", 7L, "legacy"));
+        tracks.add(track);
+        root.add("queue", tracks);
+        JsonConfigStorage.writeObject(file, GSON, root);
+        assertEquals(12_000L, PlaybackResumeStore.read().positionMillis);
+        assertEquals(200_000L, PlaybackResumeStore.read().queue.get(0).getDuration());
+        JsonObject metadata = new JsonObject();
+        metadata.addProperty("durationMillis", "bad-duration");
+        metadata.add("foreignCover", new com.google.gson.JsonArray());
+        track.add("_resume", metadata);
+        JsonConfigStorage.writeObject(file, GSON, root);
+        assertEquals(200_000L, PlaybackResumeStore.read().queue.get(0).getDuration());
+    }
+
+    @Test
     @DisplayName("FM/房间期间拒写：文件保持原样（没有 FM 可造，用房间外的空场景验证写入路径本身通）")
     void writeCreatesFile() throws Exception {
         java.io.File file = temp.resolve("resume.json").toFile();

@@ -62,6 +62,29 @@ final class IslandVisibilityGate {
         return scene != null && scene != UNKNOWN && scene.inWorld && !scene.anyScreenOpen && !scene.hudHidden && !scene.playerListVisible;
     }
 
+    /** Automatic track cards are HUD feedback, not a layer over an open inventory or settings screen. */
+    static boolean allowTrackNotice(Scene scene) {
+        return scene == null || scene.inWorld && !scene.playerListVisible && !scene.anyScreenOpen;
+    }
+
+    static boolean allowTrackNoticeOverlay(Scene scene, boolean chatOpen, boolean transitioning) {
+        return allowTrackNotice(scene) || chatOpen && scene != null && scene.inWorld
+                && !scene.playerListVisible && !transitioning;
+    }
+
+    static Object chatScreenIdentity() {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        return mc != null && mc.screen instanceof net.minecraft.client.gui.screens.ChatScreen ? mc.screen : null;
+    }
+
+    /** 聊天岛只在窗口有焦点且没有宿主 overlay 时开放。 */
+    static boolean isChatOpen() {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        return mc != null && mc.isWindowActive()
+                && mc.getOverlay() == null
+                && mc.screen instanceof net.minecraft.client.gui.screens.ChatScreen;
+    }
+
     /** 读取真实场合。任何取值异常都退化成"允许显示"，绝不因为判定失败把灵动岛整个弄没。 */
     static Scene capture() {
         try {

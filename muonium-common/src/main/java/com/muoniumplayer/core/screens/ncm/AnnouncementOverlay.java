@@ -1,17 +1,20 @@
 package com.muoniumplayer.core.screens.ncm;
 
-import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.rendering.ScissorClipManager;
+import com.muoniumplayer.core.rendering.font.CFontRenderer;
+import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
-import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.update.Announcement;
 import com.muoniumplayer.core.update.AnnouncementChecker;
-import com.muoniumplayer.core.update.UpdateManifest;
+import com.muoniumplayer.core.update.AnnouncementImageCache;
 import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.utils.other.BrowserUtils;
 import com.muoniumplayer.party.ui.PartyIcons;
+import com.muoniumplayer.render.skija.SkijaGfx;
+import io.github.humbleui.types.Rect;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -19,642 +22,597 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * 公告中心的界面本体：一屏可以滚动的公告卡片。
- *
- * <p>与 {@link UpdateNoticeOverlay} 是两回事 —— 那个是「有一个新版本」这一句话的两种结论，
- * 定高定行；公告是<b>条数不定、长短不定</b>的一批内容，所以这里用 {@link NcmSheet} 那套
- * 「遮罩 + 弹窗 + 硬裁内容区 + 整页滚动」的骨架，而不是自己再手写一遍裁剪与页脚。</p>
- *
- * <p><b>为什么整套版式都按当帧宽度算。</b>弹窗宽度是 {@code min(偏好宽度, 窗口宽 - 24)}，窗口一变
- * 它就把折行宽度、每张卡的高度、卡片总高、弹窗高度一起带着变；GUI 缩放开到三四档时可用高度只剩
- * 两三百逻辑像素，所以正文必须能滚、页脚必须贴底 —— 这两件事都由 {@link NcmSheet} 夹好，
- * 这里只负责把量出来的数字交出去。</p>
- *
- * <p><b>高度必须在滚动区排版之前量好。</b>{@code ScrollPanel} 在自己的 {@code onRender} 里按子项
- * <b>当前</b>高度排 Y，而子项自己的 {@code beforeRenderCallback} 要到它被渲染时才跑 —— 把尺寸交给
- * 行自己算会晚一帧，折叠/展开那一下看得见卡片跳位。所以测量全部挂在根面板的回调上
- * （{@link #measure()}），它先于弹窗、内容区与滚动区的回调执行。</p>
- *
- * <p>组件树只在建卡片时搭一次：每张卡上的文字都是从 {@link CardView#data} 现取的，
- * 换公告、点刷新、拖窗口都不需要重建。</p>
- */
-public final class AnnouncementOverlay extends NcmSheet {
-
-    // ──────────────────────────── 版式常量 ────────────────────────────
-
-    /** 弹窗偏好宽度。再宽一行正文就要来回扫；比更新提示那张卡宽是因为这里要装多条内容。 */
-    private static final double PREFERRED_WIDTH = 520.0;
-    /** 页眉高度（图标盘 34 + 上下留白），内容区从它下面开始。 */
-    private static final double HEADER_HEIGHT = 62.0;
-    /** 页脚高度：一条分隔线 + 一行说明 / 两颗按钮。 */
-    private static final double FOOTER_HEIGHT = 48.0;
-    /** 卡片之间的间隙，同时是滚动区的 {@code spacing}。 */
-    private static final double CARD_GAP = 9.0;
-    /** 卡片文字到卡片边缘的内缩。 */
-    private static final double INNER_PAD = 13.0;
-    private static final double CARD_TOP_PAD = 11.0;
-    private static final double CARD_BOTTOM_PAD = 11.0;
-    /** 标题那一行的高度（18 号标题与 19 高的类型胶囊取高的那个再补一点）。 */
-    private static final double TITLE_ROW = 22.0;
-    /** 「展开全文 / 收起」与链接共用的那一行。 */
-    private static final double META_ROW = 16.0;
-    /** 折叠态显示几行正文。三条足够判断这条与自己有没有关系。 */
+/** 远端公告、赞助与交流群共用一个 Expressive 内容中心，宿主只负责尺寸与输入。 */
+public final class AnnouncementOverlay extends NCMPanel {
+    private static final double WIDTH = 960;
+    private static final double HEIGHT = 720;
+    private static final double DESKTOP_ASPECT = 4.0 / 3.0;
+    private static final double INSET = 28;
+    private static final double CONTENT_TOP = 178;
+    private static final double FOOTER = 76;
+    private static final double CARD_PAD = 22;
     private static final int FOLDED_LINES = 3;
-    /**
-     * 单条公告最多排多少行，超出在最后一行截断。
-     *
-     * <p>整页能滚，所以这不是防溢出而是防「一条公告写了两千字」：真需要那么长应该发一篇文档
-     * 再给个链接，公告卡片是给人扫一眼的。</p>
-     */
-    private static final int MAX_LINES = 14;
-    /** 未读圆点占掉的横向空间，已读的条目同样让出来 —— 一列标题左边缘对齐比省那几个像素重要。 */
-    private static final double DOT_SLOT = 9.0;
-    /** 正文里的显式换行 = 分段。段内折行由 {@code fitWidth} 负责，它不认换行符。 */
-    private static final String PARAGRAPH_BREAK = "\n";
+    private static final String[] TABS = {"公告", "赞助", "交流群"};
+    private static final String[] GLYPHS = {PartyIcons.CHANNEL, PartyIcons.VIP, PartyIcons.GROUP};
+    private static final String[] TITLES = {"好音乐，也有新消息", "让热爱，继续发声", "音乐之外，还有同好"};
+    private static final String[] INTRO = {
+            "更新、活动与重要提醒，都在这里。",
+            "每一份支持，都是让项目继续前进的力量。",
+            "交流使用体验、分享歌单，一起把播放器变得更好。"
+    };
 
-    // ──────────────────────────── 文案 ────────────────────────────
+    private final NcmExpressiveLayout layout = new NcmExpressiveLayout();
+    private final SheetClock clock = SheetClock.cascade();
+    private final AnnouncementMotion motion = new AnnouncementMotion();
+    private final NcmPromptMotion tabSlide = new NcmPromptMotion(0);
+    private final AnnouncementImageCache images = new AnnouncementImageCache();
+    private final Map<String, Boolean> expanded = new HashMap<>();
+    private final List<CardView> cards = new ArrayList<>();
+    private final List<Panel> tabHits = new ArrayList<>();
+    private final double[] scrollMemory = new double[3];
 
-    private static final String HEADING = "MuoniumPlayer 公告";
-    private static final String CLOSE = "关闭";
-    private static final String REFRESH = "刷新";
-    private static final String EXPAND = "展开全文";
-    private static final String COLLAPSE = "收起";
-    private static final String DEFAULT_HINT = "滚轮翻页 · 点卡片展开或收起正文";
-    private static final String LOADING = "正在获取公告喵…";
-    private static final String NOTHING = "暂时没有公告喵。";
-    private static final String NOTHING_HINT = "有新公告时这里会列出，主菜单上也会弹一次。";
-
-    // ──────────────────────────── 配色 ────────────────────────────
-
-    /** {@code fix} 用的蓝。与更新提示的信息蓝同族，但垫在卡片上要亮一档才读得清。 */
-    private static final int FIX_COLOR = 0x7FB2E5;
-
-    // ──────────────────────────── 状态 ────────────────────────────
-
-    private final List<CardView> cards = new ArrayList<CardView>();
-    /** 折行结果，键是「id @ 取整宽度」。折行要逐字累加字形宽度，不能每帧每条都重算。 */
-    private final Map<String, String[]> lineCache = new HashMap<String, String[]>();
-    /** 用户手动点过的折叠状态；没点过的按「未读展开、已读折叠」定。 */
-    private final Map<String, Boolean> foldOverride = new HashMap<String, Boolean>();
-
-    private ScrollPanel feed;
-    private Panel body;
-    private Panel emptyHint;
-    /** 所有卡片高度之和（不含间隙），弹窗的偏好高度由它算。 */
-    private double stackedHeight;
-    private int visibleCount;
-
-    private String status;
-    /** 点了「刷新」正在等结论，用来在拉完那一刻把结果写进 {@link #status}。 */
+    private AnnouncementChecker.Snapshot snapshot;
+    private List<Announcement> entries = List.of();
+    private Panel dialog;
+    private Panel tabs;
+    private Panel scrollRoot;
+    private Panel content;
+    private Panel hero;
+    private Panel empty;
+    private ScrollPanel viewport;
+    private AbstractWidget<?> loading;
+    private AbstractWidget<?> progress;
+    private double presentation;
+    private boolean closing;
+    private boolean released;
     private boolean refreshRequested;
+    private String status = "";
+    private double slide;
+    private long contentArrived;
+
+    @Override
+    protected boolean isDismissing() { return closing; }
+
+    public boolean shouldClose() { return clock.isGone(); }
+
+    /** 保留关闭整批已读；图片仍要画退场，直到宿主真正移除才释放。 */
+    public void dispose() {
+        if (closing) return;
+        AnnouncementChecker.markAllRead();
+        closing = true;
+        clock.requestDismiss();
+    }
+
+    public void releaseResources() {
+        if (released) return;
+        released = true;
+        images.close();
+    }
+
+    public void handleEscape() { dispose(); }
+
+    @Override
+    public void renderWidget(double mouseX, double mouseY, int dWheel) {
+        layout.render(this, mouseX, mouseY, dWheel, (x, y, input) -> {
+            super.renderWidget(x, y, 0);
+            if (!closing && motion.acceptsInput() && input != 0) viewport.forwardWheel(input);
+        });
+    }
+
+    @Override
+    public void onMouseClickReceived(double mouseX, double mouseY, int button) {
+        layout.dispatch(this, mouseX, mouseY, button, (x, y, input) -> super.onMouseClickReceived(x, y, input));
+    }
+
+    @Override
+    public void onDWheelReceived(double mouseX, double mouseY, int dWheel) {
+        if (closing || !motion.acceptsInput()) return;
+        viewport.forwardWheel(dWheel);
+    }
 
     @Override
     public void onInit() {
-        // 测量挂在根面板上：它先于弹窗与滚动区的回调执行，卡片高度才能在本帧就参与排版。
-        setBeforeRenderCallback(this::measure);
+        setBeforeRenderCallback(() -> {
+            presentation = TransitionCurveCache.MOTION.at(clock.tick());
+            slide = tabSlide.update(motion.target(), 55 / SheetClock.speed(), System.nanoTime());
+        });
+        dialog = NcmExpressive.shell(this, WIDTH, () -> HEIGHT, () -> presentation, this::dispose);
+        dialog.setBeforeRenderCallback(this::measure);
+        buildHeader();
+        buildTabs();
 
-        final Panel dialog = sheet(PREFERRED_WIDTH, this::preferredHeight);
-        header(dialog, PartyIcons.NOTE, HEADING, this::subtitleText, this::accent);
-
-        body = body(dialog, () -> HEADER_HEIGHT, () -> FOOTER_HEIGHT);
-        feed = feed(body);
-        feed.setSpacing(CARD_GAP);
-        feed.setScrollStrength(30);
-
-        buildEmptyState();
-        footer(dialog);
-    }
-
-    // ──────────────────────────── 收起 ────────────────────────────
-
-    /**
-     * 关掉公告窗 = 把这一批全部记为已读。
-     *
-     * <p>所有出口都走这里：关闭按钮、ESC、点遮罩（{@code NcmSheet} 的遮罩点击直接调
-     * {@code dispose()}）。从入口点进去看也算读过 —— 「读过」如果只由自动弹那一次算，
-     * 用户主动看过一遍的东西下次启动还要再被弹一次，那是在惩罚认真阅读的人。</p>
-     */
-    @Override
-    public void dispose() {
-        AnnouncementChecker.markAllRead();
-        // 必须走基类：那一格除了置 closing，还要让进出场时钟开始倒着走。自己只置 closing 的话
-        // shouldClose() 读到的时钟永远到不了零 —— 这个界面就会再也关不掉。
-        super.dispose();
-    }
-
-    /** 宿主的 ESC 转发到这里。 */
-    public void handleEscape() {
-        dispose();
-    }
-
-    // ──────────────────────────── 测量与排版 ────────────────────────────
-
-    /**
-     * 每帧一次：按当前宽度把每条公告折行、算出每张卡的高度，并处理空态与刷新回执。
-     *
-     * <p>公告是守护线程拉到什么就是什么，这一帧之前列表可能还是空的，所以每次都要重新问一遍。
-     * 折行结果按「id + 宽度」缓存（{@link #lineCache}），所以窗口没变时这里只剩加减法。</p>
-     */
-    private void measure() {
-        pollRefresh();
-
-        List<Announcement> list = AnnouncementChecker.all();
-        double width = contentWidth();
-        // 字形没就绪时量出来的宽度全是 0，那种结果不许进缓存 —— 见 fullLinesOf。
-        boolean glyphs = FontManager.pf14 != null;
-        ensureCards(list.size());
-        double textWidth = Math.max(1.0, width - (PAD + CARD_INSET) * 2 - INNER_PAD * 2);
-        double total = 0.0;
-        int shown = 0;
-        for (int index = 0; index < cards.size(); index++) {
-            CardView view = cards.get(index);
-            Announcement data = index < list.size() ? list.get(index) : null;
-            view.data = data;
-            if (data == null) {
-                // 用 setHidden 而不是留着：被隐藏的组件整帧跳过自己的回调，也不参与滚动区的求和。
-                view.row.setHidden(true);
-                continue;
+        viewport = new ScrollPanel();
+        dialog.addChild(viewport);
+        viewport.setAlignment(ScrollPanel.Alignment.VERTICAL).setSpacing(0).setScrollStrength(52)
+                .setIndicatorInsideViewport().setIndexedVerticalLayout();
+        scrollRoot = new Panel();
+        viewport.addChild(scrollRoot);
+        scrollRoot.setClickable(false);
+        content = new Panel() {
+            @Override protected boolean shouldClickChildren(double x, double y) {
+                return !closing && motion.acceptsInput() && insideViewport(x, y);
             }
-            shown++;
-            view.row.setHidden(false);
-            view.expanded = isExpanded(data);
-            view.full = fullLinesOf(data, textWidth, glyphs);
-            view.truncated = view.full.length > FOLDED_LINES;
-            view.lines = view.expanded || !view.truncated
-                    ? view.full
-                    : foldOf(view.full, textWidth);
-            view.hasLink = !data.link().isEmpty() && AnnouncementChecker.isLinkAllowed(data.link());
-            boolean meta = view.truncated || view.hasLink;
-            view.height = CARD_TOP_PAD + TITLE_ROW + view.lines.length * lineHeight()
-                    + (meta ? META_ROW + 2.0 : 0.0) + CARD_BOTTOM_PAD;
-            view.row.setBounds(width, view.height);
-            ensureLines(view);
-            // 被隐藏的组件不再执行自己的回调，所以「这一帧到底显不显示」只能在测量里统一说。
-            view.unreadDot.setHidden(AnnouncementChecker.isRead(data.id()));
-            view.linkLabel.setHidden(!view.hasLink);
-            view.linkIcon.setHidden(!view.hasLink);
-            view.foldLabel.setHidden(!view.truncated);
-            total += view.height;
-        }
-        visibleCount = shown;
-        stackedHeight = total + Math.max(0, shown - 1) * CARD_GAP;
-
-        boolean empty = shown == 0;
-        feed.setHidden(empty);
-        emptyHint.setHidden(!empty);
-        if (!empty) {
-            return;
-        }
-        emptyHint.setBounds(Math.max(1.0, body.getWidth()), Math.max(1.0, body.getHeight()));
-        emptyHint.setPosition(0, 0);
+            @Override protected boolean shouldRenderChildren(AbstractWidget<?> child, double x, double y) {
+                return child.getY() + child.getHeight() >= viewport.getY()
+                        && child.getY() <= viewport.getY() + viewport.getHeight();
+            }
+        };
+        scrollRoot.addChild(content);
+        content.setClickable(false);
+        buildHero();
+        buildEmpty();
+        buildFooter();
     }
 
-    /** 建一张卡片上的正文行标签。按历史最大行数留着，不为每次展开都重建组件。 */
-    private void ensureLines(CardView view) {
-        while (view.lineLabels.size() < view.lines.length) {
-            final int lineIndex = view.lineLabels.size();
-            LabelWidget label = label(view.plate, () -> {
-                if (view.data == null || lineIndex >= view.lines.length) {
-                    return "";
-                }
-                return view.lines[lineIndex];
-            }, FontManager.pf14);
-            label.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            label.setBeforeRenderCallback(() -> {
-                label.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-                label.setMaxWidth(bodyWidth() - INNER_PAD * 2);
-                label.setPosition(INNER_PAD,
-                        CARD_TOP_PAD + TITLE_ROW + lineIndex * lineHeight());
+    private void buildHeader() {
+        NcmExpressive.label(dialog, () -> "MUONIUMPLAYER / 内容中心", NcmExpressive::captionFont,
+                () -> INSET, () -> 28, () -> dialog.getWidth() - INSET * 2 - 64,
+                () -> NcmExpressivePalette.live().muted());
+        NcmExpressive.label(dialog, () -> "公告中心", NcmExpressive::titleFont,
+                () -> INSET, () -> 65, () -> dialog.getWidth() - INSET * 2 - 180,
+                () -> NcmExpressivePalette.live().text());
+        NcmExpressive.rightAligned(dialog, this::unreadCaption, NcmExpressive::captionFont,
+                () -> dialog.getWidth() - INSET - 64, () -> 65, () -> 148,
+                () -> NcmExpressivePalette.live().primary());
+        NcmExpressive.hitSurface(dialog, () -> dialog.getWidth() - INSET - 44, () -> 22,
+                () -> 44, () -> 44, 22, () -> NcmExpressivePalette.live().container(), this::dispose);
+        NcmExpressive.icon(dialog, PartyIcons.CLOSE, NcmSheet.ICON_M,
+                () -> dialog.getWidth() - INSET - 22, () -> 44,
+                () -> NcmExpressivePalette.live().muted());
+    }
+
+    private void buildTabs() {
+        tabs = new Panel();
+        dialog.addChild(tabs);
+        tabs.setClickable(false);
+        NcmExpressive.surface(tabs, 0, 0, tabs::getWidth, tabs::getHeight, 28,
+                () -> NcmExpressivePalette.live().container());
+        NcmExpressive.surface(tabs, () -> 5 + slide * tabWidth(), () -> 5,
+                this::tabWidth, () -> 46, 23, () -> NcmExpressivePalette.live().primary());
+        for (int index = 0; index < TABS.length; index++) {
+            final int tab = index;
+            Panel hit = new Panel();
+            tabs.addChild(hit);
+            tabHits.add(hit);
+            hit.setShouldOverrideMouseCursor(true).setBeforeRenderCallback(() -> {
+                hit.setBounds(tabWidth(), 46);
+                hit.setPosition(5 + tab * tabWidth(), 5);
             });
-            view.lineLabels.add(label);
-        }
-        for (int index = 0; index < view.lineLabels.size(); index++) {
-            view.lineLabels.get(index).setHidden(index >= view.lines.length);
+            hit.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                selectSection(tab);
+                return true;
+            });
+            NcmExpressive.icon(hit, GLYPHS[tab], NcmSheet.ICON_M,
+                    () -> tabWidth() * .5 - 30, () -> 23, () -> tabInk(tab));
+            NcmExpressive.label(hit, () -> TABS[tab], NcmExpressive::labelFont,
+                    () -> tabWidth() * .5 - 10, () -> 23, () -> Math.max(1, tabWidth() * .5),
+                    () -> tabInk(tab));
         }
     }
 
-    /** 「这条还没拉下来」与「拉下来但没有公告」是两种状态，得分开说。 */
-    private void buildEmptyState() {
-        emptyHint = new Panel();
-        body.addChild(emptyHint);
-        emptyHint.setClickable(false);
-
-        final LabelWidget main = label(emptyHint,
-                () -> AnnouncementChecker.isResolved() ? NOTHING : LOADING, FontManager.pf16bold);
-        main.setBeforeRenderCallback(() -> {
-            main.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            main.setPosition(Math.max(0.0, emptyHint.getWidth() * .5 - main.getWidth() * .5),
-                    Math.max(0.0, emptyHint.getHeight() * .5 - 20.0));
-        });
-
-        final LabelWidget second = label(emptyHint,
-                () -> AnnouncementChecker.isResolved() ? NOTHING_HINT : DEFAULT_HINT, FontManager.pf12);
-        second.setBeforeRenderCallback(() -> {
-            second.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            second.setPosition(Math.max(0.0, emptyHint.getWidth() * .5 - second.getWidth() * .5),
-                    Math.max(0.0, emptyHint.getHeight() * .5 + 4.0));
-        });
+    private int tabInk(int tab) {
+        NcmExpressivePalette p = NcmExpressivePalette.live();
+        return NcmExpressivePalette.mix(p.muted(), p.onPrimary(), Math.max(0, 1 - Math.abs(slide - tab)));
     }
 
-    /** 「刷新」拉完之后给一行回执。列表本身是响应式的，不需要在这里重建任何东西。 */
-    private void pollRefresh() {
-        if (!refreshRequested || AnnouncementChecker.isFetching()) {
-            return;
-        }
-        refreshRequested = false;
-        int count = AnnouncementChecker.all().size();
-        status = count == 0 ? "没有拉到公告喵…" : "已刷新，共 " + count + " 条。";
+    private double tabWidth() { return Math.max(1, (tabs.getWidth() - 10) / 3); }
+
+    private void buildHero() {
+        hero = new Panel();
+        content.addChild(hero);
+        hero.setClickable(false);
+        NcmExpressive.surface(hero, 0, 0, hero::getWidth, hero::getHeight, 26,
+                () -> NcmExpressivePalette.live().primaryContainer());
+        NcmExpressive.label(hero, () -> sectionEyebrow(), NcmExpressive::captionFont,
+                () -> 24, () -> 26, () -> heroTextWidth(), () -> NcmExpressivePalette.live().primary());
+        NcmExpressive.label(hero, () -> TITLES[motion.visible()], NcmExpressive::dialogTitleFont,
+                () -> 24, () -> 64, this::heroTextWidth, () -> NcmExpressivePalette.live().text());
+        NcmExpressive.label(hero, () -> INTRO[motion.visible()], NcmExpressive::captionFont,
+                () -> 24, () -> 101, this::heroTextWidth, () -> NcmExpressivePalette.live().muted());
+        NcmExpressive.medallion(hero, PartyIcons.HEADPHONES, () -> hero.getWidth() - 70,
+                () -> 68, () -> hero.getWidth() < 560 ? 0 : 84,
+                () -> NcmExpressivePalette.live().primary(), () -> NcmExpressivePalette.live().onPrimary());
     }
 
-    private String subtitleText() {
-        int total = AnnouncementChecker.all().size();
-        if (total == 0) {
-            return AnnouncementChecker.isFetching() ? LOADING : "暂无公告，只影响公告不影响更新提示";
+    private double heroTextWidth() { return Math.max(1, hero.getWidth() - (hero.getWidth() < 560 ? 48 : 158)); }
+
+    private String sectionEyebrow() {
+        if (motion.visible() == 1) return "SUPPORT / 赞助专栏";
+        if (motion.visible() == 2) return "COMMUNITY / 交流群专栏";
+        return "WHAT’S NEW / 公告专栏";
+    }
+
+    private void buildEmpty() {
+        empty = new Panel();
+        content.addChild(empty);
+        empty.setClickable(false);
+        loading = NcmExpressive.loading(empty, () -> empty.getWidth() * .5, () -> 78,
+                () -> 58, () -> NcmExpressivePalette.live().primary());
+        NcmExpressive.medallion(empty, PartyIcons.NOTE, () -> empty.getWidth() * .5, () -> 78,
+                () -> AnnouncementChecker.isFetching() ? 0 : 58,
+                () -> NcmExpressivePalette.live().primaryContainer(), () -> NcmExpressivePalette.live().primary());
+        NcmExpressive.centered(empty, this::emptyTitle, NcmExpressive::labelFont,
+                () -> empty.getWidth() * .5, () -> 136, () -> empty.getWidth() - 32,
+                () -> NcmExpressivePalette.live().text());
+        NcmExpressive.centered(empty, () -> AnnouncementChecker.isFetching()
+                        ? "正在同步远端内容，请稍候…" : "内容发布后会自动出现在这里。",
+                NcmExpressive::captionFont, () -> empty.getWidth() * .5, () -> 169,
+                () -> empty.getWidth() - 32, () -> NcmExpressivePalette.live().muted());
+        for (int index = 0; index < 2; index++) {
+            final int row = index;
+            NcmExpressive.surface(empty, () -> 16, () -> 215 + row * 65,
+                    () -> empty.getWidth() - 32, () -> 48, 18, () -> NcmExpressivePalette.live().container());
         }
+    }
+
+    private String emptyTitle() {
+        if (AnnouncementChecker.isFetching()) return "好消息，正在路上";
+        return motion.visible() == 0 ? "暂时没有新公告" : motion.visible() == 1 ? "赞助专栏待更新" : "交流群专栏待更新";
+    }
+
+    private void buildFooter() {
+        NcmExpressive.rule(dialog, () -> INSET, () -> dialog.getHeight() - FOOTER,
+                () -> dialog.getWidth() - INSET * 2, () -> NcmExpressivePalette.live().outline());
+        NcmExpressive.label(dialog, this::footerText, NcmExpressive::captionFont,
+                () -> INSET, () -> dialog.getHeight() - 40,
+                () -> Math.max(1, dialog.getWidth() - INSET * 2 - 260),
+                () -> NcmExpressivePalette.live().muted()).setTooltip(this::footerText);
+        NcmExpressive.action(dialog, PartyIcons.SYNC, () -> AnnouncementChecker.isFetching() ? "同步中" : "刷新",
+                NcmExpressive.ActionStyle.TONAL, () -> dialog.getWidth() - INSET - 236,
+                () -> dialog.getHeight() - 62, () -> 112, () -> 48, this::beginRefresh);
+        NcmExpressive.action(dialog, PartyIcons.CHECK, () -> "看完了", NcmExpressive.ActionStyle.PRIMARY,
+                () -> dialog.getWidth() - INSET - 112, () -> dialog.getHeight() - 62,
+                () -> 112, () -> 48, this::dispose);
+        progress = NcmExpressive.progress(dialog, () -> INSET, () -> dialog.getHeight() - 14,
+                () -> dialog.getWidth() - INSET * 2, () -> -1, AnnouncementChecker::isFetching);
+    }
+
+    /** 所有尺寸在 ScrollPanel 排版之前提交；异步内容用不可变快照一次取齐。 */
+    private void measure() {
+        long now = System.nanoTime();
+        double maxWidth = Math.max(1, getWidth() - 40);
+        double maxHeight = Math.max(1, getHeight() - 32);
+        double aspect = Math.min(DESKTOP_ASPECT, maxWidth / maxHeight);
+        double width = Math.max(1, Math.min(WIDTH, Math.min(maxWidth, maxHeight * aspect)));
+        double height = Math.max(1, Math.min(HEIGHT, Math.min(maxHeight, width / aspect)));
+        dialog.setBounds(width, height);
+        dialog.center();
+        dialog.setPosition(dialog.getRelativeX(), dialog.getRelativeY() + (1 - presentation) * 18);
+        dialog.setAlpha((float) presentation);
+        tabs.setBounds(contentWidth(), 56);
+        tabs.setPosition(INSET, 103);
+        viewport.setBounds(contentWidth(), Math.max(1, dialog.getHeight() - CONTENT_TOP - FOOTER - 12));
+        viewport.setPosition(INSET, CONTENT_TOP);
+
+        boolean switched = motion.tick(now, SheetClock.speed());
+        AnnouncementChecker.Snapshot current = AnnouncementChecker.snapshot();
+        if (switched || snapshot != current) {
+            snapshot = current;
+            entries = entriesFor(motion.visible());
+            contentArrived = now;
+            if (switched) viewport.targetScrollOffset = viewport.actualScrollOffset = scrollMemory[motion.visible()];
+        }
+        content.setAlpha((float) motion.alpha());
+        content.setPosition(motion.offset(), 0);
+        content.setClickable(motion.acceptsInput());
+        hero.setBounds(contentWidth() - 8, 134);
+        hero.setPosition(0, 0);
+        ensureCards(entries.size());
+        double y = 150;
+        boolean changed = switched;
+        for (int i = 0; i < cards.size(); i++) {
+            CardView view = cards.get(i);
+            boolean shown = i < entries.size();
+            if (view.row.isHidden() == shown) changed = true;
+            view.row.setHidden(!shown);
+            if (!shown) continue;
+            double oldHeight = view.row.getHeight();
+            measureCard(view, entries.get(i), now);
+            view.row.setPosition(0, y);
+            double reveal = NcmPromptMotion.reveal(contentArrived + Math.min(i, 5) * 25_000_000L,
+                    now, 520 / SheetClock.speed());
+            view.row.setAlpha((float) reveal);
+            view.plate.setPosition(0, (1 - reveal) * 10);
+            y += view.row.getHeight() + 14;
+            changed |= oldHeight != view.row.getHeight();
+        }
+        boolean isEmpty = entries.isEmpty();
+        empty.setHidden(!isEmpty);
+        empty.setBounds(contentWidth() - 8, 340);
+        empty.setPosition(0, 150);
+        loading.setHidden(!AnnouncementChecker.isFetching());
+        if (isEmpty) y += 340;
+        double contentHeight = y + 4;
+        changed |= content.getWidth() != contentWidth() || content.getHeight() != contentHeight;
+        content.setBounds(contentWidth(), contentHeight);
+        scrollRoot.setBounds(contentWidth(), contentHeight);
+        if (changed) viewport.invalidateLayout();
+        progress.setHidden(!AnnouncementChecker.isFetching());
+        if (refreshRequested && !AnnouncementChecker.isFetching()) {
+            refreshRequested = false;
+            status = "当前内容 · " + snapshot.announcements().size() + " 条公告 / "
+                    + snapshot.sponsorships().size() + " 项赞助 / " + snapshot.communities().size() + " 个交流群";
+        }
+    }
+
+    private List<Announcement> entriesFor(int section) {
+        return section == 1 ? snapshot.sponsorships() : section == 2 ? snapshot.communities() : snapshot.announcements();
+    }
+
+    private boolean insideViewport(double x, double y) {
+        return x >= viewport.getX() && x <= viewport.getX() + viewport.getWidth()
+                && y >= viewport.getY() && y <= viewport.getY() + viewport.getHeight();
+    }
+
+    private double contentWidth() { return Math.max(1, dialog.getWidth() - INSET * 2); }
+
+    private void selectSection(int section) {
+        if (closing || section == motion.target()) return;
+        scrollMemory[motion.visible()] = viewport.targetScrollOffset;
+        motion.select(section);
+        status = "";
+    }
+
+    private String unreadCaption() {
         int unread = AnnouncementChecker.unreadCount();
-        return "共 " + total + " 条" + (unread > 0 ? " · " + unread + " 条未读" : " · 都看过了")
-                + " · 关掉之后不再自动弹";
-    }
-
-    /** 弹窗想要的高度：全部卡片摊平之后的高度。装不下时由 {@code NcmSheet#sheet} 夹到视口内。 */
-    private double preferredHeight() {
-        return HEADER_HEIGHT + stackedHeight + FOOTER_HEIGHT + 12.0;
-    }
-
-    /**
-     * 弹窗宽度，与 {@code NcmSheet#sheet} 内部同一个算式。
-     *
-     * <p>之所以在这儿重算而不是读 {@code dialog.getWidth()}：测量必须早于弹窗定尺寸，
-     * 而 {@code sheet()} 的回调里已经把这一句写死了。两处算式改了不一致，卡片就会按旧宽度折行、
-     * 却按新宽度摆 —— 表现为右边整列文字被切。改成从 {@code NcmSheet} 暴露宽度是更大的动作，
-     * 先在这里把约束写清楚。</p>
-     */
-    private double contentWidth() {
-        return Math.max(1.0, Math.min(PREFERRED_WIDTH, getWidth() - 24.0));
-    }
-
-    /** 卡片底板宽度（比弹窗窄出 {@link #PAD} 与悬停生长预留的 {@link #CARD_INSET}）。 */
-    private double cardWidth() {
-        return Math.max(1.0, contentWidth() - (PAD + CARD_INSET) * 2);
-    }
-
-    /** 卡片内可用文字宽度。 */
-    private double bodyWidth() {
-        return Math.max(1.0, cardWidth() - INNER_PAD * 2);
-    }
-
-    private int accent() {
-        return NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
-    }
-
-    private static double lineHeight() {
-        return (FontManager.pf14 == null ? 13.0 : FontManager.pf14.getFontHeight()) + 3.0;
-    }
-
-    private boolean isExpanded(Announcement announcement) {
-        Boolean override = foldOverride.get(announcement.id());
-        if (override != null) {
-            return override.booleanValue();
-        }
-        // 未读的默认展开（既然弹给我看了就让我读完），已读的默认折叠（只看标题扫一遍列表）。
-        return !AnnouncementChecker.isRead(announcement.id());
-    }
-
-    /** 这条公告完整展开时的全部行（超过 {@link #MAX_LINES} 的那一份会被截断并补省略号）。 */
-    private String[] fullLinesOf(Announcement announcement, double textWidth, boolean glyphs) {
-        String key = announcement.id() + '@' + Math.round(textWidth);
-        String[] cached = lineCache.get(key);
-        if (cached != null) {
-            return cached;
-        }
-        String[] computed = wrap(announcement.body(), textWidth);
-        if (glyphs) {
-            if (lineCache.size() > 512) {
-                lineCache.clear();
-            }
-            lineCache.put(key, computed);
-        }
-        return computed;
-    }
-
-    /** 折叠态取前 {@link #FOLDED_LINES} 行，并在最后一行补省略号 —— 少了几行要说得出来。 */
-    private static String[] foldOf(String[] full, double textWidth) {
-        String[] folded = new String[FOLDED_LINES];
-        System.arraycopy(full, 0, folded, 0, FOLDED_LINES);
-        folded[FOLDED_LINES - 1] = trimWithEllipsis(folded[FOLDED_LINES - 1], textWidth);
-        return folded;
-    }
-
-    /**
-     * 折行：先按 {@link #PARAGRAPH_BREAK} 切段，每段各自按宽度折，再拼成行表。
-     *
-     * <p>必须自己切 —— {@code fitWidth} 的断点表里只有空白与标点，换行符会被当成普通字符留在行里：
-     * 文字既不会真的另起一行，行尾还多一份看不见的宽度。切段之后再套行数上限，顺序不能反。</p>
-     */
-    private static String[] wrap(String source, double textWidth) {
-        List<String> lines = new ArrayList<String>();
-        if (source == null || source.trim().isEmpty()) {
-            return new String[0];
-        }
-        boolean overflow = false;
-        for (String paragraph : source.split(PARAGRAPH_BREAK, -1)) {
-            String text = paragraph.trim();
-            if (text.isEmpty()) {
-                continue;
-            }
-            String[] wrapped;
-            try {
-                wrapped = FontManager.pf14.fitWidth(text, textWidth);
-            } catch (Throwable ignored) {
-                // 换行只是排版，任何异常都不该让一个公告窗打不开。
-                wrapped = new String[]{text};
-            }
-            if (wrapped == null || wrapped.length == 0) {
-                wrapped = new String[]{text};
-            }
-            for (String line : wrapped) {
-                if (lines.size() >= MAX_LINES) {
-                    overflow = true;
-                    break;
-                }
-                lines.add(line);
-            }
-            if (overflow) {
-                break;
-            }
-        }
-        if (lines.isEmpty()) {
-            lines.add(source.trim());
-        }
-        String[] result = lines.toArray(new String[0]);
-        if (overflow) {
-            result[result.length - 1] = trimWithEllipsis(result[result.length - 1], textWidth);
-        }
-        return result;
-    }
-
-    private static String trimWithEllipsis(String line, double textWidth) {
-        if (FontManager.pf14 == null) {
-            return line;
-        }
-        try {
-            return FontManager.pf14.trim(line, Math.max(1.0, textWidth - 8.0)) + "…";
-        } catch (Throwable ignored) {
-            return line;
-        }
-    }
-
-    // ──────────────────────────── 卡片 ────────────────────────────
-
-    private void ensureCards(int count) {
-        int limit = Math.min(count, UpdateManifest.MAX_ANNOUNCEMENTS);
-        while (cards.size() < limit) {
-            cards.add(buildCard(cards.size()));
-        }
-    }
-
-    /** 建一张卡片。数据每帧由 {@link #measure()} 喂，所以这一步只做一次。 */
-    private CardView buildCard(final int index) {
-        final CardView view = new CardView();
-        view.row = new Panel();
-        feed.addChild(view.row);
-
-        // 错峰由 NcmSheet 的卡片闸门负责：超出它那一档上限的序号自动并到最后一档一起到场，
-        // 所以这里直接把序号交出去。旧写法要在这里自己钳一道，是因为那时 pageFade 只会渐近到 1，
-        // 第十四张之后的卡永远开不了闸。
-        view.plate = card(view.row, index, () -> 0.0, () -> view.height,
-                () -> mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
-                        NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), view.plate.hover));
-        view.plate.setShouldOverrideMouseCursor(true);
-        view.plate.setOnClickCallback((x, y, button) -> {
-            if (button != 0 || view.data == null || !view.truncated) {
-                return false;
-            }
-            // 只有正文真的多过折叠行数时才值得点：短公告点上去没反应会让人以为界面坏了。
-            foldOverride.put(view.data.id(), !view.expanded);
-            return true;
-        });
-
-        view.unreadDot = new RoundedRectWidget();
-        view.plate.addChild(view.unreadDot);
-        view.unreadDot.setClickable(false);
-        view.unreadDot.setBeforeRenderCallback(() -> {
-            double size = 5.0;
-            view.unreadDot.setRadius(size * .5);
-            view.unreadDot.setBounds(size, size);
-            view.unreadDot.setPosition(INNER_PAD, CARD_TOP_PAD + TITLE_ROW * .5 - size * .5);
-            view.unreadDot.setColor(accent());
-        });
-
-        // 类型胶囊要在标题之前加入：它自己算宽度，而标题的可用宽度按它的左边缘让位。
-        view.kindPill = pill(view.plate, () -> kindGlyph(view), () -> kindLabel(view),
-                () -> kindColor(view), () -> pillRightEdge(view), () -> CARD_TOP_PAD + TITLE_ROW * .5);
-
-        view.date = label(view.plate, () -> view.data == null ? "" : view.data.date(), FontManager.pf12);
-        view.date.setBeforeRenderCallback(() -> {
-            view.date.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            view.date.setPosition(cardWidth() - INNER_PAD - view.date.getWidth(),
-                    inkTop(view.date, CARD_TOP_PAD + TITLE_ROW * .5));
-        });
-
-        view.title = label(view.plate, () -> view.data == null ? "" : view.data.title(), FontManager.pf16bold);
-        view.title.setBeforeRenderCallback(() -> {
-            view.title.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            view.title.setMaxWidth(Math.max(1.0, view.kindPill.getX() - view.plate.getX()
-                    - INNER_PAD - DOT_SLOT - 8.0));
-            view.title.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            view.title.setPosition(INNER_PAD + DOT_SLOT, inkTop(view.title, CARD_TOP_PAD + TITLE_ROW * .5));
-        });
-
-        buildMetaRow(view);
-        return view;
-    }
-
-    /** 元信息那一行：左边链接（可点），右边「展开全文 / 收起」。 */
-    private void buildMetaRow(final CardView view) {
-        view.linkIcon = icon(view.plate, PartyIcons.LINK, ICON_S,
-                () -> INNER_PAD + ICON_S * .5, () -> metaCenterY(view), this::accent);
-        view.linkLabel = label(view.plate,
-                () -> view.data == null ? "" : AnnouncementChecker.linkText(view.data), FontManager.pf12);
-        view.linkLabel.setClickable(true);
-        view.linkLabel.setShouldOverrideMouseCursor(true);
-        view.linkLabel.setBeforeRenderCallback(() -> {
-            view.linkLabel.setColor(view.linkLabel.isHovering() ? accent()
-                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            view.linkLabel.setMaxWidth(Math.max(1.0, bodyWidth() - ICON_S - 5.0 - 64.0));
-            view.linkLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            view.linkLabel.setPosition(INNER_PAD + ICON_S + 5.0, inkTop(view.linkLabel, metaCenterY(view)));
-        });
-        view.linkLabel.setOnClickCallback((x, y, button) -> {
-            if (button != 0) {
-                return false;
-            }
-            openLink(view.data);
-            return true;
-        });
-
-        view.foldLabel = label(view.plate, () -> view.expanded ? COLLAPSE : EXPAND, FontManager.pf12bold);
-        view.foldLabel.setBeforeRenderCallback(() -> {
-            view.foldLabel.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            view.foldLabel.setPosition(cardWidth() - INNER_PAD - view.foldLabel.getWidth(),
-                    inkTop(view.foldLabel, metaCenterY(view)));
-        });
-    }
-
-    /** 元信息那一行的垂直中心：它垫在正文下面，所以只有按「这一张卡」的行数才量得出来。 */
-    private double metaCenterY(CardView view) {
-        return CARD_TOP_PAD + TITLE_ROW + view.lines.length * lineHeight() + META_ROW * .5 + 2.0;
-    }
-
-    /**
-     * 类型胶囊的右边界。
-     *
-     * <p>日期在最右、胶囊在它左边，两者都不定宽，所以这里按字体直接量一次日期宽度再让位 ——
-     * 不能读日期标签自己的宽度：胶囊的回调排在它前面，那一帧它还没被定过尺寸。</p>
-     */
-    private double pillRightEdge(CardView view) {
-        String date = view.data == null ? "" : view.data.date();
-        double reserve = 0.0;
-        if (!date.isEmpty() && FontManager.pf12 != null) {
-            reserve = FontManager.pf12.getStringWidthD(date) + 8.0;
-        }
-        return cardWidth() - INNER_PAD - reserve;
-    }
-
-    // ──────────────────────────── 语气 ────────────────────────────
-
-    private static String kindLabel(CardView view) {
-        String kind = kindOf(view);
-        if ("feature".equals(kind)) return "新功能";
-        if ("fix".equals(kind)) return "修复";
-        if ("event".equals(kind)) return "活动";
-        if ("warning".equals(kind)) return "重要";
-        return "公告";
-    }
-
-    private static String kindGlyph(CardView view) {
-        String kind = kindOf(view);
-        if ("feature".equals(kind)) return PartyIcons.ADD;
-        if ("fix".equals(kind)) return PartyIcons.CHECK;
-        if ("event".equals(kind)) return PartyIcons.TIMER;
-        if ("warning".equals(kind)) return PartyIcons.WARNING;
-        return PartyIcons.INFO;
-    }
-
-    private int kindColor(CardView view) {
-        String kind = kindOf(view);
-        if ("feature".equals(kind)) return OK_COLOR;
-        if ("fix".equals(kind)) return FIX_COLOR;
-        if ("event".equals(kind)) return VIP_COLOR;
-        if ("warning".equals(kind)) return BAD_COLOR;
-        return accent();
-    }
-
-    /** 统一转小写比较：清单里写 {@code Feature} 也该是同一个语气。 */
-    private static String kindOf(CardView view) {
-        Announcement data = view.data;
-        return data == null ? "" : data.kind().toLowerCase(Locale.ROOT);
-    }
-
-    // ──────────────────────────── 页脚 ────────────────────────────
-
-    private void footer(final Panel dialog) {
-        divider(dialog, () -> dialog.getHeight() - FOOTER_HEIGHT + 6.0);
-
-        final RoundedButtonWidget close = action(dialog, () -> PartyIcons.CLOSE, () -> CLOSE,
-                FontManager.pf12bold, () -> 0xFFFFFF, this::dispose);
-        close.setBeforeRenderCallback(() -> {
-            double width = 68.0;
-            close.setBounds(width, 26.0);
-            close.setPosition(dialog.getWidth() - PAD - width, dialog.getHeight() - FOOTER_HEIGHT + 12.0);
-            close.setColor(close.isHovering() ? mix(accent(), 0xFFFFFF, .18) : accent());
-        });
-
-        final RoundedButtonWidget refresh = action(dialog, () -> PartyIcons.SYNC, () -> REFRESH,
-                FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
-                this::beginRefresh);
-        refresh.setBeforeRenderCallback(() -> {
-            double width = 68.0;
-            refresh.setBounds(width, 26.0);
-            refresh.setPosition(dialog.getWidth() - PAD - width - 76.0,
-                    dialog.getHeight() - FOOTER_HEIGHT + 12.0);
-            refresh.setColor(refresh.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-        });
-
-        icon(dialog, () -> AnnouncementChecker.isFetching() ? PartyIcons.SYNC : PartyIcons.INFO,
-                ICON_S, () -> PAD + ICON_S * .5, () -> dialog.getHeight() - FOOTER_HEIGHT + 25.0,
-                () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-        final LabelWidget hint = label(dialog, this::footerText, FontManager.pf12);
-        hint.setBeforeRenderCallback(() -> {
-            hint.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            // 右边那两颗按钮占掉的宽度必须让开：让不开就是字压在按钮上，看着像界面坏了。
-            // 按钮跨度按实际位置现算（刷新左缘 → 关闭右缘 = 144），定值 150 偏保守会白让 6px。
-            hint.setMaxWidth(Math.max(60.0, refresh.getRelativeX() - ICON_S - 5.0 - PAD));
-            hint.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            hint.setPosition(PAD + ICON_S + 5.0, inkTop(hint, dialog.getHeight() - FOOTER_HEIGHT + 25.0));
-        });
+        return unread == 0 ? "都看过了" : unread + " 条未读";
     }
 
     private String footerText() {
-        if (status != null && !status.isEmpty()) {
-            return status;
-        }
-        if (visibleCount == 0) {
-            return AnnouncementChecker.isFetching() ? LOADING : NOTHING_HINT;
-        }
-        return DEFAULT_HINT;
+        if (!status.isEmpty()) return status;
+        return AnnouncementChecker.isFetching() ? "正在同步远端内容…" : "远端更新 · 滚动浏览";
     }
 
     private void beginRefresh() {
-        if (!AnnouncementChecker.refresh()) {
-            status = "上一次获取还在跑，稍等一下喵…";
-            return;
+        if (AnnouncementChecker.refresh()) {
+            refreshRequested = true;
+            status = "";
         }
-        refreshRequested = true;
-        status = "正在重新获取…";
     }
 
-    /** 打开公告附带的链接；打不开浏览器就把地址放进剪贴板并说明。 */
-    private void openLink(Announcement announcement) {
-        if (announcement == null) {
-            return;
+    private void ensureCards(int count) {
+        while (cards.size() < count) cards.add(buildCard());
+    }
+
+    private CardView buildCard() {
+        CardView view = new CardView();
+        view.row = new Panel();
+        content.addChild(view.row);
+        view.row.setClickable(false);
+        view.plate = new Panel() {
+            @Override protected boolean shouldClickChildren(double x, double y) {
+                return !closing && motion.acceptsInput() && testHovered(x, y) && insideViewport(x, y);
+            }
+            @Override protected void beforeRenderChildren(double x, double y) {
+                ScissorClipManager.begin(getX(), getY(), getWidth(), getHeight());
+            }
+            @Override protected void afterRenderChildren(double x, double y) { ScissorClipManager.end(); }
+        };
+        view.row.addChild(view.plate);
+        view.plate.setShouldOverrideMouseCursor(true).setOnClickCallback((x, y, button) -> {
+            if (button != 0 || !motion.acceptsInput() || view.data == null || view.full.length <= FOLDED_LINES) return true;
+            expanded.put(cardKey(view.data), !view.expanded);
+            return true;
+        });
+        NcmExpressive.surface(view.plate, 0, 0, view.plate::getWidth, view.plate::getHeight, 22,
+                () -> NcmExpressivePalette.live().container());
+        view.textRail = NcmExpressive.surface(view.plate, () -> 0, () -> 18, () -> 5,
+                () -> Math.max(1, view.plate.getHeight() - 36), 2,
+                () -> NcmExpressivePalette.live().primary());
+        NcmExpressive.medallion(view.plate, PartyIcons.NOTE, () -> 39, () -> 35, () -> 34,
+                () -> NcmExpressivePalette.live().primaryContainer(), () -> NcmExpressivePalette.live().primary());
+        NcmExpressive.label(view.plate, () -> cardMeta(view), NcmExpressive::captionFont,
+                () -> 65, () -> 35, () -> view.plate.getWidth() - 170,
+                () -> NcmExpressivePalette.live().primary());
+        NcmExpressive.rightAligned(view.plate, () -> view.data == null ? "" : view.data.date(),
+                NcmExpressive::captionFont, () -> view.plate.getWidth() - CARD_PAD, () -> 35,
+                () -> 106, () -> NcmExpressivePalette.live().muted());
+        view.title = NcmExpressive.label(view.plate, () -> view.data == null ? "" : view.data.title(),
+                NcmExpressive::dialogTitleFont, () -> CARD_PAD, () -> 77,
+                () -> view.textWidth, () -> NcmExpressivePalette.live().containerInk());
+        view.title.setTooltip(() -> view.data == null ? "" : view.data.title());
+        view.art = new Panel() {
+            @Override public void onRender(double x, double y) {
+                if (view.data == null || getWidth() <= 1) return;
+                String url = view.data.image();
+                images.request(url);
+                AnnouncementImageCache.State state = images.state(url);
+                view.imageState = state;
+                if (state == AnnouncementImageCache.State.READY && view.imageArrived == 0) {
+                    view.imageArrived = System.nanoTime();
+                }
+                view.imageLoading.setHidden(state != AnnouncementImageCache.State.LOADING);
+                view.imageHint.setHidden(state == AnnouncementImageCache.State.READY);
+            }
+        };
+        view.plate.addChild(view.art);
+        view.art.setClickable(false);
+        NcmExpressive.surface(view.art, 0, 0, view.art::getWidth, view.art::getHeight, 18,
+                () -> NcmExpressivePalette.live().input());
+        // 背板先画，图片后画；否则子组件的填色会把异步图片盖住。
+        Panel imageInk = new Panel() {
+            @Override public void onRender(double x, double y) {
+                if (view.imageState != AnnouncementImageCache.State.READY || view.data == null) return;
+                float alpha = (float) NcmPromptMotion.reveal(view.imageArrived, System.nanoTime(), 360);
+                images.draw(view.data.image(), SkijaGfx.canvas(), Rect.makeXYWH((float) getX(), (float) getY(),
+                        (float) getWidth(), (float) getHeight()), 18, "contain".equals(view.data.imageFit()), getAlpha() * alpha);
+            }
+        };
+        view.art.addChild(imageInk);
+        imageInk.setClickable(false).setBeforeRenderCallback(() -> imageInk.setBounds(0, 0, view.art.getWidth(), view.art.getHeight()));
+        view.imageLoading = NcmExpressive.loading(view.art, () -> view.art.getWidth() * .5,
+                () -> view.art.getHeight() * .5 - 12, () -> 36, () -> NcmExpressivePalette.live().primary());
+        view.imageHint = NcmExpressive.centered(view.art, () -> view.imageState == AnnouncementImageCache.State.FAILED
+                        ? "图片暂不可用 · 文字和链接仍可使用" : "正在加载图片…",
+                NcmExpressive::captionFont, () -> view.art.getWidth() * .5, () -> view.art.getHeight() * .5 + 32,
+                () -> view.art.getWidth() - 32, () -> NcmExpressivePalette.live().muted());
+        for (int index = 0; index < 3; index++) {
+            final int action = index;
+            RoundedButtonWidget button = NcmExpressive.action(view.plate, PartyIcons.LINK,
+                    () -> action < view.actions.size() ? view.actions.get(action).text() : "",
+                    action == 0 ? NcmExpressive.ActionStyle.PRIMARY : NcmExpressive.ActionStyle.TONAL,
+                    () -> CARD_PAD + (view.stackActions ? 0 : action * (view.actionWidth + 8)),
+                    () -> view.actionsTop + (view.stackActions ? action * 52 : 0),
+                    () -> view.actionWidth, () -> 44,
+                    () -> { if (action < view.actions.size()) openLink(view.actions.get(action).url()); });
+            view.buttons.add(button);
         }
-        String link = announcement.link();
-        if (!AnnouncementChecker.isLinkAllowed(link)) {
-            return;
+        view.fold = NcmExpressive.hitSurface(view.plate,
+                () -> view.stackActions ? CARD_PAD : view.plate.getWidth() - CARD_PAD - 118,
+                () -> view.actionsTop + (view.stackActions ? view.actions.size() * 52 : 0),
+                () -> view.stackActions ? view.textWidth : 118, () -> 44, 22,
+                () -> NcmExpressivePalette.live().input(), () -> {
+                    if (view.data != null) expanded.put(cardKey(view.data), !view.expanded);
+                });
+        NcmExpressive.centered(view.fold, () -> view.expanded ? "收起正文" : "展开全文",
+                NcmExpressive::captionFont, () -> view.stackActions ? view.textWidth * .5 : 59,
+                () -> 22, () -> view.stackActions ? view.textWidth - 24 : 102,
+                () -> NcmExpressivePalette.live().muted());
+        return view;
+    }
+
+    private void measureCard(CardView view, Announcement data, long now) {
+        if (view.data != data) {
+            view.data = data;
+            view.actions = actionsFor(data);
+            view.imageArrived = 0;
+            view.imageState = AnnouncementImageCache.State.EMPTY;
         }
+        view.textWidth = Math.max(1, contentWidth() - 8 - CARD_PAD * 2);
+        CFontRenderer font = NcmExpressive.bodyFont();
+        long revision = font == null ? -1 : font.metricsRevision();
+        boolean ready = font != null && font.areGlyphsLoaded(data.body());
+        boolean wrapped = !ready || font != view.font || revision != view.revision || !data.body().equals(view.source)
+                || view.wrappedWidth != view.textWidth;
+        if (wrapped) {
+            view.full = data.body().isEmpty() ? new String[0] : NcmExpressive.wrap(font, data.body(), view.textWidth);
+            view.font = font;
+            view.revision = revision;
+            view.source = data.body();
+            view.wrappedWidth = view.textWidth;
+        }
+        view.expanded = expanded.getOrDefault(cardKey(data), motion.visible() != 0 || !AnnouncementChecker.isRead(data.id()));
+        int count = view.expanded ? view.full.length : Math.min(FOLDED_LINES, view.full.length);
+        if (wrapped || view.lines.length != count) {
+            view.lines = new String[count];
+            System.arraycopy(view.full, 0, view.lines, 0, count);
+            if (count < view.full.length && count > 0 && font != null) {
+                view.lines[count - 1] = font.trim(view.lines[count - 1],
+                        Math.max(1, view.textWidth - font.getStringWidthD("…"))) + "…";
+            }
+        }
+        boolean art = !data.image().isEmpty() && AnnouncementChecker.isLinkAllowed(data.image());
+        view.hasImage = art;
+        view.art.setHidden(!art);
+        view.textRail.setHidden(art);
+        double artHeight = art ? ("contain".equals(data.imageFit())
+                ? Math.max(180, Math.min(280, view.textWidth * .38))
+                : Math.max(156, Math.min(256, view.textWidth * .34))) : 0;
+        view.art.setBounds(CARD_PAD, 103, view.textWidth, artHeight);
+        view.art.setTooltip(data.imageAlt());
+        view.bodyTop = art ? 105 + artHeight + 18 : 110;
+        boolean fold = view.full.length > FOLDED_LINES;
+        view.fold.setHidden(!fold);
+        view.actionsTop = view.bodyTop + count * lineHeight() + 14;
+        double actionArea = view.textWidth - (fold ? 130 : 0);
+        view.stackActions = actionArea < view.actions.size() * 104;
+        int actionRows = view.stackActions ? view.actions.size() + (fold ? 1 : 0)
+                : fold || !view.actions.isEmpty() ? 1 : 0;
+        double targetHeight = view.actionsTop + Math.max(0, actionRows * 52 - 8) + CARD_PAD;
+        if (view.height == null) view.height = new NcmPromptMotion(targetHeight);
+        double height = view.height.update(targetHeight, 38 / SheetClock.speed(), now);
+        view.row.setBounds(contentWidth() - 8, height);
+        view.plate.setBounds(contentWidth() - 8, height);
+        view.actionWidth = view.stackActions ? view.textWidth
+                : Math.max(1, Math.min(196, (actionArea - Math.max(0, view.actions.size() - 1) * 8)
+                / Math.max(1, view.actions.size())));
+        for (int i = 0; i < view.buttons.size(); i++) view.buttons.get(i).setHidden(i >= view.actions.size());
+        ensureLines(view, count);
+    }
+
+    private void ensureLines(CardView view, int count) {
+        while (view.labels.size() < count) {
+            int index = view.labels.size();
+            LabelWidget label = NcmExpressive.label(view.plate, () -> index < view.lines.length ? view.lines[index] : "",
+                    NcmExpressive::bodyFont, () -> CARD_PAD, () -> view.bodyTop + (index + .5) * lineHeight(),
+                    () -> view.textWidth, () -> NcmExpressivePalette.live().containerInk());
+            view.labels.add(label);
+        }
+        for (int i = 0; i < view.labels.size(); i++) view.labels.get(i).setHidden(i >= count);
+    }
+
+    private static double lineHeight() {
+        CFontRenderer font = NcmExpressive.bodyFont();
+        return Math.max(22, (font == null ? 16 : font.getFontHeight()) + 8);
+    }
+
+    private String cardKey(Announcement data) { return motion.visible() + ":" + data.id(); }
+
+    private String cardMeta(CardView view) {
+        if (view.data == null) return "";
+        if (!view.data.badge().isEmpty()) return view.data.badge();
+        if (motion.visible() == 1) return "赞助项目";
+        if (motion.visible() == 2) return "加入交流";
+        String kind = view.data.kind().toLowerCase(Locale.ROOT);
+        String label = "feature".equals(kind) ? "新功能" : "fix".equals(kind) ? "修复"
+                : "warning".equals(kind) ? "重要提醒" : "event".equals(kind) ? "活动" : "公告";
+        return label + (AnnouncementChecker.isRead(view.data.id()) ? "" : " · 未读");
+    }
+
+    private static List<Announcement.Action> actionsFor(Announcement data) {
+        List<Announcement.Action> actions = new ArrayList<>();
+        if (AnnouncementChecker.isLinkAllowed(data.link())) {
+            actions.add(new Announcement.Action(AnnouncementChecker.linkText(data), data.link()));
+        }
+        for (Announcement.Action action : data.actions()) {
+            if (actions.size() >= 3) break;
+            if (!AnnouncementChecker.isLinkAllowed(action.url())) continue;
+            boolean duplicate = false;
+            for (Announcement.Action prior : actions) if (prior.url().equals(action.url())) duplicate = true;
+            if (!duplicate) actions.add(action);
+        }
+        return actions;
+    }
+
+    private void openLink(String link) {
+        if (closing || !motion.acceptsInput() || !AnnouncementChecker.isLinkAllowed(link)) return;
         if (BrowserUtils.open(link)) {
-            status = "已在浏览器里打开喵。";
-            return;
+            status = "已在浏览器打开";
+        } else {
+            KeyboardUtils.setClipboardString(link);
+            status = "地址已复制到剪贴板：" + link;
         }
-        KeyboardUtils.setClipboardString(link);
-        status = "打不开浏览器喵…地址已复制到剪贴板：" + link;
     }
 
-    /** 一张卡片用到的组件。全部由 {@link #measure()} 每帧喂数据，所以没有「重建」这一步。 */
     private static final class CardView {
-
         private Panel row;
-        private Card plate;
-        private RoundedRectWidget unreadDot;
-        private RoundedRectWidget kindPill;
+        private Panel plate;
+        private Panel art;
+        private AbstractWidget<?> textRail;
         private LabelWidget title;
-        private LabelWidget date;
-        private LabelWidget linkIcon;
-        private LabelWidget linkLabel;
-        private LabelWidget foldLabel;
-        private final List<LabelWidget> lineLabels = new ArrayList<LabelWidget>();
-
-        /** 本帧绑到这张卡上的公告；{@code null} 表示这一格不显示。 */
+        private LabelWidget imageHint;
+        private AbstractWidget<?> imageLoading;
+        private AbstractWidget<?> fold;
+        private final List<RoundedButtonWidget> buttons = new ArrayList<>();
+        private final List<LabelWidget> labels = new ArrayList<>();
         private Announcement data;
-        private String[] lines = new String[0];
+        private List<Announcement.Action> actions = List.of();
         private String[] full = new String[0];
-        private double height;
+        private String[] lines = new String[0];
+        private String source = "";
+        private CFontRenderer font;
+        private long revision = -1;
+        private double wrappedWidth = -1;
+        private double textWidth;
+        private double bodyTop;
+        private double actionsTop;
+        private double actionWidth;
         private boolean expanded;
-        private boolean truncated;
-        private boolean hasLink;
+        private boolean hasImage;
+        private boolean stackActions;
+        private NcmPromptMotion height;
+        private long imageArrived;
+        private AnnouncementImageCache.State imageState = AnnouncementImageCache.State.EMPTY;
     }
 }

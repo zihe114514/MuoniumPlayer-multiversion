@@ -14,11 +14,13 @@ public final class CinePresetDomain implements PresetDomain {
     private static final KeyPolicy POLICY = KeyPolicy.builder().facet(Facet.CAMERA,
             "enabled", "idleSeconds", "shotBeats", "speedMultiplier", "fovPunchDegrees", "handheldIntensity",
             "hideHud", "showCinematicBars", "cinematicBarPercent", "transitionMask", "transitionSeconds", "enableMobFocus",
-            "mobFocusRange", "excludeHostileMobs", "excludeBats", "trackingSoftness", "showStatusMessages", "minShotSeconds").build();
+            "mobFocusRange", "excludeHostileMobs", "excludeBats", "trackingSoftness", "showStatusMessages", "minShotSeconds",
+            "environmentShotPercent").build();
     private static final List<String> SHARE_KEYS = Collections.unmodifiableList(Arrays.asList(
             "enabled", "idleSeconds", "shotBeats", "speedMultiplier", "fovPunchDegrees", "handheldIntensity",
             "hideHud", "showCinematicBars", "cinematicBarPercent", "transitionMask", "transitionSeconds", "enableMobFocus",
-            "mobFocusRange", "excludeHostileMobs", "excludeBats", "trackingSoftness", "showStatusMessages", "minShotSeconds"));
+            "mobFocusRange", "excludeHostileMobs", "excludeBats", "trackingSoftness", "showStatusMessages", "minShotSeconds",
+            "environmentShotPercent"));
     public String id() { return ID; }
     public String displayName() { return "卡点运镜"; }
     public int fragmentVersion() { return 1; }

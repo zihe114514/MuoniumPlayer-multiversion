@@ -6,9 +6,13 @@
   "client": [
     "MusicManagerAccessor",
     "MusicManagerDuckMixin",
+    "ChatIslandMouseMixin",
     "TransparentEntityMixin",
     "TransparentCameraMixin",
     "CineCameraMixin",
+    "CineKeyboardMixin",
+    "CineMouseMixin",
+    "CineRollMixin",
     "CineFovMixin",
     "CineHudMixin",
     "SpinEntityMixin",

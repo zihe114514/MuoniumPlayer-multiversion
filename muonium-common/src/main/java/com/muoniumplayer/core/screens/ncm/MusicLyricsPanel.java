@@ -2110,8 +2110,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         boolean clockReady = !presentation.preparing && CloudMusic.hasPlaybackClock();
         // 直播态 durationMs=0、positionMs=已收听时长：总时长没落地时进度比例必须归 0，
         // 否则 elapsed/0 会被 Math.max(1.0, 0) 放大成巨数，进度条画出一个溢出的巨块。
-        double perc = !clockReady || totalTimeMillis <= 0.0 ? 0
-                : (progressBarDragging ? progressBarProgressOverride : currentTimeMillis / totalTimeMillis);
+        // 恢复态仍展示记忆比例；clockReady 只约束后面的拖动/seek，不清空显示。
+        double perc = presentation.preparing || totalTimeMillis <= 0.0 ? 0
+                : Math.max(0.0, Math.min(1.0, clockReady && progressBarDragging
+                        ? progressBarProgressOverride : currentTimeMillis / totalTimeMillis));
 
         // 播放进度条填充：MC 1.8.9 主 framebuffer 无 stencil，stencil 裁剪失效，改为按 perc 直接画 partial 宽度圆角矩形。
         double fillWidth = progressBarWidth * perc;

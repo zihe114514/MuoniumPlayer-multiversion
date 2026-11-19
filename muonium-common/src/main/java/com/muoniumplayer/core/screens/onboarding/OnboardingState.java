@@ -38,6 +38,13 @@ public final class OnboardingState {
         }
     }
 
+    public static boolean hasSeenIntro() {
+        synchronized (LOCK) {
+            loadLocked();
+            return introSeen || completed;
+        }
+    }
+
     public static boolean isIntroSeen() {
         synchronized (LOCK) {
             loadLocked();

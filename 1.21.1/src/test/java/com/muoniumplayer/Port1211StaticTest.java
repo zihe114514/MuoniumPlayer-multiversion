@@ -284,6 +284,98 @@ class Port1211StaticTest {
         }
     }
 
+    @Test
+    @DisplayName("HUD 现代歌词持有独立立即提交缓冲，并在恢复世界矩阵前全量收批")
+    void hudLyricsOwnTheirBuffers() throws IOException {
+        String bridge = stripComments(read(ProjectPaths.versionJava().resolve(
+                "com/muoniumplayer/compat/mc/WorldLyricsBridge.java")));
+        int hud = bridge.indexOf("public static void hudPhaseDraw()");
+        int storage = bridge.indexOf("try (ByteBufferBuilder storage = new ByteBufferBuilder(1536))", hud);
+        int source = bridge.indexOf("MultiBufferSource.immediate(storage)", storage);
+        int draw = bridge.indexOf("renderInner(hudBasePose, mc, mc.gameRenderer.getMainCamera(), lyricBuffers)", source);
+        int flush = bridge.indexOf("lyricBuffers.endBatch()", draw);
+        int reset = bridge.indexOf("WorldBillboard.forceVanillaType = false", draw);
+        int restore = bridge.indexOf("RenderSystem.getModelViewStack().popMatrix()", reset);
+        assertTrue(hud >= 0 && storage > hud && source > storage && draw > source
+                        && flush > draw && reset > flush && restore > reset,
+                "HUD 直画必须独立拥有并关闭原生缓冲；全量收批不能跑到恢复矩阵之后");
+        assertFalse(bridge.substring(hud, reset).contains("mc.renderBuffers().bufferSource()"),
+                "HUD 歌词不得与宿主共享文字/实体挂起批次");
+        assertTrue(bridge.contains("WorldBillboard.INSTANCE.begin(poseStack,\n                lyricBuffers,"),
+                "专用缓冲必须实际传给公告牌，不能只建不用");
+    }
+
+    @Test
+    @DisplayName("现代字形及特效不依赖可被改写的矩阵顶点重载")
+    void modernLyricsUseExplicitPositionTransform() throws IOException {
+        String billboard = stripComments(read(ProjectPaths.versionJava().resolve(
+                "com/muoniumplayer/compat/mc/WorldBillboard.java")));
+        assertFalse(billboard.contains("vc.addVertex(mat,"),
+                "所有现代 quad 必须经本树显式变换后提交，不能只修墨格遗漏光晕/拖尾");
+        assertTrue(billboard.contains("return vc.addVertex(tx, ty, tz)"),
+                "公告牌视图变换只能施加一次，提交的是变换后位置");
+    }
+
+    @Test
+    @DisplayName("现代字形在各个 yaw/pitch 下与原版顶点变换一致，且不调用矩阵重载")
+    void modernGlyphVerticesFollowCamera() throws Exception {
+        java.lang.reflect.Method putGlyph = Class.forName("com.muoniumplayer.compat.mc.WorldBillboard")
+                .getDeclaredMethod("putGlyphVertex", com.mojang.blaze3d.vertex.VertexConsumer.class,
+                        org.joml.Matrix4f.class, float.class, float.class, float.class, float.class,
+                        float.class, float.class, float.class, int.class, float.class, float.class);
+        putGlyph.setAccessible(true);
+        float[] actual = new float[3];
+        int[] writes = new int[1];
+        com.mojang.blaze3d.vertex.VertexConsumer sink = (com.mojang.blaze3d.vertex.VertexConsumer)
+                java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                        new Class<?>[] {com.mojang.blaze3d.vertex.VertexConsumer.class}, (proxy, method, args) -> {
+                            if (method.getName().equals("addVertex")) {
+                                assertTrue(args.length == 3 && args[0] instanceof Float,
+                                        "矩阵重载被渲染模组替换也不能影响本树现代顶点");
+                                for (int i = 0; i < 3; i++) actual[i] = (Float) args[i];
+                                writes[0]++;
+                            }
+                            return proxy;
+                        });
+        float[] yaws = {0f, 90f, 180f, 270f, -145f, 725f};
+        float[] pitches = {-70f, -20f, 0f, 35f, 75f};
+        for (float yaw : yaws) {
+            for (float pitch : pitches) {
+                org.joml.Matrix4f base = new org.joml.Matrix4f()
+                        .rotationX((float) Math.toRadians(pitch))
+                        .rotateY((float) Math.toRadians(yaw + 180f));
+                // 回屏保持把世界锚点拉到新视线前；相机逆旋转后应仍在同一屏内位置。
+                org.joml.Vector3f anchor = new org.joml.Vector3f(1f, 0.5f, -12f);
+                new org.joml.Matrix4f(base).invert().transformPosition(anchor);
+                org.joml.Matrix4f mat = new org.joml.Matrix4f(base)
+                        .translate(anchor.x, anchor.y, anchor.z)
+                        .rotateY((float) -Math.toRadians(yaw))
+                        .rotateX((float) Math.toRadians(pitch))
+                        .scale(-0.02f, -0.02f, 0.02f);
+                org.joml.Vector3f center = mat.transformPosition(0f, 0f, 0f, new org.joml.Vector3f());
+                org.junit.jupiter.api.Assertions.assertEquals(1f, center.x, 0.0001f);
+                org.junit.jupiter.api.Assertions.assertEquals(0.5f, center.y, 0.0001f);
+                org.junit.jupiter.api.Assertions.assertEquals(-12f, center.z, 0.0001f);
+                org.joml.Vector3f expected = mat.transformPosition(3f, 4f, 0f, new org.joml.Vector3f());
+                putGlyph.invoke(null, sink, mat, 3f, 4f, 0f, 0f, 1f, 0f, 1f,
+                        0xFFFFFFFF, 0.2f, 0.3f);
+                org.junit.jupiter.api.Assertions.assertEquals(expected.x, actual[0], 0.0001f);
+                org.junit.jupiter.api.Assertions.assertEquals(expected.y, actual[1], 0.0001f);
+                org.junit.jupiter.api.Assertions.assertEquals(expected.z, actual[2], 0.0001f);
+                float cos = (float) Math.cos(Math.toRadians(35f));
+                float sin = (float) Math.sin(Math.toRadians(35f));
+                expected = mat.transformPosition(1f + (2f * cos - 2f * sin) * 1.3f,
+                        2f + (2f * sin + 2f * cos) * 1.3f, 0f, new org.joml.Vector3f());
+                putGlyph.invoke(null, sink, mat, 3f, 4f, 1f, 2f, cos, sin, 1.3f,
+                        0xFFFFFFFF, 0.2f, 0.3f);
+                org.junit.jupiter.api.Assertions.assertEquals(expected.x, actual[0], 0.0001f);
+                org.junit.jupiter.api.Assertions.assertEquals(expected.y, actual[1], 0.0001f);
+                org.junit.jupiter.api.Assertions.assertEquals(expected.z, actual[2], 0.0001f);
+            }
+        }
+        org.junit.jupiter.api.Assertions.assertEquals(60, writes[0]);
+    }
+
     private static boolean usesAwtClipboard(Path file) {
         try {
             String text = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);

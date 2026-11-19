@@ -15,9 +15,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 「首次打开播放器会卡一下」的预热链路离线契约测试。
  *
- * <p>首开的卡顿来自三笔只付一次的成本：内容页类加载与首次构造、图标纹理在渲染线程上
- * 的同步解码上传、以及（未在本轮处理）的首页卡片重建波。预热把它们挪进 HUD 空闲期，
- * 而「预热必须永远无副作用」是这整条链路的安全前提——它每局游戏都会自动执行一次，
+ * <p>本测试保护类加载/首次构造、冷图标解码上传和主页回调错峰的源码契约；这些是候选成本，
+ * 不能单凭测试认定本次实机卡顿根因。预热把部分工作挪进 HUD 空闲期，
+ * 而「预热不得提前请求推荐或同步解码」是这整条链路的安全前提。
  * 一旦有人往里加了网络请求或同步解码，受害的不只是帧率，还有本来不该发生的流量。
  * 渲染类一加载就要 GL 上下文，跑不起来，所以按本项目惯例钉源码契约。</p>
  */
@@ -92,8 +92,13 @@ class FirstOpenPrewarmStaticTest {
                 "一次性闸门没了：每帧 HUD 都会重复整套预热");
         assertTrue(prewarm.contains("HomePanel.prewarm();") && prewarm.contains("PlayerIconAssets.prewarm();"),
                 "prewarmLayout 没有同时接入主页预热与图标预热");
-        assertTrue(prewarm.indexOf("getInstance().layout()") < prewarm.indexOf("HomePanel.prewarm();"),
-                "主页预热排在基础布局之前：NavigateBar 还没建好就预热内容页，顺序乱了对首开没有任何好处");
+        assertTrue(prewarm.contains("screen.layoutSurface();") && prewarm.contains("screen.layoutNavigation();")
+                        && prewarm.contains("screen.layoutControls();") && prewarm.contains("screen.layoutQueue();"),
+                "基础预热必须分阶段，不能在一个 HUD 帧重建整棵树");
+        assertTrue(prewarm.indexOf("screen.layoutQueue();") < prewarm.indexOf("HomePanel.prewarm();"),
+                "主页预热只能在基础树准备后进行");
+        assertTrue(prewarm.indexOf("++prewarmStage;") > prewarm.indexOf("PlayerIconAssets.prewarm();"),
+                "阶段必须成功执行后才标记完成");
     }
 
     @Test
@@ -130,19 +135,21 @@ class FirstOpenPrewarmStaticTest {
     }
 
     @Test
-    void longFramesCannotConsumeMoreThanOneTwelfthAtAnyConfiguredSpeed() {
+    void normalFramesKeepRealTimeAndLongInterruptionsHaveNoCatchUpDebt() {
         for (double duration : new double[]{880.0 / .3, 880.0, 880.0 / 3.0, 650.0 / 3.0, 88.0}) {
             PlayerIslandTransition.FrameClock clock = new PlayerIslandTransition.FrameClock();
             long now = 1_000_000_000L;
             clock.step(now, duration);
-            double progress = 0.0;
-            for (int frame = 0; frame < 6; frame++) {
-                now += 300_000_000L;
-                double step = clock.step(now, duration);
-                assertTrue(step <= 1000.0 / 30.0 && step / duration <= 1.0 / 12.0 + 1e-10);
-                progress += step / duration;
-            }
-            assertTrue(progress <= .5 + 1e-10, "六个长帧不能把整段展开吃完");
+            now += 33_333_333L;
+            org.junit.jupiter.api.Assertions.assertEquals(33.333333, clock.step(now, duration), 1e-8,
+                    "正常30Hz不能按时长/12强制减速");
+            now += 300_000_000L;
+            double recovery = clock.step(now, duration);
+            assertTrue(recovery <= 1000.0 / 30.0 && recovery / duration <= .25 + 1e-10,
+                    "严重阻塞不应吃完整个新转场");
+            now += 8_000_000L;
+            org.junit.jupiter.api.Assertions.assertEquals(8.0, clock.step(now, duration),
+                    "阻塞超额必须丢弃，不能积压到下一帧");
         }
     }
 

@@ -25,6 +25,7 @@ import com.muoniumplayer.core.update.AnnouncementChecker;
 import com.muoniumplayer.core.ncm.music.NeteaseSearchSuggestService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
+import com.muoniumplayer.core.download.DownloadCatalog;
 import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FoliaLucideIcons;
@@ -160,6 +161,7 @@ public class NavigateBar extends NCMPanel {
     private boolean selectionCacheDirty = true;
     /** 快捷操作条上那颗公告按钮。让位判断挂在父组件的渲染里，见 {@link #onRender}。 */
     private SidebarActionButton announcementButton;
+    private SidebarActionButton downloadButton;
     private final List<PlaylistItem> playlistItems = new CopyOnWriteArrayList<>();
 
     /**
@@ -1428,7 +1430,10 @@ public class NavigateBar extends NCMPanel {
         SidebarActionButton btnAnnouncement = new SidebarActionButton(SidebarActionIcon.ANNOUNCEMENT);
         btnAnnouncement.setUnreadBadge(() -> AnnouncementChecker.hasUnread());
         this.announcementButton = btnAnnouncement;
-        quickActionsSurface.addChild(btnTheme, btnFont, btnPlayerSize, btnRefresh, btnAnnouncement);
+        SidebarActionButton btnDownloads = new SidebarActionButton(SidebarActionIcon.DOWNLOADS);
+        btnDownloads.setUnreadBadge(() -> DownloadCatalog.activeTasks() > 0 || DownloadCatalog.waitingTasks() > 0);
+        this.downloadButton = btnDownloads;
+        quickActionsSurface.addChild(btnTheme, btnFont, btnPlayerSize, btnRefresh, btnAnnouncement, btnDownloads);
 
         btnFont.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton != 0) {
@@ -1526,6 +1531,21 @@ public class NavigateBar extends NCMPanel {
             btnAnnouncement.setPosition(railSlotX(4, actionWidth), 2);
             btnAnnouncement.setRadius(6);
             btnAnnouncement.setColor(btnAnnouncement.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        });
+        btnDownloads.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton != 0) return mouseButton == 1;
+            NCMScreen.getInstance().openDownloadManager();
+            return true;
+        });
+        btnDownloads.setBeforeRenderCallback(() -> {
+            double actionWidth = railSlotWidth(Math.max(1, this.getWidth() - 16));
+            btnDownloads.setBounds(actionWidth, 24);
+            btnDownloads.setPosition(railSlotX(DownloadCatalog.shouldShowEntry()
+                    && railFitsDownloads(Math.max(1, this.getWidth() - 16)) ? 5 : 4, actionWidth), 2);
+            btnDownloads.setRadius(6);
+            btnDownloads.setColor(btnDownloads.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
@@ -1677,8 +1697,14 @@ public class NavigateBar extends NCMPanel {
         // 错峰号每帧重发：这一帧里第一次被看见的那几行才是同一批。放在这里（父组件的 onRender
         // 跑在子组件之前）和曲目列表那一条规则完全一致。
         this.entranceReveal.beginFrame();
+        /** 窄侧栏公告不与下载入口共存：保留公告原来的第五格。 */
         if (this.announcementButton != null) {
-            this.announcementButton.setHidden(!railFitsAnnouncement(this.getWidth() - 16));
+            this.announcementButton.setHidden(!railFitsAnnouncement(this.getWidth() - 16)
+                    || DownloadCatalog.shouldShowEntry());
+        }
+        if (this.downloadButton != null) {
+            this.downloadButton.setHidden(!DownloadCatalog.shouldShowEntry()
+                    || !railFitsAnnouncement(this.getWidth() - 16));
         }
         super.onRender(mouseX, mouseY);
     }
@@ -1819,30 +1845,24 @@ public class NavigateBar extends NCMPanel {
         return Math.max(1, Math.min(RAIL_SLOT_MAX_WIDTH, natural));
     }
 
-    /** 五颗按钮占的总宽（n 格宽 + n-1 条 3 像素的缝），壳宽就是它再加左右内边距。 */
     private static double railClusterWidth(double railWidth) {
         double actionWidth = railSlotWidth(railWidth);
         return actionWidth * railSlotCount(railWidth) + 3.0 * (railSlotCount(railWidth) - 1);
     }
 
-    /** 第 {@code index} 颗按钮在壳内的左缘：左内边距 2 起，每颗占一格宽再加一条 3 像素的缝。 */
     private static double railSlotX(int index, double actionWidth) {
         return RAIL_SURFACE_INSET + index * (actionWidth + 3);
     }
 
-    /** 这一帧这条快捷操作条上有几颗按钮：窄到放不下第五颗时由公告让位。 */
     private static int railSlotCount(double railWidth) {
+        if (DownloadCatalog.shouldShowEntry() && railFitsDownloads(railWidth)) return 6;
         return railFitsAnnouncement(railWidth) ? 5 : 4;
     }
 
-    /**
-     * 第五颗按钮放不放得下。
-     *
-     * <p>门槛取 18.5：图标墨迹约 12.4 逻辑像素，再窄邻居之间就会视觉重叠，而这条按钮排是
-     * 横向并排的，叠在一起的图标读起来就是「界面坏了」。分母里扣的是壳的左右内边距 4 与
-     * 五颗之间 4 条 3 像素的缝。侧栏收窄到 112 逻辑像素那一档正好落在门槛外侧，
-     * 于是那一档只显示原来那四颗。</p>
-     */
+    private static boolean railFitsDownloads(double railWidth) {
+        return (railWidth - 2 * RAIL_SURFACE_INSET - 3.0 * 5) / 6.0 >= 18.5;
+    }
+
     private static boolean railFitsAnnouncement(double railWidth) {
         return (railWidth - 2 * RAIL_SURFACE_INSET - 3.0 * 4) / 5.0 >= 18.5;
     }
@@ -1985,7 +2005,8 @@ public class NavigateBar extends NCMPanel {
         FONT,
         SCALE,
         REFRESH,
-        ANNOUNCEMENT
+        ANNOUNCEMENT,
+        DOWNLOADS
     }
 
     /** 快捷操作条上那枚未读小圆点的颜色。 */
@@ -2098,6 +2119,7 @@ public class NavigateBar extends NCMPanel {
             if (icon == SidebarActionIcon.SCALE) return "切换窗口大小（右键还原）";
             if (icon == SidebarActionIcon.REFRESH) return refreshTooltipText();
             if (icon == SidebarActionIcon.ANNOUNCEMENT) return "查看公告";
+            if (icon == SidebarActionIcon.DOWNLOADS) return "下载管理 · 组件状态与安装";
             return "";
         }
 
@@ -2147,6 +2169,8 @@ public class NavigateBar extends NCMPanel {
                 }
             } else if (icon == SidebarActionIcon.ANNOUNCEMENT) {
                 name = FoliaLucideIcons.MEGAPHONE;
+            } else if (icon == SidebarActionIcon.DOWNLOADS) {
+                return false;
             } else {
                 return false;
             }
@@ -2170,6 +2194,8 @@ public class NavigateBar extends NCMPanel {
                 renderScaleIcon(centerX, centerY, alpha, accent, foreground);
             } else if (icon == SidebarActionIcon.ANNOUNCEMENT) {
                 renderAnnouncementIcon(centerX, centerY, alpha, accent, foreground);
+            } else if (icon == SidebarActionIcon.DOWNLOADS) {
+                renderDownloadIcon(centerX, centerY, alpha, accent);
             } else {
                 renderRefreshIcon(centerX, centerY, alpha, accent, foreground);
             }
@@ -2282,7 +2308,16 @@ public class NavigateBar extends NCMPanel {
                     RenderSystem.reAlpha(accent, alpha * .74f));
         }
 
+        private void renderDownloadIcon(double x, double y, float alpha, int accent) {
+            int ink = RenderSystem.reAlpha(accent, alpha);
+            roundedRect(x - 6.1, y + 4.5, 12.2, 1.7, .85, ink);
+            drawRotatedPill(x - 2.3, y + .8, 7.0, 1.7, 45f, ink);
+            drawRotatedPill(x + 2.3, y + .8, 7.0, 1.7, -45f, ink);
+            roundedRect(x - .9, y - 6.0, 1.8, 8.5, .9, ink);
+        }
+
         private int getIconAccentColor() {
+            if (icon == SidebarActionIcon.DOWNLOADS) return 0xFF63D4C5;
             if (icon == SidebarActionIcon.FONT) return 0xFFB79BFF;
             if (icon == SidebarActionIcon.ANNOUNCEMENT) return 0xFFFFC061;
             if (icon == SidebarActionIcon.SCALE) return 0xFF67D8FF;

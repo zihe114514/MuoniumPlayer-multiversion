@@ -285,6 +285,23 @@ public final class FoliaModelManager {
 
     private record OnnxEntry(String file, long bytes, String sha256) {}
 
+    public static String kindLabel(Kind kind) {
+        return kind == null ? "" : kind.label;
+    }
+
+    public static boolean isDownloading(Kind kind) {
+        return ACTIVE_DOWNLOADS.containsKey(kind);
+    }
+
+    public static boolean isInstalling(Kind kind) {
+        return ACTIVE_INSTALLS.contains(kind);
+    }
+
+    public static int progressPercent(Kind kind) {
+        Double value = ACTIVE_DOWNLOADS.get(kind);
+        return value == null ? -1 : (int) Math.round(value * 100.0);
+    }
+
     public static String statusLabel(Kind kind) {
         Double progress = ACTIVE_DOWNLOADS.get(kind);
         if (progress != null) return kind.label + " · 下载中 " + (int) Math.round(progress * 100.0) + "%";

@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
+import com.muoniumplayer.core.rendering.DownloadDynamicIsland.DynamicIslandStyle;
 
 import java.io.File;
 
@@ -20,8 +21,8 @@ public final class HudConfig {
     public static final float SCALE_MIN = 0.5f;
     public static final float SCALE_MAX = 2.0f;
 
-    /** 灵动岛样式索引上限,与 {@code DownloadDynamicIsland.DynamicIslandStyle} 的数量保持一致。 */
-    public static final int DYNAMIC_ISLAND_STYLE_MAX = 6;
+    /** 灵动岛样式的最大稳定 ID；1/3/4/5 已移除，不能按枚举数量缩小上限。 */
+    public static final int DYNAMIC_ISLAND_STYLE_MAX = 8;
 
     /** 全屏歌词样式索引上限,与 {@code FullscreenLyricStyle} 的数量保持一致。 */
     public static final int FULLSCREEN_LYRIC_STYLE_MAX = 10;
@@ -660,14 +661,21 @@ public final class HudConfig {
     /** 游戏内 Ctrl+F 从灵动岛长出的快捷搜索栏。关掉后快捷键不再响应。 */
     public static boolean islandSearchEnabled = true;
     /**
-     * 音乐胶囊（灵动岛第九款）迷你卡的缩放档位。卡片按 296×130 设计空间整体缩放；
+     * 五款灵动岛展开音乐卡共用的缩放档位。卡片按 296×130 设计空间整体缩放；
      * 窄窗口上会再按可用宽高自动收口，不会裁边。
      */
     public static float islandMiniCardScale = 1.0f;
-    /** 音乐胶囊收起行与迷你卡主文本是否显示当前歌词行（关掉则恒显歌名 - 歌手）。 */
+    /** 音乐胶囊收起状态的最大宽度，单位 GUI 逻辑像素；短歌词按内容自然伸展。 */
+    public static float islandMusicCapsuleMaxWidth = 320.0f;
+    /** 灵动岛歌曲行与展开音乐卡主文本是否显示当前歌词行（关掉则恒显歌名 - 歌手）。 */
     public static boolean islandMusicShowsLyric = true;
-    /** 音乐胶囊是否允许「鼠标悬停展开迷你卡」。关掉后卡片只能通过别的入口看到（收起行照常显示）。 */
+    /** 五款灵动岛共用的可交互展开开关；保留旧字段名与存档/分享键。 */
     public static boolean islandHoverExpand = true;
+    /** 灵动岛听歌上报、自动状态等辅助通知的显示偏好。 */
+    public static boolean islandAuxiliaryNotices = false;
+    /** 聊天栏中的展开方式：0 打开聊天栏自动展开，1 点击灵动岛展开。 */
+    public static int islandExpandTrigger = 0;
+    public static final int ISLAND_EXPAND_TRIGGER_MAX = 1;
     /** 真玻璃生效在桌面歌词卡片上。 */
     public static boolean glassSurfaceDesktopLyric = true;
     /** 真玻璃生效在三套 HUD 设置界面的面板上。这几块面板平时是不透明的，所以它同时决定底色压不压薄。 */
@@ -877,6 +885,12 @@ public final class HudConfig {
         dynamicIslandAmbientRotate = true;
         dynamicIslandAmbientStatusSeconds = 5.0f;
         dynamicIslandAmbientNowPlayingSeconds = 8.0f;
+        islandMiniCardScale = 1.0f;
+        islandMusicCapsuleMaxWidth = 320.0f;
+        islandMusicShowsLyric = true;
+        islandHoverExpand = true;
+        islandAuxiliaryNotices = false;
+        islandExpandTrigger = 0;
     }
 
     /** 恢复封面相关外观。 */
@@ -1077,8 +1091,14 @@ public final class HudConfig {
             dynamicIslandEnabled = getBoolean(o, "dynamicIslandEnabled", dynamicIslandEnabled);
             islandSearchEnabled = getBoolean(o, "islandSearchEnabled", islandSearchEnabled);
             islandMiniCardScale = clamp(getFloat(o, "islandMiniCardScale", islandMiniCardScale), 0.5f, 2.0f);
+            float musicCapsuleMaxWidth = getFloat(o, "islandMusicCapsuleMaxWidth", islandMusicCapsuleMaxWidth);
+            if (Float.isFinite(musicCapsuleMaxWidth)) {
+                islandMusicCapsuleMaxWidth = clamp(musicCapsuleMaxWidth, 160.0f, 720.0f);
+            }
             islandMusicShowsLyric = getBoolean(o, "islandMusicShowsLyric", islandMusicShowsLyric);
             islandHoverExpand = getBoolean(o, "islandHoverExpand", islandHoverExpand);
+            islandAuxiliaryNotices = getBoolean(o, "islandAuxiliaryNotices", islandAuxiliaryNotices);
+            islandExpandTrigger = clampInt(getInt(o, "islandExpandTrigger", islandExpandTrigger), 0, ISLAND_EXPAND_TRIGGER_MAX);
             dynamicIslandScale = clamp(getFloat(o, "dynamicIslandScale", dynamicIslandScale), 0.60f, 1.35f);
             dynamicIslandY = clamp(getFloat(o, "dynamicIslandY", dynamicIslandY), -20.0f, 400.0f);
             infoCardBackdrop = clampInt(getInt(o, "infoCardBackdrop", infoCardBackdrop), 0, INFO_CARD_BACKDROP_MAX);
@@ -1088,8 +1108,7 @@ public final class HudConfig {
             dynamicIslandProgressHeight = clamp(getFloat(o, "dynamicIslandProgressHeight", dynamicIslandProgressHeight), 0.75f, 4.0f);
             dynamicIslandCompletionHoldSeconds = clamp(getFloat(o, "dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds), 0.5f, 6.0f);
             dynamicIslandQueueIntervalSeconds = clamp(getFloat(o, "dynamicIslandQueueIntervalSeconds", dynamicIslandQueueIntervalSeconds), 0.5f, 6.0f);
-            dynamicIslandStyle = clampInt(getInt(o, "dynamicIslandStyle", dynamicIslandStyle), 0,
-                    DYNAMIC_ISLAND_STYLE_MAX);
+            dynamicIslandStyle = DynamicIslandStyle.fromId(getInt(o, "dynamicIslandStyle", dynamicIslandStyle)).getId();
             dynamicIslandExpandSpeed = clamp(getFloat(o, "dynamicIslandExpandSpeed", dynamicIslandExpandSpeed), 0.40f, 2.50f);
             dynamicIslandCollapseSpeed = clamp(getFloat(o, "dynamicIslandCollapseSpeed", dynamicIslandCollapseSpeed), 0.40f, 2.50f);
             dynamicIslandContentSpeed = clamp(getFloat(o, "dynamicIslandContentSpeed", dynamicIslandContentSpeed), 0.40f, 2.50f);
@@ -1306,8 +1325,11 @@ public final class HudConfig {
             o.addProperty("dynamicIslandEnabled", dynamicIslandEnabled);
             o.addProperty("islandSearchEnabled", islandSearchEnabled);
             o.addProperty("islandMiniCardScale", islandMiniCardScale);
+            o.addProperty("islandMusicCapsuleMaxWidth", islandMusicCapsuleMaxWidth);
             o.addProperty("islandMusicShowsLyric", islandMusicShowsLyric);
             o.addProperty("islandHoverExpand", islandHoverExpand);
+            o.addProperty("islandAuxiliaryNotices", islandAuxiliaryNotices);
+            o.addProperty("islandExpandTrigger", islandExpandTrigger);
             o.addProperty("dynamicIslandScale", dynamicIslandScale);
             o.addProperty("dynamicIslandY", dynamicIslandY);
             o.addProperty("infoCardBackdrop", infoCardBackdrop);
@@ -1317,7 +1339,7 @@ public final class HudConfig {
             o.addProperty("dynamicIslandProgressHeight", dynamicIslandProgressHeight);
             o.addProperty("dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds);
             o.addProperty("dynamicIslandQueueIntervalSeconds", dynamicIslandQueueIntervalSeconds);
-            o.addProperty("dynamicIslandStyle", dynamicIslandStyle);
+            o.addProperty("dynamicIslandStyle", DynamicIslandStyle.fromId(dynamicIslandStyle).getId());
             o.addProperty("dynamicIslandExpandSpeed", dynamicIslandExpandSpeed);
             o.addProperty("dynamicIslandCollapseSpeed", dynamicIslandCollapseSpeed);
             o.addProperty("dynamicIslandContentSpeed", dynamicIslandContentSpeed);

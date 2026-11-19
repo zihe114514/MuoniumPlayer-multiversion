@@ -34,7 +34,7 @@ class SheetMotionStaticTest {
     /** 走 {@code NcmSheet} 骨架的浮层。 */
     private static final String[] SHEETS = {
             "MusicSourceOverlay.java", "AccountManagerOverlay.java", "FontPickerOverlay.java",
-            "PlaylistImportOverlay.java", "AnnouncementOverlay.java", "LyricSearchOverlay.java",
+            "PlaylistImportOverlay.java", "LyricSearchOverlay.java",
             "ListenTogetherOverlay.java"};
 
     /** 各自继承 {@code NCMPanel}、但同样接上 {@link SheetClock} 的那几层。 */
@@ -43,13 +43,16 @@ class SheetMotionStaticTest {
             "FfmpegNoticeOverlay.java", "ModelInstallNoticeOverlay.java",
             "UpdateNoticeOverlay.java"};
 
+    /** 独立内容中心有自己的分层编排，不走 NcmSheet，也不退回单块浮层的短时钟。 */
+    private static final String[] CASCADED_STANDALONE = {"AnnouncementOverlay.java", "SponsorNoticeOverlay.java"};
+
     /**
      * 自己声明了 {@code shouldClose()} 的那几层：六个走骨架的浮层是从 {@code NcmSheet} 继承的，
      * 在它们自己的文件里找不到这个方法。
      */
     private static final String[] OWN_CLOSURE = own("NcmSheet.java");
 
-    /** 自己手写过一层 {@code RectWidget mask} 的那几层；其余走 {@code NcmSheet.sheet()}。 */
+    /** 自己手写遮罩或委托给 {@code NcmExpressive.shell()} 的那几层；其余走 {@code NcmSheet.sheet()}。 */
     private static final String[] OWN_SCRIM = own("NcmSheet.java", "LyricSearchOverlay.java");
 
     // ──────────────────────── A：进出成对 ────────────────────────
@@ -59,6 +62,7 @@ class SheetMotionStaticTest {
     void everySheetWaitsForItsExitAnimation() throws IOException {
         List<String> names = new ArrayList<String>(Arrays.asList(OWN_CLOSURE));
         names.addAll(Arrays.asList(STANDALONE));
+        names.addAll(Arrays.asList(CASCADED_STANDALONE));
         for (String name : names) {
             String source = read(NCM.resolve(name));
             String shouldClose = body(source, "public boolean shouldClose()");
@@ -100,10 +104,13 @@ class SheetMotionStaticTest {
             assertFalse(source.contains("presentation = Interpolations.interpolate"),
                     name + " 还在自己渐近 presentation，没跟上基类那条时钟");
         }
-        for (String name : STANDALONE) {
+        for (String name : standaloneSources()) {
             String source = read(NCM.resolve(name));
-            assertTrue(source.contains("TransitionCurveCache.MOTION.at(clock.tick())"),
+            assertTrue(source.contains("TransitionCurveCache.MOTION.at(clock.tick())")
+                            || source.contains("TransitionCurveCache.MOTION.at(phase = clock.tick())"),
                     name + " 的进度不再由 SheetClock 推");
+            assertFalse(source.contains("presentation = Interpolations.interpolate"),
+                    name + " 又把独立浮层进度写回每帧指数逼近");
         }
     }
 
@@ -112,8 +119,16 @@ class SheetMotionStaticTest {
     void scrimFadesWithTheDialog() throws IOException {
         List<String> names = new ArrayList<String>(Arrays.asList(OWN_SCRIM));
         names.addAll(Arrays.asList(STANDALONE));
+        names.addAll(Arrays.asList(CASCADED_STANDALONE));
         for (String name : names) {
             String source = read(NCM.resolve(name));
+            int sharedShell = source.indexOf("NcmExpressive.shell(");
+            if (sharedShell >= 0) {
+                String call = source.substring(sharedShell, source.indexOf(';', sharedShell)).replaceAll("\\s+", "");
+                assertTrue(call.contains("()->presentation,"),
+                        name + " 没把自己的弹窗进度传给共享遮罩");
+                continue;
+            }
             int mask = source.indexOf("RectWidget mask");
             assertTrue(mask >= 0, name + " 里找不到遮罩那一格");
             String region = source.substring(mask, Math.min(source.length(), mask + 900));
@@ -121,6 +136,21 @@ class SheetMotionStaticTest {
                     name + " 的遮罩又被写死了：卡片还没出现整屏先黑，关掉时卡片啪一下没了、遮罩还黑着");
             assertTrue(region.contains("presentation *"), name + " 的遮罩不再跟弹窗同一条进度");
         }
+    }
+
+    @Test
+    @DisplayName("共享遮罩与卡片读取同一个实时进度，不在构造时捕获固定透明度")
+    void expressiveShellScrimUsesTheDialogProgress() throws IOException {
+        String shell = body(read(NCM.resolve("NcmExpressive.java")), "public static Panel shell(")
+                .replaceAll("\\s+", "");
+        assertTrue(shell.contains("RectWidgetmask=newRectWidget()") && shell.contains("overlay.addChild(mask)"),
+                "共享弹窗不再创建遮罩或没有把它挂在浮层上");
+        assertTrue(shell.contains("mask.setBeforeRenderCallback(()->{"), "遮罩没有逐帧更新透明度");
+        assertTrue(shell.contains("mask.setAlpha((float)(presentation.getAsDouble()*"),
+                "共享遮罩的透明度不再随传入的进度淡入淡出");
+        assertTrue(shell.contains("dialog.setBeforeRenderCallback(()->{"), "卡片没有逐帧更新透明度");
+        assertTrue(shell.contains("doubleprogress=presentation.getAsDouble();")
+                && shell.contains("dialog.setAlpha((float)progress)"), "遮罩和卡片不再读取同一个进度源");
     }
 
     @Test
@@ -209,6 +239,16 @@ class SheetMotionStaticTest {
         for (String name : STANDALONE) {
             assertTrue(read(NCM.resolve(name)).contains("new SheetClock()"),
                     name + " 不该用分层那一档的时长，它没有瀑布");
+        }
+
+        for (String name : CASCADED_STANDALONE) {
+            String source = read(NCM.resolve(name));
+            assertTrue(source.contains("extends NCMPanel"),
+                    name + " 独立内容中心不能悄悄回到 NcmSheet 的页内骨架");
+            assertTrue(source.contains("SheetClock clock = SheetClock.cascade()"),
+                    name + " 有分层到场，却退回单块浮层的短时钟");
+            assertFalse(source.contains("new SheetClock()"),
+                    name + " 分层时钟与单块时钟不许混用");
         }
 
         // 时长放开之后，尾部那个「窗口右端超出 1.0」的洞就藏不住了。
@@ -321,12 +361,18 @@ class SheetMotionStaticTest {
                 "页眉字形被搬到 crown 坐标系，会脱离它的 34x34 圆盘");
     }
 
+    private static String[] standaloneSources() {
+        List<String> names = new ArrayList<String>(Arrays.asList(STANDALONE));
+        names.addAll(Arrays.asList(CASCADED_STANDALONE));
+        return names.toArray(new String[0]);
+    }
+
     private static String[] allOverlaySources() {
-        String[] all = new String[SHEETS.length + STANDALONE.length + 1];
-        all[0] = "NcmSheet.java";
-        System.arraycopy(SHEETS, 0, all, 1, SHEETS.length);
-        System.arraycopy(STANDALONE, 0, all, 1 + SHEETS.length, STANDALONE.length);
-        return all;
+        List<String> names = new ArrayList<String>();
+        names.add("NcmSheet.java");
+        names.addAll(Arrays.asList(SHEETS));
+        names.addAll(Arrays.asList(standaloneSources()));
+        return names.toArray(new String[0]);
     }
 
     private static String[] own(final String... names) {

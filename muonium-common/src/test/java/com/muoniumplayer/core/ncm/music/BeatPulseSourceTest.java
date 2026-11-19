@@ -60,6 +60,35 @@ class BeatPulseSourceTest {
     }
 
     @Test
+    void duplicateGridConsumersCannotMoveOnsetBaseline() {
+        BeatPulseSource.resetForTest();
+        long anchor = 1_000_000_000L;
+        for (int beat = 0; beat < 16; beat++) {
+            long stamp = anchor + beat * 500_000_000L;
+            for (int reader = 0; reader < 120; reader++) BeatPulseSource.feedGridBeatForTest(stamp);
+        }
+        assertEquals(500_000_000f, BeatPulseSource.estimatedPeriodNanosForTest(), 1f);
+        assertEquals(1f, BeatPulseSource.estimatedConfidenceForTest(), 1.0e-6f);
+    }
+
+    @Test
+    void noiseInsideRefractoryWindowDoesNotResetAcceptedBeat() {
+        BeatPulseSource.resetForTest();
+        long now = 1_000_000_000L;
+        for (int beat = 0; beat < 16; beat++) {
+            BeatPulseSource.advanceClockForTest(now);
+            BeatPulseSource.feedEnergyForTest(0f);
+            BeatPulseSource.feedEnergyForTest(0.8f);
+            BeatPulseSource.advanceClockForTest(now + 200_000_000L);
+            BeatPulseSource.feedEnergyForTest(0f);
+            BeatPulseSource.feedEnergyForTest(0.8f);
+            now += 500_000_000L;
+        }
+        assertEquals(500_000_000f, BeatPulseSource.estimatedPeriodNanosForTest(), 1f);
+        assertTrue(BeatPulseSource.estimatedConfidenceForTest() >= 0.9f);
+    }
+
+    @Test
     void estimatorRejectsIrregularIntervals() {
         // 全是乱间隔（没人拍手的现场）不该收敛：置信度必须低于阈值，继续走能量回退。
         BeatPulseSource.resetForTest();

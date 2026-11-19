@@ -1,6 +1,7 @@
 package repackage.processing.sound;
 
 import lombok.Getter;
+import repackage.com.jsyn.data.FloatSample;
 import repackage.com.jsyn.util.SampleLoader;
 
 import java.io.File;
@@ -96,6 +97,34 @@ public class SoundFile extends AudioSample {
 	/** 有没有时间伸缩层可用。 */
 	public boolean canTimeStretch() {
 		return this.sample instanceof WsolaStretchSample;
+	}
+
+	/**
+	 * 预热旁路：若底层是 RAF 流式采样，从给定交错采样下标拉一个窗口进 OS 页缓存并丢弃。
+	 *
+	 * <p>给 automix 的 {@code prepareStart} 预备线程用；返回 {@code false} 表示底层
+	 * 不是 RAF 流式（mp3 内存样本等）或读失败——两种情况调用方都当「无事可做」。
+	 * 绝不能把这种远位置读路由进 {@code read(int)}：那会绕到实时读路径上，
+	 * 把流式窗口的锚点拖到预备位置（见 RafFloatSample#primeWindowAt）。</p>
+	 *
+	 * <p>实际类型链是 {@code WsolaStretchSample → VocalMaterialSample → (DownmixSample →)
+	 * RafFloatSample}，每层都是逐采样装饰器（VocalMaterialSample 构造时永远包上，
+	 * 见本类构造器注释；多声道 WAV 再包一层降混）。首版 unwrap 只剥了 WSOLA 一层，
+	 * 被 VocalMaterialSample 挡住，预热在生产链路静默 no-op——现在逐层穿透，
+	 * Downmix 层还要把「降混后 2 声道交错下标」换算回「原始声道数的交错下标」，
+	 * 内层窗口按原始声道刻度读取。</p>
+	 *
+	 * @return 是否真的预热了一个窗口
+	 */
+	public boolean primeWindowAt(int interleavedIndex) {
+		StreamedPrimeSupport.Unwrapped unwrapped =
+				StreamedPrimeSupport.unwrap(this.sample, interleavedIndex);
+		if (!(unwrapped != null
+				&& unwrapped.sample instanceof repackage.com.jsyn.util.soundfile.streamed.raf.RafFloatSample)) {
+			return false;
+		}
+		return ((repackage.com.jsyn.util.soundfile.streamed.raf.RafFloatSample) unwrapped.sample)
+				.primeWindowAt(unwrapped.index);
 	}
 
 	/** 时间伸缩层当前是否真的在跑（而不是直通）。 */

@@ -46,6 +46,14 @@ public class HomePanel extends NCMPanel {
     private final List<PlayList> fixedPlaylists;
     private final String fixedRecommendationTitle;
     private final Map<Long, Runnable> fixedPlaylistActions;
+    /** Only the client thread publishes/takes UI intent; workers retain a request ticket. */
+    private final UiMailbox<PendingHomeData> pendingUi = new UiMailbox<>();
+    private UiTicket requestTicket;
+    private long layoutRequestGeneration = -1L;
+    private boolean hostClosed;
+    private boolean prewarming;
+    /** The host pumps even when it draws a cached page; onRender must not spend a second batch. */
+    private boolean pumpedBeforeRender;
 
     public HomePanel() {
         this(null, null, Collections.emptyMap());
@@ -72,6 +80,13 @@ public class HomePanel extends NCMPanel {
     /** True only for the platform recommendation home, not a fixed result/discovery page. */
     public boolean isDefaultHomePage() {
         return this.fixedPlaylists == null;
+    }
+
+    /** A short-lived visual snapshot is safe only after construction and scroll motion settle. */
+    public boolean isTransitionSnapshotReady() {
+        return this.pendingCards == null && this.pendingUi.pending == null
+                && !this.reshape.isRunning() && this.scrollPanel != null
+                && !this.scrollPanel.isScrollActive();
     }
 
     private static final int NETEASE_HOME_TARGET = 240;
@@ -123,9 +138,17 @@ public class HomePanel extends NCMPanel {
 
     @Override
     public void onInit() {
+        this.hostClosed = false;
+        this.requestTicket = this.pendingUi.begin(NCMScreen.getInstance().getContentHostGeneration());
         if (fixedPlaylists != null) {
-            layout(fixedPlaylists, fixedRecommendationTitle == null || fixedRecommendationTitle.trim().isEmpty()
+            requestLayout(fixedPlaylists, fixedRecommendationTitle == null || fixedRecommendationTitle.trim().isEmpty()
                     ? "歌单搜索" : fixedRecommendationTitle);
+            if (this.prewarming) {
+                applyPendingLayout();
+                buildPendingCards();
+            } else {
+                showInitialPlaceholder();
+            }
             return;
         }
         if (platform == MusicPlatform.QQ) {
@@ -133,7 +156,7 @@ public class HomePanel extends NCMPanel {
         } else if (platform == MusicPlatform.KUGOU) {
             loadKuGouHome();
         } else if (platform == MusicPlatform.YOUTUBE) {
-            layout(Collections.emptyList(), "YouTube Music · 使用搜索开始播放");
+            requestLayout(Collections.emptyList(), "YouTube Music · 使用搜索开始播放");
         } else if (platform == MusicPlatform.BILIBILI) {
             loadBilibiliHome();
         } else if (platform == MusicPlatform.QISHUI) {
@@ -142,6 +165,162 @@ public class HomePanel extends NCMPanel {
             loadAppleHome();
         } else {
             loadNeteaseHome();
+        }
+        showInitialPlaceholder();
+    }
+
+    private void showInitialPlaceholder() {
+        if (!this.getChildren().isEmpty()) return;
+        PendingHomeData data = this.pendingUi.pending;
+        layoutPlaceholder(data != null && data.playlists == null ? data.title : "正在加载…",
+                data == null || data.playlists != null || data.spinning);
+    }
+
+    /** End UI ownership without cancelling recommendation work that still populates shared caches. */
+    public void onHostClosed() {
+        this.hostClosed = true;
+        this.pendingUi.close();
+        this.pendingCards = null;
+        this.pendingCardIndex = 0;
+        this.pendingCardActions = Collections.emptyMap();
+        this.pumpedBeforeRender = false;
+    }
+
+    /** Only a real host reopen refreshes the retained page; history navigation does not re-request. */
+    public void onHostOpened() {
+        if (this.hostClosed) this.onInit();
+    }
+
+    private void publishCallback(UiTicket ticket, Runnable callback) {
+        MultiThreadingUtil.runOnMainThread(() -> {
+            if (this.hostClosed || !this.pendingUi.isCurrent(ticket,
+                    NCMScreen.getInstance().getContentHostGeneration())) return;
+            if (NeteaseMusicService.getCurrentPlatform() != this.platform) return;
+            // Publishing data while navigated away is safe. Only the active page pump builds UI.
+            callback.run();
+        });
+    }
+
+    private void requestLayout(List<PlayList> playlists, String title) {
+        queueHomeData(new PendingHomeData(new ArrayList<>(playlists), title, false, false));
+    }
+
+    private void requestPlaceholder(String message, boolean spinning) {
+        queueHomeData(new PendingHomeData(null, message, spinning, false));
+    }
+
+    private void requestQishuiProgress(List<PlayList> playlists) {
+        if (!playlists.isEmpty()) queueHomeData(new PendingHomeData(
+                new ArrayList<>(playlists), qishuiRecommendationTitle(playlists.size()), false, true));
+    }
+
+    private void queueHomeData(PendingHomeData data) {
+        if (this.pendingUi.publish(this.requestTicket,
+                NCMScreen.getInstance().getContentHostGeneration(), data)) {
+            NCMScreen.getInstance().invalidateTransitionContent();
+        }
+    }
+
+    private void applyPendingLayout() {
+        PendingHomeData data = this.pendingUi.take(this.requestTicket,
+                NCMScreen.getInstance().getContentHostGeneration());
+        if (data == null) return;
+        if (data.playlists == null) {
+            layoutPlaceholder(data.title, data.spinning);
+            this.layoutRequestGeneration = -1L;
+        } else if (data.progressive && this.cardsPanel != null
+                && this.layoutRequestGeneration == this.requestTicket.generation) {
+            appendQishuiCards(data.playlists);
+        } else {
+            layout(data.playlists, data.title);
+            this.layoutRequestGeneration = this.requestTicket.generation;
+        }
+        NCMScreen.getInstance().invalidateTransitionContent();
+    }
+
+    /**
+     * Client-thread update point, called once by the host even when motion draws cached content.
+     * Motion/handoff/settle grace retain the old shell; existing cards still use the one-item budget.
+     */
+    public void pumpPendingUi() {
+        pumpPendingUiInternal();
+        this.pumpedBeforeRender = true;
+    }
+
+    private void pumpPendingUiInternal() {
+        NCMScreen screen = NCMScreen.getInstance();
+        if (!screen.isContentPanelActive(this)) return;
+        if (this.requestTicket != null
+                && this.requestTicket.hostGeneration != screen.getContentHostGeneration()) {
+            // A historical page may not have been current when the previous host closed.
+            this.onHostClosed();
+        }
+        this.onHostOpened();
+        if (this.hostClosed) return;
+        if (screen.isContentLayoutReady()) applyPendingLayout();
+        this.refreshGridLayout();
+        this.reshape.tick();
+        buildPendingCards();
+    }
+
+    private static final class UiTicket {
+        private final long generation;
+        private final long hostGeneration;
+
+        private UiTicket(long generation, long hostGeneration) {
+            this.generation = generation;
+            this.hostGeneration = hostGeneration;
+        }
+    }
+
+    /** A single latest-data dirty slot, owned exclusively by the client thread. */
+    private static final class UiMailbox<T> {
+        private long generation;
+        private boolean closed;
+        private T pending;
+
+        private UiTicket begin(long hostGeneration) {
+            this.closed = false;
+            this.pending = null;
+            return new UiTicket(++this.generation, hostGeneration);
+        }
+
+        private boolean isCurrent(UiTicket ticket, long hostGeneration) {
+            return !this.closed && ticket != null && ticket.generation == this.generation
+                    && ticket.hostGeneration == hostGeneration;
+        }
+
+        private boolean publish(UiTicket ticket, long hostGeneration, T data) {
+            if (!isCurrent(ticket, hostGeneration)) return false;
+            this.pending = data;
+            return true;
+        }
+
+        private T take(UiTicket ticket, long hostGeneration) {
+            if (!isCurrent(ticket, hostGeneration)) return null;
+            T data = this.pending;
+            this.pending = null;
+            return data;
+        }
+
+        private void close() {
+            this.closed = true;
+            ++this.generation;
+            this.pending = null;
+        }
+    }
+
+    private static final class PendingHomeData {
+        private final List<PlayList> playlists;
+        private final String title;
+        private final boolean spinning;
+        private final boolean progressive;
+
+        private PendingHomeData(List<PlayList> playlists, String title, boolean spinning, boolean progressive) {
+            this.playlists = playlists;
+            this.title = title;
+            this.spinning = spinning;
+            this.progressive = progressive;
         }
     }
 
@@ -166,6 +345,7 @@ public class HomePanel extends NCMPanel {
         try {
             HomePanel dummy = new HomePanel(Collections.singletonList(
                     new PlayList(-1L, "prewarm", "", 0, 0L, null, null, 0L)), "prewarm");
+            dummy.prewarming = true;
             dummy.layoutPlaceholder("prewarm", true);
             dummy.onInit();
         } catch (Throwable t) {
@@ -230,6 +410,7 @@ public class HomePanel extends NCMPanel {
     }
 
     private void loadNeteaseHome() {
+        final UiTicket ticket = this.requestTicket;
         List<PlayList> cached;
         synchronized (playLists) {
             cached = new ArrayList<>(playLists);
@@ -238,7 +419,7 @@ public class HomePanel extends NCMPanel {
         // 在更大的公开页面在后台追加时，
         //不隐藏已加载的推荐。
         if (!cached.isEmpty()) {
-            layout(cached, recommendationTitle(cached.size()));
+            requestLayout(cached, recommendationTitle(cached.size()));
         }
         if (neteaseHomeComplete) {
             return;
@@ -246,7 +427,7 @@ public class HomePanel extends NCMPanel {
         // 冷启动：缓存为空时先立起转子，否则这段网络等待期间首页是整片空白。
         final boolean hadCache = !cached.isEmpty();
         if (!hadCache) {
-            layoutPlaceholder("正在获取推荐歌单…", true);
+            requestPlaceholder("正在获取推荐歌单…", true);
         }
 
         MultiThreadingUtil.runAsync(() -> {
@@ -304,17 +485,17 @@ public class HomePanel extends NCMPanel {
                     && !result.isEmpty();
 
             final List<PlayList> displayed = result;
-            MultiThreadingUtil.runOnMainThread(() -> {
+            publishCallback(ticket, () -> {
                 if (NeteaseMusicService.getCurrentPlatform() != platform) return;
                 if (!displayed.isEmpty()) {
-                    layout(displayed, recommendationTitle(displayed.size()));
+                    requestLayout(displayed, recommendationTitle(displayed.size()));
                     return;
                 }
                 // 一件都没取到时必须给个终态：否则上面立起的转子会一直转下去，
                 // 那比"页面空白"更糟 —— 用户会一直等一个不会来的结果。
                 // 有缓存时页面上已经是真实内容，不能拿失败提示把它盖掉。
                 if (hadCache) return;
-                layoutPlaceholder("推荐歌单获取失败，请稍后重试", false);
+                requestPlaceholder("推荐歌单获取失败，请稍后重试", false);
             });
 
             System.out.println("[Music] Loaded " + result.size() + " Netease homepage playlists.");
@@ -373,22 +554,23 @@ public class HomePanel extends NCMPanel {
         return count > 0 ? "推荐歌单 · " + count : "推荐歌单";
     }
     private void loadQQHome() {
+        final UiTicket ticket = this.requestTicket;
         List<PlayList> cached = new ArrayList<>(qqHomePlaylists);
         if (!cached.isEmpty()) {
-            layout(cached, qqRecommendationTitle(cached.size()));
+            requestLayout(cached, qqRecommendationTitle(cached.size()));
             return;
         }
 
         // 无论这次是否真的发起请求，都要先给出"在忙"的反馈：另一个实例正在加载时直接 return，
         // 原来会留下一个空白页面，看起来像点了没反应。
-        layoutPlaceholder("正在获取 QQ 音乐推荐…", true);
+        requestPlaceholder("正在获取 QQ 音乐推荐…", true);
 
         synchronized (HomePanel.class) {
             if (qqHomeLoading) {
                 // 已有一次加载在飞：不重复发请求，改为等它把缓存填好再自己布局。
                 // 原来是直接 return —— 现在上面立了转子，直接返回会让它永远转下去，
                 // 因为那次加载的完成回调作用在另一个 HomePanel 实例上。
-                MultiThreadingUtil.runAsync(this::awaitQQHomeCache);
+                MultiThreadingUtil.runAsync(() -> awaitQQHomeCache(ticket));
                 return;
             }
             qqHomeLoading = true;
@@ -417,20 +599,20 @@ public class HomePanel extends NCMPanel {
 
                 qqHomePlaylists = Collections.unmodifiableList(new ArrayList<>(result));
                 final List<PlayList> displayed = new ArrayList<>(result);
-                MultiThreadingUtil.runOnMainThread(() -> {
+                publishCallback(ticket, () -> {
                     if (NeteaseMusicService.getCurrentPlatform() != platform) return;
                     if (!displayed.isEmpty()) {
-                        layout(displayed, qqRecommendationTitle(displayed.size()));
+                        requestLayout(displayed, qqRecommendationTitle(displayed.size()));
                     } else {
-                        layoutPlaceholder("QQ 音乐推荐获取失败，请稍后重试", false);
+                        requestPlaceholder("QQ 音乐推荐获取失败，请稍后重试", false);
                     }
                 });
             } catch (Throwable throwable) {
                 // 原来这里只有 finally：推荐与排行榜双双抛异常时转子会永远转下去。
                 System.err.println("[Music] QQ 首页加载失败: " + throwable);
-                MultiThreadingUtil.runOnMainThread(() -> {
+                publishCallback(ticket, () -> {
                     if (NeteaseMusicService.getCurrentPlatform() == platform)
-                        layoutPlaceholder("QQ 音乐推荐获取失败，请稍后重试", false);
+                        requestPlaceholder("QQ 音乐推荐获取失败，请稍后重试", false);
                 });
             } finally {
                 qqHomeLoading = false;
@@ -439,7 +621,7 @@ public class HomePanel extends NCMPanel {
     }
 
     /** 等另一次 QQ 首页加载填好缓存（最多 20 秒），然后用它布局本实例。超时按失败处理。 */
-    private void awaitQQHomeCache() {
+    private void awaitQQHomeCache(UiTicket ticket) {
         final long deadline = System.nanoTime() + 20_000_000_000L;
         while (qqHomeLoading && System.nanoTime() - deadline < 0L) {
             try {
@@ -450,12 +632,12 @@ public class HomePanel extends NCMPanel {
             }
         }
         final List<PlayList> cached = new ArrayList<>(qqHomePlaylists);
-        MultiThreadingUtil.runOnMainThread(() -> {
+        publishCallback(ticket, () -> {
             if (NeteaseMusicService.getCurrentPlatform() != platform) return;
             if (cached.isEmpty()) {
-                layoutPlaceholder("QQ 音乐推荐获取失败，请稍后重试", false);
+                requestPlaceholder("QQ 音乐推荐获取失败，请稍后重试", false);
             } else {
-                layout(cached, qqRecommendationTitle(cached.size()));
+                requestLayout(cached, qqRecommendationTitle(cached.size()));
             }
         });
     }
@@ -470,17 +652,18 @@ public class HomePanel extends NCMPanel {
      * 本实例的转子会一直转）。
      */
     private void loadKuGouHome() {
+        final UiTicket ticket = this.requestTicket;
         List<PlayList> cached = new ArrayList<>(kugouHomePlaylists);
         if (!cached.isEmpty()) {
-            layout(cached, kugouRecommendationTitle(cached.size()));
+            requestLayout(cached, kugouRecommendationTitle(cached.size()));
             return;
         }
 
-        layoutPlaceholder("正在获取酷狗推荐歌单…", true);
+        requestPlaceholder("正在获取酷狗推荐歌单…", true);
 
         synchronized (HomePanel.class) {
             if (kugouHomeLoading) {
-                MultiThreadingUtil.runAsync(this::awaitKuGouHomeCache);
+                MultiThreadingUtil.runAsync(() -> awaitKuGouHomeCache(ticket));
                 return;
             }
             kugouHomeLoading = true;
@@ -495,19 +678,19 @@ public class HomePanel extends NCMPanel {
                 }
                 kugouHomePlaylists = Collections.unmodifiableList(new ArrayList<>(result));
                 final List<PlayList> displayed = new ArrayList<>(result);
-                MultiThreadingUtil.runOnMainThread(() -> {
+                publishCallback(ticket, () -> {
                     if (NeteaseMusicService.getCurrentPlatform() != platform) return;
                     if (!displayed.isEmpty()) {
-                        layout(displayed, kugouRecommendationTitle(displayed.size()));
+                        requestLayout(displayed, kugouRecommendationTitle(displayed.size()));
                     } else {
-                        layoutPlaceholder("酷狗推荐获取失败，请稍后重试", false);
+                        requestPlaceholder("酷狗推荐获取失败，请稍后重试", false);
                     }
                 });
             } catch (Throwable throwable) {
                 System.err.println("[Music] 酷狗首页加载失败: " + throwable);
-                MultiThreadingUtil.runOnMainThread(() -> {
+                publishCallback(ticket, () -> {
                     if (NeteaseMusicService.getCurrentPlatform() == platform)
-                        layoutPlaceholder("酷狗推荐获取失败，请稍后重试", false);
+                        requestPlaceholder("酷狗推荐获取失败，请稍后重试", false);
                 });
             } finally {
                 kugouHomeLoading = false;
@@ -516,7 +699,7 @@ public class HomePanel extends NCMPanel {
     }
 
     /** 等另一次酷狗首页加载填好缓存（最多 20 秒），然后用它布局本实例。超时按失败处理。 */
-    private void awaitKuGouHomeCache() {
+    private void awaitKuGouHomeCache(UiTicket ticket) {
         final long deadline = System.nanoTime() + 20_000_000_000L;
         while (kugouHomeLoading && System.nanoTime() - deadline < 0L) {
             try {
@@ -527,12 +710,12 @@ public class HomePanel extends NCMPanel {
             }
         }
         final List<PlayList> cached = new ArrayList<>(kugouHomePlaylists);
-        MultiThreadingUtil.runOnMainThread(() -> {
+        publishCallback(ticket, () -> {
             if (NeteaseMusicService.getCurrentPlatform() != platform) return;
             if (cached.isEmpty()) {
-                layoutPlaceholder("酷狗推荐获取失败，请稍后重试", false);
+                requestPlaceholder("酷狗推荐获取失败，请稍后重试", false);
             } else {
-                layout(cached, kugouRecommendationTitle(cached.size()));
+                requestLayout(cached, kugouRecommendationTitle(cached.size()));
             }
         });
     }
@@ -556,15 +739,16 @@ public class HomePanel extends NCMPanel {
      * 拿不到时用 8 地区榜单卡兜底 —— 主页不空白。
      */
     private void loadAppleHome() {
+        final UiTicket ticket = this.requestTicket;
         List<PlayList> cached = appleHomePlaylists;
         if (cached != null && !cached.isEmpty()) {
-            layout(cached, "推荐歌单 · " + cached.size());
+            requestLayout(cached, "推荐歌单 · " + cached.size());
             return;
         }
-        layoutPlaceholder("正在获取 Apple Music 推荐…", true);
+        requestPlaceholder("正在获取 Apple Music 推荐…", true);
         synchronized (HomePanel.class) {
             if (appleHomeLoading) {
-                MultiThreadingUtil.runAsync(this::awaitAppleHomeCache);
+                MultiThreadingUtil.runAsync(() -> awaitAppleHomeCache(ticket));
                 return;
             }
             appleHomeLoading = true;
@@ -584,12 +768,12 @@ public class HomePanel extends NCMPanel {
                 appleHomePlaylists = Collections.unmodifiableList(new ArrayList<>(result));
                 final List<PlayList> displayed = new ArrayList<>(result);
                 final String titleLine = title + " · " + displayed.size();
-                MultiThreadingUtil.runOnMainThread(() -> {
+                publishCallback(ticket, () -> {
                     if (NeteaseMusicService.getCurrentPlatform() != MusicPlatform.APPLE) return;
                     if (!displayed.isEmpty()) {
-                        layout(displayed, titleLine);
+                        requestLayout(displayed, titleLine);
                     } else {
-                        layoutPlaceholder("Apple Music 推荐获取失败，请稍后重试", false);
+                        requestPlaceholder("Apple Music 推荐获取失败，请稍后重试", false);
                     }
                 });
             } finally {
@@ -599,16 +783,16 @@ public class HomePanel extends NCMPanel {
     }
 
     /** 等另一次 Apple 主页加载填好缓存（最多 20 秒），超时按失败处理。 */
-    private void awaitAppleHomeCache() {
+    private void awaitAppleHomeCache(UiTicket ticket) {
         for (int i = 0; i < 100; i++) {
             List<PlayList> cached = appleHomePlaylists;
             if (cached != null && !cached.isEmpty()) {
                 if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.APPLE) {
-                    MultiThreadingUtil.runOnMainThread(() -> {
+                    publishCallback(ticket, () -> {
                         if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.APPLE) {
                             List<PlayList> shown = appleHomePlaylists;
                             if (shown != null && !shown.isEmpty()) {
-                                layout(shown, "推荐歌单 · " + shown.size());
+                                requestLayout(shown, "推荐歌单 · " + shown.size());
                             }
                         }
                     });
@@ -623,31 +807,32 @@ public class HomePanel extends NCMPanel {
                 return;
             }
         }
-        MultiThreadingUtil.runOnMainThread(() -> {
+        publishCallback(ticket, () -> {
             if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.APPLE) {
-                layoutPlaceholder("Apple Music 推荐获取失败，请稍后重试", false);
+                requestPlaceholder("Apple Music 推荐获取失败，请稍后重试", false);
             }
         });
     }
 
     private void loadBilibiliHome() {
+        final UiTicket ticket = this.requestTicket;
         if (!NeteaseMusicService.isLoggedIn(MusicPlatform.BILIBILI)) {
-            layout(Collections.emptyList(), "哔哩哔哩 · 搜索、粘贴 BV号或视频链接");
+            requestLayout(Collections.emptyList(), "哔哩哔哩 · 搜索、粘贴 BV号或视频链接");
             return;
         }
 
         List<PlayList> cached = new ArrayList<>(bilibiliHomePlaylists);
         if (!cached.isEmpty()) {
-            layout(cached, "我的收藏夹 · " + cached.size());
+            requestLayout(cached, "我的收藏夹 · " + cached.size());
             return;
         }
 
-        layoutPlaceholder("正在获取 B 站收藏夹…", true);
+        requestPlaceholder("正在获取 B 站收藏夹…", true);
         synchronized (HomePanel.class) {
             if (bilibiliHomeLoading) {
                 // 已有加载在飞：不能直接 return——那次加载的回调只 layout 到当时那个实例上，
                 // 快速进出 B 站主页时新实例的转子会永远转下去。与汽水页同款等待后自铺。
-                MultiThreadingUtil.runAsync(this::awaitBilibiliHomeCache);
+                MultiThreadingUtil.runAsync(() -> awaitBilibiliHomeCache(ticket));
                 return;
             }
             bilibiliHomeLoading = true;
@@ -658,19 +843,19 @@ public class HomePanel extends NCMPanel {
                 List<PlayList> result = BilibiliFavoriteService.userPlaylists();
                 bilibiliHomePlaylists = Collections.unmodifiableList(new ArrayList<>(result));
                 final List<PlayList> displayed = new ArrayList<>(result);
-                MultiThreadingUtil.runOnMainThread(() -> {
+                publishCallback(ticket, () -> {
                     if (NeteaseMusicService.getCurrentPlatform() != platform) return;
                     if (!displayed.isEmpty()) {
-                        layout(displayed, "我的收藏夹 · " + displayed.size());
+                        requestLayout(displayed, "我的收藏夹 · " + displayed.size());
                     } else {
-                        layoutPlaceholder("B 站收藏夹为空，或该账号还没建过收藏夹", false);
+                        requestPlaceholder("B 站收藏夹为空，或该账号还没建过收藏夹", false);
                     }
                 });
             } catch (Throwable throwable) {
                 System.err.println("[Music] B 站首页加载失败: " + throwable);
-                MultiThreadingUtil.runOnMainThread(() -> {
+                publishCallback(ticket, () -> {
                     if (NeteaseMusicService.getCurrentPlatform() == platform)
-                        layoutPlaceholder("B 站收藏夹获取失败，请稍后重试", false);
+                        requestPlaceholder("B 站收藏夹获取失败，请稍后重试", false);
                 });
             } finally {
                 bilibiliHomeLoading = false;
@@ -679,7 +864,7 @@ public class HomePanel extends NCMPanel {
     }
 
     /** 在飞的 B 站收藏夹加载落地后，把缓存铺到<b>当前</b>这个实例上（等待上限 20 秒）。 */
-    private void awaitBilibiliHomeCache() {
+    private void awaitBilibiliHomeCache(UiTicket ticket) {
         final long deadline = System.nanoTime() + 20_000_000_000L;
         while (bilibiliHomeLoading && System.nanoTime() - deadline < 0L) {
             try {
@@ -690,37 +875,35 @@ public class HomePanel extends NCMPanel {
             }
         }
         final List<PlayList> cached = new ArrayList<>(bilibiliHomePlaylists);
-        MultiThreadingUtil.runOnMainThread(() -> {
+        publishCallback(ticket, () -> {
             if (NeteaseMusicService.getCurrentPlatform() != platform) return;
             if (cached.isEmpty()) {
-                layoutPlaceholder("B 站收藏夹获取失败，请稍后重试", false);
+                requestPlaceholder("B 站收藏夹获取失败，请稍后重试", false);
             } else {
-                layout(cached, "我的收藏夹 · " + cached.size());
+                requestLayout(cached, "我的收藏夹 · " + cached.size());
             }
         });
     }
 
     /** 汽水首页：公开发现流直接铺成推荐歌单卡片墙。 */
     private void loadQishuiHome() {
+        final UiTicket ticket = this.requestTicket;
         List<PlayList> cached = new ArrayList<>(qishuiHomePlaylists);
         if (!cached.isEmpty()) {
-            layout(cached, qishuiRecommendationTitle(cached.size()));
+            requestLayout(cached, qishuiRecommendationTitle(cached.size()));
             return;
         }
 
-        layoutPlaceholder("正在获取汽水推荐歌单…", true);
+        requestPlaceholder("正在获取汽水推荐歌单…", true);
         synchronized (HomePanel.class) {
             if (qishuiHomeLoading) {
-                MultiThreadingUtil.runAsync(this::awaitQishuiHomeCache);
+                MultiThreadingUtil.runAsync(() -> awaitQishuiHomeCache(ticket));
                 return;
             }
             qishuiHomeLoading = true;
         }
 
-        // 首屏发布记下它铺的是哪一次布局：后续追加只在这一代布局还活着时才落笔，
-        // 否则会把新数据补到上一份（已经换掉的）网格上。
-        final java.util.concurrent.atomic.AtomicLong publishedGeneration =
-                new java.util.concurrent.atomic.AtomicLong(-1L);
+        // All cumulative snapshots share the request ticket, independently of deferred UI layout.
         MultiThreadingUtil.runAsync(() -> {
             try {
                 // 「每日推荐」虚拟卡排在墙最前：曲目来自 feed/song-tab，打开即取今天的一页。
@@ -730,7 +913,7 @@ public class HomePanel extends NCMPanel {
                 // 渐进式：第一轮采样先铺首屏，后面几轮在后台补齐再追加。
                 // 原来是等全部采样跑完才一次性显示，用户要为最后那几十张干等两秒多。
                 List<PlayList> sampled = QishuiMusicService.recommendPlaylists(QISHUI_HOME_TARGET,
-                        partial -> publishQishuiProgress(partial, daily, publishedGeneration));
+                        partial -> publishQishuiProgress(partial, daily, ticket));
                 // 「每日推荐」虚拟卡排在墙最前，但它自己不算「这次拉到了内容」。
                 final List<PlayList> displayed = new ArrayList<>(sampled.size() + 1);
                 if (daily != null) displayed.add(daily);
@@ -741,25 +924,19 @@ public class HomePanel extends NCMPanel {
                 if (!sampled.isEmpty()) {
                     qishuiHomePlaylists = Collections.unmodifiableList(new ArrayList<>(displayed));
                 }
-                MultiThreadingUtil.runOnMainThread(() -> {
+                publishCallback(ticket, () -> {
                     if (NeteaseMusicService.getCurrentPlatform() != platform) return;
-                    if (publishedGeneration.get() >= 0) {
-                        // 首屏已经在屏幕上了：只补最后一轮新增的那几张。
-                        appendQishuiCards(displayed);
-                        return;
-                    }
                     if (!displayed.isEmpty()) {
-                        layout(displayed, qishuiRecommendationTitle(displayed.size()));
-                        publishedGeneration.set(this.layoutGeneration);
+                        requestQishuiProgress(displayed);
                     } else {
-                        layoutPlaceholder("汽水推荐歌单获取失败，请稍后重试", false);
+                        requestPlaceholder("汽水推荐歌单获取失败，请稍后重试", false);
                     }
                 });
             } catch (Throwable throwable) {
                 System.err.println("[Music] 汽水首页加载失败: " + throwable);
-                MultiThreadingUtil.runOnMainThread(() -> {
+                publishCallback(ticket, () -> {
                     if (NeteaseMusicService.getCurrentPlatform() == platform)
-                        layoutPlaceholder("汽水推荐歌单获取失败，请稍后重试", false);
+                        requestPlaceholder("汽水推荐歌单获取失败，请稍后重试", false);
                 });
             } finally {
                 qishuiHomeLoading = false;
@@ -773,25 +950,15 @@ public class HomePanel extends NCMPanel {
      * <p>在采样线程上被调，所以这里立刻把列表拷一份再切主线程 —— 上游传下来的是当轮快照，
      * 但拷贝的成本远小于在主线程上做判重与建控件。</p>
      */
-    private void publishQishuiProgress(List<PlayList> partial, PlayList daily,
-                                       java.util.concurrent.atomic.AtomicLong publishedGeneration) {
+    private void publishQishuiProgress(List<PlayList> partial, PlayList daily, UiTicket ticket) {
         final List<PlayList> snapshot = new ArrayList<>(partial.size() + 1);
         if (daily != null) snapshot.add(daily);
         snapshot.addAll(partial);
-        MultiThreadingUtil.runOnMainThread(() -> {
-            if (NeteaseMusicService.getCurrentPlatform() != platform) return;
-            if (publishedGeneration.get() < 0) {
-                if (snapshot.isEmpty()) return;
-                layout(snapshot, qishuiRecommendationTitle(snapshot.size()));
-                publishedGeneration.set(this.layoutGeneration);
-                // 顺便把这一份写进缓存：加载中途退出再进来，看到的是已有的六十张，
-                // 而不是又一次从头转圈。
-                qishuiHomePlaylists = Collections.unmodifiableList(new ArrayList<>(snapshot));
-                return;
-            }
-            if (publishedGeneration.get() != this.layoutGeneration) return;
-            appendQishuiCards(snapshot);
-        });
+        // Cache publication must not depend on whether the old screen/request still owns UI.
+        if (!partial.isEmpty()) {
+            qishuiHomePlaylists = Collections.unmodifiableList(new ArrayList<>(snapshot));
+        }
+        publishCallback(ticket, () -> requestQishuiProgress(snapshot));
     }
 
     /**
@@ -821,11 +988,10 @@ public class HomePanel extends NCMPanel {
         } else {
             this.pendingCards = new ArrayList<>(fresh);
             this.pendingCardIndex = 0;
-            buildPendingCards();
         }
     }
 
-    private void awaitQishuiHomeCache() {
+    private void awaitQishuiHomeCache(UiTicket ticket) {
         final long deadline = System.nanoTime() + 20_000_000_000L;
         while (qishuiHomeLoading && System.nanoTime() - deadline < 0L) {
             try {
@@ -836,12 +1002,12 @@ public class HomePanel extends NCMPanel {
             }
         }
         final List<PlayList> cached = new ArrayList<>(qishuiHomePlaylists);
-        MultiThreadingUtil.runOnMainThread(() -> {
+        publishCallback(ticket, () -> {
             if (NeteaseMusicService.getCurrentPlatform() != platform) return;
             if (cached.isEmpty()) {
-                layoutPlaceholder("汽水推荐歌单获取失败，请稍后重试", false);
+                requestPlaceholder("汽水推荐歌单获取失败，请稍后重试", false);
             } else {
-                layout(cached, qishuiRecommendationTitle(cached.size()));
+                requestLayout(cached, qishuiRecommendationTitle(cached.size()));
             }
         });
     }
@@ -946,10 +1112,8 @@ public class HomePanel extends NCMPanel {
             if (playlist != null) this.displayedCardIds.add(playlist.getId());
         }
         this.layoutGeneration++;
-        // 先把当帧列宽算好再补第一批卡片：面板已经上屏时（占位 → 数据到达）这一帧就是最终几何。
-        // 冷启动首帧面板宽还是 0，这一次调用是 no-op，卡片先按默认宽构造，下一次渲染前会校正。
-        this.refreshGridLayout();
-        buildPendingCards();
+        // The shell is small; expensive card construction has one budget at the host pump.
+        // Do not spend another batch here on a callback/layout turn.
 
     }
 
@@ -1031,13 +1195,14 @@ public class HomePanel extends NCMPanel {
 
         int total = this.pendingCards.size();
         int batchSize = com.muoniumplayer.core.screens.ncm.PlayerIslandTransition.needsFrameBudget()
-                ? 1 : CARD_BUILD_BATCH;
+                || !NCMScreen.getInstance().isContentLayoutReady() ? 1 : CARD_BUILD_BATCH;
         int end = Math.min(total, this.pendingCardIndex + batchSize);
         if (this.pendingCardIndex < end) {
             long startedAt = System.nanoTime();
             List<AbstractWidget<?>> batch = new ArrayList<>(end - this.pendingCardIndex);
             while (this.pendingCardIndex < end) {
                 PlayList playList = this.pendingCards.get(this.pendingCardIndex++);
+                if (playList == null) continue;
                 PlaylistWidget card = new PlaylistWidget(playList,
                         this.pendingCardActions.get(playList.getId()), this.grid, this.reshape,
                         this.cardsPanel);
@@ -1049,6 +1214,7 @@ public class HomePanel extends NCMPanel {
             this.cardsPanel.addChild(batch);
             // 子项数量变了，排版签名必须失效：否则容器会以为上一帧的排布仍然有效。
             this.cardsPanel.invalidateLayout();
+            if (!batch.isEmpty()) NCMScreen.getInstance().invalidateTransitionContent();
         }
 
         if (this.pendingCardIndex >= total) {
@@ -1066,15 +1232,9 @@ public class HomePanel extends NCMPanel {
 
     @Override
     public void onRender(double mouseX, double mouseY) {
-        // 页头/网格几何每帧只做一次 O(1) 更新（宽度没变时只是一次比较），
-        // 让本帧补上的卡片在构造时就能读到当帧列宽。
-        this.refreshGridLayout();
-        // 重排补间每帧只推进一次：卡片在矩阵回调里只读结果。
-        // 若让每张卡各自 tick，同一帧里几十张卡会把共享时钟推进几十遍，动画直接跑飞。
-        this.reshape.tick();
-        // 先把这一批卡片补上，再发号：本帧新挂的卡片会在同一次渲染里被遍历到，
-        // 于是它们第一次被渲染就是这一帧，入场动画从这一帧起算。
-        buildPendingCards();
+        // No frame API is needed: the host calls the public pump, then may draw a cached page.
+        if (!this.pumpedBeforeRender) pumpPendingUiInternal();
+        this.pumpedBeforeRender = false;
         this.revealQueue.beginFrame();
         this.revealQueue.setAnimationsSuppressed(this.scrollPanel != null && this.scrollPanel.isScrollActive());
         super.onRender(mouseX, mouseY);

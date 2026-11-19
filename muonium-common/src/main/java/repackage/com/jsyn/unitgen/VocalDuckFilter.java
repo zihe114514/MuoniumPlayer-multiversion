@@ -107,14 +107,14 @@ public class VocalDuckFilter extends FilterLowShelf {
 
     public void setMidGainDb(float db) {
         if (Float.isNaN(db) || Float.isInfinite(db)) return;
-        this.targetMidGainDb = Math.max(-3.0, Math.min(3.0, db));
+        this.targetMidGainDb = Math.max(-12.0, Math.min(3.0, db));
     }
 
     public float getMidGainDb() { return (float) this.targetMidGainDb; }
 
     public void setHighGainDb(float db) {
         if (Float.isNaN(db) || Float.isInfinite(db)) return;
-        this.targetHighGainDb = Math.max(-3.0, Math.min(3.0, db));
+        this.targetHighGainDb = Math.max(-12.0, Math.min(3.0, db));
     }
 
     public float getHighGainDb() { return (float) this.targetHighGainDb; }

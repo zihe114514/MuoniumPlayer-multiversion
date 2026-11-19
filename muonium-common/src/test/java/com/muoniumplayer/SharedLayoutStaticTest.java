@@ -84,6 +84,8 @@ class SharedLayoutStaticTest {
             // --- 26.x 改了取当前屏幕的方法名 ---
             "com/muoniumplayer/core/rendering/IslandAmbientStatus.java",
             "com/muoniumplayer/core/rendering/IslandVisibilityGate.java",
+            // --- 聊天音乐卡：onPress/onButton 描述符与 26.3 SDL 按键状态桥各树适配 ---
+            "com/muoniumplayer/mixin/ChatIslandMouseMixin.java",
             "com/muoniumplayer/core/screens/GuiAnnouncements.java",
             "com/muoniumplayer/core/screens/GuiFfmpegNotice.java",
             "com/muoniumplayer/core/screens/GuiUpdateNotice.java",
@@ -124,8 +126,9 @@ class SharedLayoutStaticTest {
             //     1.20.1~1.21.11 的 EntityRenderDispatcher.render(...)（暂仅 26.3）---
             "com/muoniumplayer/mixin/TransparentEntityMixin.java",
             "com/muoniumplayer/mixin/TransparentCameraMixin.java",
-            // --- 卡点运镜：相机/FOV 注入点两代不同形（26.x alignWithEntity/getFov vs
-            //     1.21.11 前 setup；1.20.1 setRotation 无 roll），探针触 MC 状态（暂仅 26.3）---
+            // --- 卡点运镜：相机接管、FOV、输入与 HUD 描述符各树维护；场景触点留 compat ---
+            "com/muoniumplayer/mixin/CineKeyboardMixin.java",
+            "com/muoniumplayer/mixin/CineMouseMixin.java",
             "com/muoniumplayer/mixin/CineCameraMixin.java",
             "com/muoniumplayer/mixin/CineFovMixin.java",
             "com/muoniumplayer/mixin/CineHudMixin.java",

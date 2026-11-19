@@ -86,7 +86,10 @@ class ViperIntegrationStaticTest {
         String screen = shared("com/muoniumplayer/core/screens/ncm/NCMScreen.java");
         assertTrue(screen.contains("public ViperOverlay viperOverlay = null;"), "面板字段");
         assertTrue(screen.contains("public void openViperEffects()"), "打开入口");
-        assertTrue(screen.contains("this.viperOverlay.renderWidget(mouseX, mouseY, dWheel);"), "渲染接入");
+        assertTrue(screen.contains("this.viperOverlay.renderWidget(mouseX, mouseY, effectsWorkbenchOwnsInput() ? dWheel : 0);"),
+                "渲染接入；被其他模态盖住时不得继续滚动工作台");
+        assertTrue(screen.contains("this.viperOverlay.setInteractionOwned(effectsWorkbenchOwnsInput());"), "原始拖动与宿主共用输入权");
+        assertTrue(screen.contains("this.viperOverlay.onHostClosed();"), "回收/强制关宿主必须结算交互并释放页面资源");
         assertTrue(screen.contains("this.viperOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);"), "点击接入");
         assertTrue(screen.contains("this.viperOverlay.onKeyTypedReceived(typedChar, keyCode)"), "键盘接入");
         assertTrue(screen.contains("this.viperOverlay.handleEscape();"), "ESC 接入");
@@ -95,13 +98,17 @@ class ViperIntegrationStaticTest {
         String bar = shared("com/muoniumplayer/core/screens/ncm/panels/ControlsBar.java");
         assertTrue(bar.contains("NCMScreen.getInstance().openViperEffects();"), "播放条入口指向面板");
 
-        String overlay = shared("com/muoniumplayer/core/screens/ncm/ViperOverlay.java");
-        assertTrue(overlay.contains("extends NcmSheet"), "面板沿用共用表现层");
-        assertTrue(overlay.contains("ViperRuntime.selectPreset("), "选用走运行时");
-        assertTrue(overlay.contains("ViperRuntime.setEnabled("), "总开关走运行时");
-        assertTrue(overlay.contains("ViperRuntime.importPreset("), "导入走运行时");
+        String entry = shared("com/muoniumplayer/core/screens/ncm/ViperOverlay.java");
+        assertTrue(entry.contains("extends EffectsWorkbench"), "原播放条入口只保留薄壳");
+        String overlay = shared("com/muoniumplayer/core/screens/ncm/effects/EffectsWorkbench.java");
+        assertTrue(overlay.contains("extends NcmSheet"), "独立工作台仍保留共用进退场生命周期");
+        assertTrue(overlay.contains("ViperRuntime.applyState("), "选用与总开关走 checked 运行时接口");
+        assertTrue(overlay.contains("EffectsPresetFiles.read("), "文件导入有界读取，不在渲染线程解析");
+        assertTrue(overlay.contains("ViperRuntime.importPresetJson("), "导入走防占名的运行时接口");
         assertTrue(overlay.contains("ViperRuntime.removePreset("), "删除走运行时");
-        assertTrue(overlay.contains("ViperRuntime.syncFromDisk()"), "开面板先对齐磁盘状态（尚未装载曲目时也显示真实开关）");
+        assertTrue(overlay.contains("ViperRuntime.syncFromDisk()"), "开面板先在后台对齐磁盘状态");
+        assertTrue(overlay.contains("snapshot.persistChecked()"), "保存捕获独立工作副本，并报告失败");
+        assertTrue(overlay.contains("editor.acknowledgeCommit(snapshot)"), "完成回调不覆盖较新的参数编辑");
 
         String runtime = shared("com/muoniumplayer/core/viper/ViperRuntime.java");
         assertTrue(runtime.contains("ViperBuiltin.ensureProvisioned()"), "运行时必须铺设随包内置内核/预设");

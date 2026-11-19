@@ -24,7 +24,7 @@ class AutomixTransitionAnimationStaticTest {
         assertTrue(island.contains("AutomixTransitionAnimation.islandFrame()"));
         assertTrue(island.contains("AutomixIslandRenderer.draw(SkijaGfx.canvas(), mixFrame"));
         assertTrue(island.contains("playerAbsorbImpact || mixMode"));
-        assertTrue(island.contains("if (!surfaceActive) {"));
+        assertTrue(island.contains("else if (!surfaceActive || !musicCapsule && !hasAmbient"));
         assertTrue(island.contains("targetExpandedWidth = compactWidth;"),
                 "退场不能重新扩大成下载兜底卡片");
         assertTrue(island.contains("!activeDownload && !holdingCompletion"));

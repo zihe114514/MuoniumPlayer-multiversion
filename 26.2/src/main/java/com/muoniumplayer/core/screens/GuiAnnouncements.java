@@ -3,6 +3,8 @@ package com.muoniumplayer.core.screens;
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.compat.mc.GuiScreen;
+import com.muoniumplayer.core.input.TouchGestures;
+import com.muoniumplayer.core.settings.TouchSettings;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.ncm.AnnouncementOverlay;
 import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
@@ -37,6 +39,10 @@ public class GuiAnnouncements extends GuiScreen {
 
     /** 窗口 resize 会让原版重新调用 {@code init()}，界面本体只能搭一次，否则子组件会越挂越多。 */
     private boolean overlayBuilt;
+
+    private boolean pendingClickActive;
+    private double pendingClickX;
+    private double pendingClickY;
 
     public GuiAnnouncements(net.minecraft.client.gui.screens.Screen parent) {
         this.parent = parent;
@@ -104,15 +110,17 @@ public class GuiAnnouncements extends GuiScreen {
         try {
             double sx = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
             double sy = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
+            // 和绘制/命中同一布局轴；ExpressiveLayout 在内部映射手势查询，不猜裸窗口倍率。
+            TouchGestures.get().advance(System.nanoTime(), mouseX / sx, mouseY / sy, Mouse.isButtonDown(0));
             SkijaGfx.pushMatrix();
             SkijaGfx.scale(sx, sy);
             try {
-            overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
-            overlay.renderWidget((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy),
-                    Mouse.getDWheel());
-            if (overlay.shouldClose()) {
-                dismiss();
-            }
+                overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
+                overlay.renderWidget((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy),
+                        Mouse.getDWheel());
+                if (overlay.shouldClose()) {
+                    dismiss();
+                }
             } finally {
                 SkijaGfx.popMatrix();
             }
@@ -123,16 +131,41 @@ public class GuiAnnouncements extends GuiScreen {
 
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
-        // 悬停状态是上一帧渲染时算出来的，所以派发要放在渲染之后 —— 调用点本来就是这个顺序。
-        // 与 drawScreen 同括号同换算：绘制与命中必须同轴。先刷分辨率——resize 与点击
-        // 落进同一帧间隙时，缓存的 GUI 宽是旧值，sx 会变成「旧G/新L」混合轴。
+        // 左键先记按下坐标；拖动不能在手指落下时就误触展开正文或链接。
         WindowAdaptiveScale.beginForced();
         try {
             RenderSystem.refreshResolution();
             double sx = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
             double sy = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
-            overlay.onMouseClickReceived((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy),
-                    mouseButton);
+            double x = Math.round(mouseX / sx), y = Math.round(mouseY / sy);
+            if (TouchSettings.ENABLED && mouseButton == 0) {
+                TouchGestures.get().advance(System.nanoTime(), mouseX / sx, mouseY / sy, true);
+                pendingClickActive = true;
+                pendingClickX = x;
+                pendingClickY = y;
+                return;
+            }
+            overlay.onMouseClickReceived(x, y, mouseButton);
+        } finally {
+            WindowAdaptiveScale.end();
+        }
+    }
+
+    @Override
+    protected void mouseReleased(int mouseX, int mouseY, int state) {
+        if (state != 0 || !pendingClickActive) return;
+        pendingClickActive = false;
+        if (!TouchSettings.ENABLED) return;
+        // 先在同一布局轴结算松手，再取点按答案；事件先于下一帧轮询也不会留住按压态。
+        WindowAdaptiveScale.beginForced();
+        try {
+            RenderSystem.refreshResolution();
+            double sx = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
+            double sy = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
+            TouchGestures.get().advance(System.nanoTime(), mouseX / sx, mouseY / sy, false);
+            if (!TouchGestures.get().consumeTap()) return;
+            // 按下时已换算的布局轴；浮层复用实际绘制过的 Expressive 逆变换。
+            overlay.onMouseClickReceived(pendingClickX, pendingClickY, state);
         } finally {
             WindowAdaptiveScale.end();
         }
@@ -157,7 +190,19 @@ public class GuiAnnouncements extends GuiScreen {
         dismiss();
     }
 
+    /** 外部换屏同样经过 compat 的 removed → onGuiClosed，图片只在宿主移除时释放。 */
+    @Override
+    public void onGuiClosed() {
+        pendingClickActive = false;
+        try {
+            overlay.dispose();
+        } finally {
+            overlay.releaseResources();
+        }
+    }
+
     private void dismiss() {
         this.mc.gui.setScreen(this.parent);
+        overlay.releaseResources();
     }
 }

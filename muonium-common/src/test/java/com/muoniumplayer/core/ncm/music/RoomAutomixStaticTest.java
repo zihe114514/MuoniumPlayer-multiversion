@@ -131,7 +131,8 @@ class RoomAutomixStaticTest {
         assertTrue(restored.stemDriven, "stem 驱动标记丢了，曲线就会退回「按渐变比例」那一套");
         assertEquals(original.animationPeriodMillis, restored.animationPeriodMillis, 1e-9,
                 "过渡动画的拍周期要送达，否则各机闪得节奏都不一样");
-
+        assertEquals(original.learnedEqEnabled, restored.learnedEqEnabled,
+                "动态 EQ 开关必须随权威房间计划传递");
         assertEquals(curveOf(original), curveOf(restored),
                 "全房执行的必须是房主算出来的那一条曲线，而不是各机按同一个数各自发挥的");
     }
@@ -309,8 +310,10 @@ class RoomAutomixStaticTest {
         // ⑥ 预备链路先问房间，房间给不出计划才回落本机分析链路。
         assertTrue(cloud.contains("boolean roomOwns = RoomAutomix.handles(song);"),
                 "必须区分「房间在管这一首」与「这一首不在房间里」");
-        assertTrue(cloud.contains("track.plan = RoomAutomix.planWith(ownedPlayer, deck, song, lastVocalEnd);"),
-                "预备下一首时必须先问房间要不要交叠");
+        assertTrue(cloud.contains("track.plan = RoomAutomix.planWith(ownedPlayer, deck, song, lastVocalEnd, track.pairSearchEvidence);"),
+                "房间也要把权威分析端的整曲配对证据传给 planner");
+        assertTrue(room.contains("if (pairSearchEvidence || !AutomixSettings.isFoliaEngine())"),
+                "Folia 基线可供本次房间交接，但无证据的结果不可缓存");
         assertTrue(cloud.contains("if (track.plan == null && !roomOwns) {"),
                 "房间在管时不得回落到本机自己的判据：那正是全房分叉的来源");
         assertTrue(cloud.contains("track.roomMode = roomOwns && track.plan != null;"),

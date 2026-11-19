@@ -131,7 +131,7 @@ Compose 界面源码位于独立仓库 `E:\oneconfig lite\MuoniumConfig-src`。�
 # 在 MuoniumConfig-src 内执行；其他车道先查外仓支持的 lane 名
 python tools/build-all.py --lane 1.21.1
 python tools/sync-dev-mods.py --lane 1.21.1
-python tools/check-music-contract.py --jar <MuoniumPlayer产物>
+python tools/check-music-contract.py --jar <MuoniumConfig产物>
 ```
 
 ## 7. 标准开发流程

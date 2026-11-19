@@ -98,6 +98,39 @@ class SceneAcousticsTest {
         }
     }
 
+    private static double tailEnergy(float makeup) {
+        AcousticsDebugTuning.tailMakeup = makeup;
+        SceneAcoustics.applyTarget(planNoTaps(20000, 0.8f, 0f, 1f, 0.006f, 2.5f, 0.28f));
+        SceneAcoustics.flush();
+        warmup(120);
+        final Random random = new Random(31);
+        final double[] excite = new double[2048 * CHANNELS];
+        for (int i = 0; i < excite.length; i++) {
+            excite[i] = (random.nextDouble() * 2.0 - 1.0) * 0.2;
+        }
+        SceneAcoustics.render(excite, CHANNELS, RATE);
+        double energy = 0;
+        for (int block = 0; block < 360; block++) {
+            final double[] silence = new double[CHANNELS * 64];
+            SceneAcoustics.render(silence, CHANNELS, RATE);
+            if (block >= 90) {
+                for (double value : silence) {
+                    energy += value * value;
+                }
+            }
+        }
+        return energy;
+    }
+
+    @Test
+    @DisplayName("微收后的高混响档仍明显提高实际尾部能量")
+    void strongWetFieldRaisesTailEnergy() {
+        final double reference = tailEnergy(1.8f);
+        final double strong = tailEnergy(2.0f);
+        assertTrue(strong > reference * 1.15,
+                "微收后的高混响档仍应提高实际尾能量: reference=" + reference + " strong=" + strong);
+    }
+
     @Test
     @DisplayName("长衰减 + 高回授:满效果渲染有限且静音后收敛")
     void longDecayStaysStable() {

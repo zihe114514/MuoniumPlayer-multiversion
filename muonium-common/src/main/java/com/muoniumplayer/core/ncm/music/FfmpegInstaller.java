@@ -65,6 +65,10 @@ public final class FfmpegInstaller {
         return progressPercent;
     }
 
+    public static boolean isAvailableFromCachedProbe() {
+        return FfmpegSupport.cachedState() == 1;
+    }
+
     /**
      * 开始安装。已在跑或已经成功就什么都不做；失败后可以再次调用（重试）。
      *

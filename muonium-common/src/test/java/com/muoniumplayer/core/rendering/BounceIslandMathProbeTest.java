@@ -10,11 +10,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>这一款是从作者另一份 Hypixel 端的 Dynamic Island 脚本里搬数值来的，全部数学都收在
  * {@link BounceIslandMath} 里，所以能在这里逐条对拍：弹簧必须真的过冲（否则就退化成
- * 其他七款那条低通通道，这一款存在的意义就没了）、圆角必须在两行以后不再跟高度、
+ * 其他样式的低通通道）、圆角必须在两行以后不再跟高度、
  * 像素吸附必须在缩放 2/3 档时消掉半像素。</p>
  *
- * <p>后半截是「不许动旧样式」的守卫：新增样式必须追加在枚举末尾，因为
- * {@code HudConfig.dynamicIslandStyle} 持久化的是序号。</p>
+ * <p>后半截守卫样式的稳定存档 ID：枚举收缩或重排不能改变用户已选的保留样式。</p>
  */
 class BounceIslandMathProbeTest {
 
@@ -145,19 +144,29 @@ class BounceIslandMathProbeTest {
         assertEquals(0, (BounceIslandMath.alphaOf(0xFF102030, 0.0) >> 24) & 255);
     }
 
-    /** 新增样式必须追加在末尾：序号是持久化值，中间插一项会把所有人已选的样式改掉。 */
+    /** 删除样式后枚举可以收缩，存档仍必须使用原有稳定 ID。 */
     @Test
-    void existingStylesKeepTheirOrdinalsAndTheNewOneIsAppended() {
+    void retainedStylesKeepTheirPersistedIds() {
         DownloadDynamicIsland.DynamicIslandStyle[] styles =
                 DownloadDynamicIsland.DynamicIslandStyle.values();
-        String[] order = {"PILL", "GLASS", "COMPACT", "CARD", "SYSTEM_CARD", "MUSIC_FOCUS",
-                "LIQUID_GLASS", "BOUNCE", "MUSIC_CAPSULE"};
+        String[] order = {"PILL", "COMPACT", "LIQUID_GLASS", "BOUNCE", "MUSIC_CAPSULE"};
+        int[] ids = {0, 2, 6, 7, 8};
         assertEquals(order.length, styles.length);
         for (int i = 0; i < order.length; i++) {
-            assertEquals(order[i], styles[i].name(), "样式序号 " + i + " 变了，用户配置会串样式");
+            assertEquals(order[i], styles[i].name());
+            assertEquals(ids[i], styles[i].getId(), "保留样式的存档 ID 不能变化");
+            assertEquals(styles[i], DownloadDynamicIsland.DynamicIslandStyle.fromId(ids[i]));
         }
         assertEquals("经典胶囊", styles[0].getDisplayName());
-        assertEquals("液态玻璃", styles[6].getDisplayName());
+        assertEquals("液态玻璃", styles[2].getDisplayName());
+    }
+
+    @Test
+    void removedAndUnknownStyleIdsFallBackToCompact() {
+        for (int id : new int[]{1, 3, 4, 5, -1, 9, Integer.MIN_VALUE, Integer.MAX_VALUE}) {
+            assertEquals(DownloadDynamicIsland.DynamicIslandStyle.COMPACT,
+                    DownloadDynamicIsland.DynamicIslandStyle.fromId(id), "旧样式 ID " + id);
+        }
     }
 
     @Test

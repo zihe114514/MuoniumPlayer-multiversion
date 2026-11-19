@@ -37,40 +37,48 @@ class AutomixAdvancedModeStaticTest {
     }
 
     @Test
-    @DisplayName("三条新功能都在闸后面，闸外没有一次扫描或解码")
-    void everyNewBehaviourIsBehindTheGate() throws Exception {
+    @DisplayName("默认 AutoCue 与额外进阶功能独立，队列排列仍受开关控制")
+    void defaultPairSearchIsSeparateFromAdvancedFeatures() throws Exception {
+        String settings = read(music("AutomixSettings.java"));
+        assertTrue(settings.contains("private static boolean advancedMode = false;"));
+        assertTrue(settings.contains("整曲包络配对选点属于普通交接策略"));
+
         String planner = read(music("FoliaAutomixPlanner.java"));
-        assertTrue(planner.contains("if (AutomixSettings.isAdvancedModeEnabled()) {"),
-                "规划器要先看闸再读包络");
-        assertTrue(planner.indexOf("AutomixEnvelope.load(") > planner.indexOf("isAdvancedModeEnabled()"),
-                "读包络必须发生在闸之后");
-        assertTrue(planner.contains("private static AutomixAutoCue.Result advancedCue("));
+        assertTrue(planner.contains("AutomixAutoCue.Result selected = pairCue("),
+                "普通 Folia 规划必须调用配对搜索");
+        assertTrue(planner.contains("AutomixEnvelope outgoingEnvelope = AutomixEnvelope.load("),
+                "搜索只读已预热包络");
+        assertTrue(planner.contains("if (AutomixSettings.isAdvancedModeEnabled() && outgoingEnvelope != null"),
+                "额外出场人声曲线仍受进阶开关保护");
 
         String cloud = read(music("CloudMusic.java"));
-        String warm = cloud.substring(cloud.indexOf("static void warmAdvancedEnvelope(AudioPlayer deck)"));
-        assertTrue(warm.indexOf("if (!AutomixSettings.isAdvancedModeEnabled()) return;")
-                        < warm.indexOf("BackgroundWork.submit"),
-                "预热要在入队之前就被闸拦掉：关掉时连一个后台任务都不该排");
+        String warm = between(cloud, "static void warmPairSearchEnvelope(AudioPlayer deck)", "public static boolean warmAutomixProfile");
+        assertTrue(warm.contains("isFoliaEngine()") && warm.contains("PAIR_ENVELOPE_IN_FLIGHT"));
+        assertFalse(warm.contains("isAdvancedModeEnabled()"));
+        assertTrue(cloud.contains("private volatile boolean pairSearchEvidence = true;"));
+        assertTrue(cloud.contains("if (track.pairSearchEvidence) {"), "缺证据的回退计划不可缓存");
+        assertTrue(cloud.contains("if (track.replanned || track.roomMode) return;"),
+                "房间共享计划不由本地补算");
 
         String panel = read(screens("ncm", "panels", "PlayQueuePanel.java"));
-        assertTrue(panel.contains("isAdvancedModeEnabled()"),
-                "「排列」按钮要跟着总开关收掉，而不是留一个按下去什么都不做的按钮");
+        assertTrue(panel.contains("isAdvancedModeEnabled()"), "队列排列仍受进阶开关控制");
     }
 
     @Test
-    @DisplayName("规划路径只读缓存：整曲扫描只发生在预热里")
+    @DisplayName("规划路径只读缓存；扫描只留在后台包络预热")
     void planningNeverScans() throws Exception {
         String planner = read(music("FoliaAutomixPlanner.java"));
-        assertTrue(!planner.contains("AutomixEnvelope.ensure("),
-                "规划器里绝不能出现 ensure()：那会在预备窗里起若干个解码进程扫完整首歌");
+        assertFalse(planner.contains("AutomixEnvelope.ensure("), "规划路径不扫描音频");
+        assertTrue(planner.contains("AutomixAutoCue.Result selected = pairCue("));
 
         String envelope = read(music("AutomixEnvelope.java"));
-        assertTrue(envelope.contains("static AutomixEnvelope load(File source)"), "只读口要单独存在");
+        assertTrue(envelope.contains("static AutomixEnvelope load(File source)"));
         assertTrue(envelope.contains("static boolean ensure(File source, long durationMillis)"));
 
         String cloud = read(music("CloudMusic.java"));
-        assertTrue(cloud.contains("AutomixEnvelope.ensure(playable, (long) deck.getTotalTimeMillis())"),
-                "整曲扫描要挂在已有的 profile 预热上，同一线程同一文件，别另起一条链");
+        assertTrue(cloud.contains("AutomixEnvelope.ensure(playable, (long) deck.getTotalTimeMillis())"));
+        assertTrue(cloud.contains("static boolean warmPairSearchEnvelopeNow(File source, long durationMillis)"));
+        assertTrue(cloud.contains("static void warmPairSearchEnvelope(AudioPlayer deck)"));
     }
 
     @Test
@@ -103,8 +111,8 @@ class AutomixAdvancedModeStaticTest {
                 "指纹要含新字段，否则换了人声安排也看不出计划变了");
 
         String cache = read(music("AutomixPlanCache.java"));
-        assertTrue(cache.contains("isAdvancedModeEnabled()"),
-                "计划缓存的键要带总开关，否则关掉之后还会命中开着时算的那份");
+        assertTrue(cache.contains("FORMAT_VERSION = 4"),
+                "默认配对搜索接入后，旧纯启发式缓存必须失效");
     }
 
     @Test
@@ -138,8 +146,8 @@ class AutomixAdvancedModeStaticTest {
     @DisplayName("退场点只能往未来找：规划时把播放头传给搜索")
     void firePointIsClampedToTheFuture() throws Exception {
         String planner = read(music("FoliaAutomixPlanner.java"));
-        assertTrue(planner.contains("MIN_ADVANCED_FIRE_LEAD_MILLIS"),
-                "要有一条明确的「播放头之后多少毫秒」下限，而不是就地比较");
+        assertTrue(planner.contains("MIN_PAIR_SEARCH_FIRE_LEAD_MILLIS"),
+                "配对搜索要留出播放头安全余量");
         assertTrue(planner.contains("request.minimumFireMillis"),
                 "播放头要传进搜索；不传就会选出一个已经播过去的时间点，交接当场开始");
         assertTrue(planner.contains("result.fireMillis < request.minimumFireMillis"),
@@ -147,61 +155,72 @@ class AutomixAdvancedModeStaticTest {
     }
 
     @Test
-    @DisplayName("进场侧包络必须在规划之前扫完：提交完就走等于没提交")
-    void incomingEnvelopeIsScannedBeforePlanning() throws Exception {
+    @DisplayName("配对预热在规划前确保进场证据；普通 Folia 可后台补齐出场证据")
+    void incomingEnvelopeIsReadyBeforePlanning() throws Exception {
         String cloud = read(music("CloudMusic.java"));
-        int scan = cloud.indexOf("warmAdvancedEnvelopeNow(file, decodedMillis)");
-        int plan = cloud.indexOf("RoomAutomix.planWith(ownedPlayer, deck, song, lastVocalEnd)");
-        assertTrue(scan >= 0, "预备路径上要有一条同步扫完整曲包络的调用");
-        assertTrue(plan > scan, "扫描要排在规划之前——规划就在同一根线程上紧随其后，异步提交等于没提交");
+        int asyncWarm = cloud.indexOf("warmPairSearchEnvelope(deck);");
+        int plan = cloud.indexOf("RoomAutomix.planWith(ownedPlayer, deck, song, lastVocalEnd, track.pairSearchEvidence)");
+        assertTrue(asyncWarm >= 0 && plan > asyncWarm, "普通 Folia 进场证据安排异步预热");
+        int roomWarm = cloud.indexOf("incomingEnvelope = warmPairSearchEnvelopeNow(file, decodedMillis)");
+        assertTrue(roomWarm >= 0 && plan > roomWarm, "房间权威分析端同步确保证据后规划");
+        String tick = between(cloud, "private void maybeReplanArmedTrack", "private void requestReplan");
+        assertTrue(tick.contains("AutomixEnvelope.isPresent(track.file)"));
+        assertTrue(tick.contains("AutomixEnvelope.isPresent(activePlayer.getSourceFile())"));
+        String compute = between(cloud, "private void replanArmedTrack(ArmedTrack track, long armGeneration",
+                "void recordSeek()");
+        assertTrue(compute.contains("AutomixEnvelope.load(outgoing.getSourceFile()) == null")
+                && compute.contains("AutomixEnvelope.load(track.file) == null"),
+                "后台重算负责校验两侧包络内容");
 
-        String helper = between(cloud, "static boolean warmAdvancedEnvelopeNow", "static void warmAdvancedEnvelope");
-        assertTrue(helper.contains("if (!AutomixSettings.isAdvancedModeEnabled()) return true;"),
-                "总开关关闭时它要第一行返回 true：那时候不存在需要等的证据，缓存与复查都不该被它牵动");
-        assertTrue(helper.contains("AutomixEnvelope.ensure(source, durationMillis)"),
-                "开着就要真扫；只查不扫的那条是异步版，用途不同");
+        String syncWarm = between(cloud, "static boolean warmPairSearchEnvelopeNow", "static void warmPairSearchEnvelope");
+        assertTrue(syncWarm.contains("AutomixEnvelope.load(source) != null")
+                && syncWarm.contains("AutomixEnvelope.ensure(source, durationMillis)"),
+                "权威同步预备应复用有效边车并重扫损坏边车");
+        String async = between(cloud, "static void warmPairSearchEnvelope(AudioPlayer deck)",
+                "public static boolean warmAutomixProfile");
+        assertTrue(async.contains("PAIR_ENVELOPE_IN_FLIGHT.add(key)"));
+        assertTrue(async.contains("PAIR_ENVELOPE_IN_FLIGHT.remove(key)"));
     }
 
     @Test
-    @DisplayName("没证据算出的计划不落盘，否则同一对歌永远轮不到配对选点")
+    @DisplayName("无完整配对证据的 Folia 基线计划不缓存")
     void planWithoutEvidenceIsNotCached() throws Exception {
         String cloud = read(music("CloudMusic.java"));
-        int gate = cloud.indexOf("if (track.advancedEvidence) {");
+        int gate = cloud.indexOf("if (track.pairSearchEvidence) {");
         int store = cloud.indexOf("AutomixPlanCache.store(ownedPlayer, deck, lastVocalEnd, track.plan)");
-        assertTrue(gate >= 0, "写盘要有一道证据闸");
-        assertTrue(store > gate && store - gate < 800, "证据闸要包住这条写盘，而不是包着别的什么");
-        assertTrue(cloud.contains("track.advancedEvidence = !AutomixSettings.isAdvancedModeEnabled()"),
-                "关闭时这条判据恒为真：老行为一位都不许变");
+        assertTrue(gate >= 0, "写盘要由配对证据闸保护");
+        assertTrue(store > gate && store - gate < 800, "证据闸必须包住写盘");
+        assertTrue(cloud.contains("track.pairSearchEvidence = !pairSearchRequired || (incomingEnvelope && outgoingEnvelope)"));
     }
 
     @Test
-    @DisplayName("证据到货后只复查一次；房间的接缝不许本机另算；改入点归播放线程")
+    @DisplayName("普通 Folia 证据到货后后台只补算一次，房间不另算")
     void replanRunsOnceAndLeavesTheRoomAlone() throws Exception {
         String cloud = read(music("CloudMusic.java"));
         String trigger = between(cloud, "private void maybeReplanArmedTrack", "private void replanArmedTrack");
-        assertTrue(trigger.contains("if (!AutomixSettings.isAdvancedModeEnabled()) return;"),
-                "关闭时这条路第一行就断掉，不读盘、不入队");
-        assertTrue(trigger.contains("track.roomMode"), "房间那条计划的来源是房主那台，本机另算会让两台机器叠出两条波形");
-        assertTrue(trigger.contains("track.replanned"), "一条预备只许复查一次");
-        assertTrue(trigger.contains("REPLAN_MIN_LEAD_MILLIS"), "贴着接缝改计划要做不得，要有跑道下限");
-        assertTrue(trigger.contains("AutomixEnvelope.isPresent(track.file)"),
-                "两份包络此刻都在才重算——不然只会算出同一条兜底结论");
+        assertFalse(trigger.contains("if (!AutomixSettings.isAdvancedModeEnabled()) return;"),
+                "普通 Folia 包络证据到货后的 AutoCue 补算不能受进阶开关拦截");
+        assertTrue(trigger.contains("if (track.replanned || track.roomMode) return;"),
+                "常规证据补算只做一次且房间权威计划不本地重算");
+        assertTrue(trigger.contains("if (track.pairSearchEvidence || track.replanning || track.preRolled) return;"));
+        assertTrue(trigger.contains("AutomixEnvelope.isPresent(track.file)"));
+        assertTrue(trigger.contains("AutomixEnvelope.isPresent(activePlayer.getSourceFile())"));
+        assertTrue(trigger.contains("REPLAN_MIN_LEAD_MILLIS"));
 
         String compute = between(cloud, "private void replanArmedTrack(ArmedTrack track, long armGeneration",
                 "void recordSeek()");
-        assertFalse(compute.contains("prepareStart"), "后台只算不改牌；改入点必须回到播放线程");
+        assertFalse(compute.contains("prepareStart"));
+        assertTrue(compute.contains("AutomixEnvelope.load(outgoing.getSourceFile()) == null")
+                && compute.contains("AutomixEnvelope.load(track.file) == null"));
 
         String install = between(cloud, "private void installReplannedPlan", "boolean requestManualSkip() {");
         assertTrue(install.contains("deck.prepareStart(fresh.incomingCueMillis - preRoll)"));
-        assertTrue(install.contains("if (position + requiredLead > fresh.fireMillis - preRoll) return;"),
-                "跑道是按旧计划判的，新计划的退场点可能更早，装之前要按它自己再验一次");
-        assertTrue(install.contains("STALE_REPLAN_MIN_LEAD_MILLIS : REPLAN_MIN_LEAD_MILLIS"),
-                "两档跑道：旧接缝还没作废时「不动」是安全项，已经作废时「不动」才是危险项");
+        assertTrue(install.contains("if (position + requiredLead > fresh.fireMillis - preRoll) return;"));
+        assertTrue(install.contains("STALE_REPLAN_MIN_LEAD_MILLIS : REPLAN_MIN_LEAD_MILLIS"));
 
         int triggerCall = cloud.indexOf("maybeReplanArmedTrack(activePlayer);");
         int preRollCall = cloud.indexOf("maybePreRollArmedDeck(activePlayer);");
-        assertTrue(triggerCall >= 0 && preRollCall > triggerCall,
-                "复查要排在预卷之前：同一 tick 里换完入点，预卷才按新的算");
+        assertTrue(triggerCall >= 0 && preRollCall > triggerCall);
     }
 
     @Test
@@ -259,11 +278,11 @@ class AutomixAdvancedModeStaticTest {
         String start = between(cloud, "private boolean startSeamHold(", "把后台算好的新计划装上");
 
         assertTrue(hold.contains("AutomixSettings.isAdvancedModeEnabled()"),
-                "顶住交接是进阶模式里的改动：关着时普通路径的行为要一字不改");
+                "seek 后顶住失效 seam 仍由进阶开关控制");
         assertTrue(start.contains("track.roomMode"),
                 "房间的点火点归服务端决定，本机不许为了等一条更好的接缝把换歌帧拖过去");
         assertTrue(start.contains("AutomixEnvelope.isPresent("),
-                "两份整曲包络都不在的时候重算只会得出同一条启发式结论，那是白等");
+                "seam hold 的 tick 分支只检查 sidecar 存在位，不加载/解码包络");
         assertTrue(start.contains("overlapMillis + SEAM_HOLD_MILLIS"),
                 "剩余长度还得放得下一次交叠加上这段等待，否则更好的接缝根本不存在");
         assertTrue(start.contains("position + track.preRollMillis < track.plan.fireMillis"),

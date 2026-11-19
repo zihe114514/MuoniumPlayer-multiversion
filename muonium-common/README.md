@@ -21,6 +21,17 @@
 
 版本差异放各树 compat，加载器注册放各树外壳。共享层零加载器符号；新共享文件直接放这里，不需要先复制七份或运行去重迁移器。
 
+## 场景声学的共享边界
+
+`core/ncm/music/acoustics` 统一持有计划推导、采样调度、双耳延迟、早期反射和 FDN；世界/方块采样仍在七树 `ListenerProbe`，不把 MC 版本差异搬进共享业务。
+
+- 采样有上下文 epoch、最新请求和 2 秒有效期，失效或失败回中性，旧结果不能恢复水下/遮挡滤波。
+- 直射与反射从原始信号独立分流。直射的中置/宽度分量共用增益、滤波和传播时间，反射不复用已经空间化的直射。
+- 可用的 OpenAL Soft HRTF 只负责世界音箱直射，后台初始化；原生侧路也是定位的 mono 源，不保留头锁定立体声旁路。缺能力时明确回退 ITD/ILD，不承诺前后/上下的测量 HRIR 定位。
+- 房间计划一次引用交接，滤波/延迟历史由音频线程独占；普通换曲/seek 清态，AUTOMIX handover 保留房间尾。
+
+相关行为与真实 loopback 回归由 `AcousticsRuntimeTest`、`EarlyReflectionsTest`、`SceneAcousticsRegressionTest` 和 `OpenAlReverbBusTest` 覆盖；测试响应差异不能代替游戏耳机试听。
+
 ## 验证
 
 在仓库根 PowerShell 执行：

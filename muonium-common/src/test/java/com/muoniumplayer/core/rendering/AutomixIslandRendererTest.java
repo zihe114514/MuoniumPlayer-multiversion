@@ -86,8 +86,9 @@ class AutomixIslandRendererTest {
     }
 
     @Test void rendersActualRendererPreviewFrames() throws Exception {
-        java.nio.file.Path directory=Paths.get("build","automix-island-preview");
-        Files.createDirectories(directory);
+        String output = System.getProperty("muonium.automix.previewDir");
+        java.nio.file.Path directory = output == null || output.isBlank() ? null : Paths.get(output);
+        if (directory != null) Files.createDirectories(directory);
         for (int index=0; index<160; index++) {
             try (Surface surface=Surface.makeRasterN32Premul(420,120)) {
                 Canvas canvas=surface.getCanvas();canvas.clear(0xFF344C4D);
@@ -97,7 +98,7 @@ class AutomixIslandRendererTest {
                 canvas.restore();
                 try (io.github.humbleui.skija.Image image=surface.makeImageSnapshot(); Data png=EncoderPNG.encode(image)) {
                     assertNotNull(png);
-                    Files.write(directory.resolve(String.format("frame-%02d.png",index)),png.getBytes());
+                    if (directory != null) Files.write(directory.resolve(String.format("frame-%02d.png",index)),png.getBytes());
                 }
             }
         }

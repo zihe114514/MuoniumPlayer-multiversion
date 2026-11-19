@@ -117,6 +117,11 @@ public final class WsolaStretchSample extends FloatSample {
         return this.engaged;
     }
 
+    /** 内层样本（本类只是只读装饰器）。供 SoundFile#primeWindowAt 这类需要按实际类型分发的旁路用。 */
+    public FloatSample innerSample() {
+        return this.inner;
+    }
+
     /** 越界重锚次数。正常播放应当恒为 0；不为 0 说明读头不是顺序拉的。 */
     public int getReanchorCount() {
         return this.stretch.getReanchorCount();

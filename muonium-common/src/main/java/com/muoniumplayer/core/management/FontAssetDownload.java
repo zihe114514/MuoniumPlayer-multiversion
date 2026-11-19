@@ -155,6 +155,26 @@ public final class FontAssetDownload {
         return state;
     }
 
+    public static String catalogPhase() {
+        return state.phase().name();
+    }
+
+    public static int catalogProgress() {
+        return -1;
+    }
+
+    public static boolean isDownloading() {
+        return state.phase() == Phase.DOWNLOADING;
+    }
+
+    public static boolean hasFailed() {
+        return state.phase() == Phase.FAILED;
+    }
+
+    public static String catalogFailure() {
+        return state.phase() == Phase.FAILED ? state.detail() : null;
+    }
+
     /** 字体缓存目录，与模型目录（{@code config/muonium/models}）同一层级约定。 */
     public static File fontCacheDir() {
         return new File(new File("config", "muonium"), "fonts");

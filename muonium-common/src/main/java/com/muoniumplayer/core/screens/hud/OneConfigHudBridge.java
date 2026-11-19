@@ -336,7 +336,7 @@ public final class OneConfigHudBridge {
                         },
                         id, title, description, Boolean.class);
                 addMetadataReflective(property, "visualizer", visualizer("SwitchVisualizer"));
-                addMetadataReflective(property, "default", entry.isOn());
+                addMetadataReflective(property, "default", entry.getToggleDefaultState());
                 return property;
             }
             case COLOR: {

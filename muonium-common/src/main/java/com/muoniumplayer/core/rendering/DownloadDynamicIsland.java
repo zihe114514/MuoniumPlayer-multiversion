@@ -28,6 +28,8 @@ import java.util.Deque;
 import java.util.List;
 import com.muoniumplayer.render.skija.SkijaGfx;
 import com.muoniumplayer.render.skija.SkijaHost;
+import io.github.humbleui.skija.Canvas;
+import io.github.humbleui.types.RRect;
 
 /**
  * 全局、与界面无关的下载活动岛（Dynamic Island）。
@@ -82,22 +84,6 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** 亮带之外的基础不透明度；亮带中心补到 1.0。 */
     private static final double SHIMMER_BASE_ALPHA = .80;
     /**
-     * 智能过渡卡片在重叠时长之外多给的宽限，毫秒。
-     *
-     * <p>时效 = 本次重叠时长 + 这点宽限。宽限是为了覆盖「排在前面那张卡刚好还差半秒就播完」这种
-     * 临界情况：过渡刚结束时卡片仍算有效，再晚就作废。</p>
-     */
-    private static final long AUTOMIX_BLENDING_TTL_SLACK_MILLIS = 1_500L;
-    /**
-     * 「已接入最近播放」这张卡的时效，毫秒。
-     *
-     * <p>它说的是「刚才那一下点击顺带接上了多少首」，而这句话有两处天然延迟：拉最近播放要走一次
-     * 网络，卡片本身又要排在用户主动触发的下载/转码反馈后面。按排队间隔的上限（6 秒一张）算，
-     * 这个值够它在前面顶着一张卡的情况下照常露脸，而两张以上就作废 —— 那时候用户早换队列了，
-     * 再冒出一张「已接入最近播放 100 首」只会像是随机蹦出来的 bug。</p>
-     */
-    private static final long SEARCH_QUEUE_NOTICE_TTL_MILLIS = 8_000L;
-    /**
      * 液态玻璃的中性玻璃色，刻意<b>不</b>读 {@link NCMTheme#getAccentColor()}。
      *
      * <p>玻璃是一种材质而不是一处强调。用主题强调色去染整块表面的结果就是"液态玻璃被染色"：主题一换，
@@ -108,49 +94,43 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** 玻璃色的高光变体，用于折射亮带与边缘光的基准色相。 */
     private static final int GLASS_TINT_BRIGHT = 0xCADEFB;
 
-    /** 转码合理地可能持续数分钟，因此监控的是停滞而非总时长。 */
+    /** 样式 ID 是持久化契约；移除样式后保留空号，不再用枚举序号存档。 */
     public enum DynamicIslandStyle {
-        PILL("经典胶囊"),
-        GLASS("通透玻璃"),
-        COMPACT("紧凑状态"),
-        CARD("浮层卡片"),
-        SYSTEM_CARD("系统通知"),
-        MUSIC_FOCUS("音乐聚焦"),
-        LIQUID_GLASS("液态玻璃"),
-        /**
-         * 回弹胶囊：把作者另一份 Hypixel 端的 Dynamic Island 稿子 1:1 搬过来的一款。
-         *
-         * <p>和其他七款的差别全在"动起来是什么样"：尺寸是带速度的弹簧（会过冲再回弹），
-         * 整块表面按事件语义染成绿/红/蓝，多事件时按行堆叠而不是只留最新一条，
-         * 坐标吸附到物理像素网格。因此它必须<b>追加</b>在枚举末尾——
-         * {@code HudConfig.dynamicIslandStyle} 存的是序号，中间插一项会把所有人已选的样式改掉。</p>
-         */
-        BOUNCE("回弹胶囊"),
-        /**
-         * 音乐胶囊：收起时是一行「音符 + 当前歌词/歌名 + 频谱跳动条 + 底部进度描边」，
-         * 鼠标悬停约半秒展开成迷你卡（封面 + 歌词 + 进度 + 完整传输控制），点封面/队列
-         * 从岛上长出全屏播放器。同样<b>追加</b>在枚举末尾（序号存档，先例同上）。
-         *
-         * <p>与其它八款最大的不同：它的常驻内容不是状态行而是「正在播放」本身——有歌在放
-         * （或暂停未满 {@code MusicCapsuleCard#PAUSE_TIMEOUT_MILLIS}）时本款自己亮起，
-         * 不依赖「常驻灵动岛」开关；通知/下载/Automix 曲线仍按原优先级接管表面。</p>
-         */
-        MUSIC_CAPSULE("音乐胶囊");
+        PILL(0, "经典胶囊"),
+        COMPACT(2, "紧凑状态"),
+        LIQUID_GLASS(6, "液态玻璃"),
+        /** 回弹胶囊：弹簧尺寸、事件语义底色与多行通知堆叠。 */
+        BOUNCE(7, "回弹胶囊"),
+        /** 音乐胶囊：收起时显示歌词、音符和频谱；聊天展开卡由五款样式共用。 */
+        MUSIC_CAPSULE(8, "音乐胶囊");
 
+        private final int id;
         private final String displayName;
 
-        DynamicIslandStyle(String displayName) {
+        DynamicIslandStyle(int id, String displayName) {
+            this.id = id;
             this.displayName = displayName;
+        }
+
+        public int getId() {
+            return id;
         }
 
         public String getDisplayName() {
             return displayName;
         }
+
+        /** 已移除的 1/3/4/5 和未知 ID 统一迁移到默认的紧凑状态。 */
+        public static DynamicIslandStyle fromId(int id) {
+            for (DynamicIslandStyle style : values()) {
+                if (style.id == id) return style;
+            }
+            return COMPACT;
+        }
     }
 
     public static DynamicIslandStyle getStyle() {
-        DynamicIslandStyle[] styles = DynamicIslandStyle.values();
-        DynamicIslandStyle style = styles[HudConfig.clampInt(HudConfig.dynamicIslandStyle, 0, styles.length - 1)];
+        DynamicIslandStyle style = DynamicIslandStyle.fromId(HudConfig.dynamicIslandStyle);
         // 手机档：存档里选的是「液态玻璃」款时，读取兜底退回经典胶囊——真玻璃在安卓上
         // 整体禁用（见 GlassMobileTier），这款的折射亮带画出来只剩假玻璃兜底。只在内存里
         // 生效、不回写存档：桌面上这份配置仍然有效。
@@ -181,7 +161,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** 安全网：没有专属通道的持久卡片仍会自行结束。 */
     public static void cycleStyle() {
         DynamicIslandStyle[] styles = DynamicIslandStyle.values();
-        int index = HudConfig.clampInt(HudConfig.dynamicIslandStyle, 0, styles.length - 1);
+        int index = DynamicIslandStyle.fromId(HudConfig.dynamicIslandStyle).ordinal();
         // 手机档跳过「液态玻璃」款：轮换不能停在一条已经禁用的死样式上（与主题轮换
         // NCMTheme.next() 同一套规矩）。
         for (int step = 0; step < styles.length; step++) {
@@ -190,7 +170,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 break;
             }
         }
-        HudConfig.dynamicIslandStyle = index;
+        HudConfig.dynamicIslandStyle = styles[index].getId();
         HudConfig.save();
         publishNotice(IslandNoticeType.STYLE, "灵动岛样式", getStyleName());
     }
@@ -233,6 +213,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static final long TRANSCODE_STALL_TIMEOUT_MILLIS = 30_000L;
     /** 音量有独立的目标动画；它的轨道不会跳动或重启岛屿。 */
     private static final long DEFAULT_PERSISTENT_NOTICE_TIMEOUT_MILLIS = 30_000L;
+    /** Folia 分析可持续 120-180 秒；推理提示覆盖完整模型运行周期。 */
+    private static final long MODEL_INFERENCE_TIMEOUT_MILLIS = 240_000L;
     /** 绘制在普通游戏 HUD 之上。 */
     private static volatile long noticeDeadlineAt;
     private static volatile long noticeExpiresAt;
@@ -274,6 +256,27 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
      */
     private double animatedExpandedWidth = -1.0;
     private double animatedExpandedHeight = -1.0;
+    private double expansionFrom;
+    private double expansionClockTarget;
+    private double expansionElapsedMillis;
+    private double expansionDurationMillis;
+    private long expansionLastNanos;
+    private boolean expansionClockInitialized;
+    private float visibilityStart;
+    private double visibilityElapsedMillis;
+    private double visibilityDurationMillis;
+    private long visibilityLastNanos;
+    private boolean visibilityClockInitialized;
+    private boolean visibilityClockTarget;
+    private double previousMotionX = Double.NaN;
+    private double previousMotionY = Double.NaN;
+    private double previousMotionWidth = Double.NaN;
+    private double previousMotionHeight = Double.NaN;
+    private long previousMotionNanos;
+    private double motionBlurStrength;
+    private double motionVelocityX;
+    private double motionVelocityY;
+    private float previousMotionAlpha;
 
     /*
      * 以下一组状态只服务「回弹胶囊」一款样式。刻意不复用上面那条低通通道，也不给它加任何
@@ -293,46 +296,186 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** 本帧的秒级帧间隔；弹簧与底色渐变共用，一帧只能推进一次时间戳。 */
     private double bounceFrameDelta = 1.0 / 60.0;
 
-    /*
-     * 以下一组状态只服务「音乐胶囊」款（MUSIC_CAPSULE）。悬停展开迷你卡的状态机：
-     * 悬停驻留 → 展开；移开超时 / 暂停退休 / 通知接管 → 收起。展开后第一次按下交给
-     * {@link com.muoniumplayer.core.screens.ncm.MusicCardOverlay}（全透明输入浮层，
-     * 岛内搜索同款先例），岛继续负责绘制。
-     */
-    /** 迷你卡展开度 0..1，低通逼近目标；只影响本款的绘制与目标尺寸。 */
+    /** 五款收起样式共用聊天栏里的音乐展开卡；不会替换聊天 Screen。 */
+    private final MusicCardInteraction musicCardInteraction = new MusicCardInteraction();
+    private boolean previousMusicCardOwnsSurface;
+    private boolean previousCardTransitionActive;
+    private Object musicCardChatScreen;
     private double cardOpen;
     private boolean cardOpenTarget;
-    /** 悬停开始时刻；-1 = 不在悬停（含移开超时后）。 */
-    private long cardHoverSinceMs = -1L;
-    /** 鼠标最后落在卡/行上的时刻；配合移开宽限判定。 */
-    private long cardLastActiveMs;
-    /** 左键按下沿锁存：按住期间不重复触发浮层打开。 */
-    private boolean cardPressLatched;
-    /** 本帧迷你卡实际使用的缩放（已按屏幕可用宽高收口），目标计算与绘制共用。 */
     private float cardFittedScale = 1.0f;
-    /** 悬停驻留阈值；NeoRaven 同款手感取 300ms。 */
-    private static final long MUSIC_CARD_HOVER_DWELL_MS = 300L;
-    /** 鼠标移开后收起的宽限：来回划过胶囊不闪卡。 */
-    private static final long MUSIC_CARD_LEAVE_GRACE_MS = 800L;
-    /** 迷你卡展开期间的实际矩形（布局单位 x,y,w,h），供透明浮层做点击换算；null = 未展开。 */
+    private double cardBaseWidth = -1.0;
+    private double cardBaseHeight = -1.0;
+    private double cardReturnFromWidth = -1.0;
+    private double cardReturnFromHeight = -1.0;
+    private double cardReturnStart = 1.0;
+    private boolean previousCardOpening;
+    private boolean musicCardReturning;
+    private IslandAmbientStatus.Snapshot musicCardReturnAmbient = IslandAmbientStatus.EMPTY;
+    private double liveAnchorLocalWidth = -1.0;
+    private double liveAnchorLocalHeight = -1.0;
+    private final MusicCardMotionBlur musicCardMotionBlur = new MusicCardMotionBlur();
+    private long trackNoticeSession = Long.MIN_VALUE;
+    private long trackNoticeRevision = Long.MIN_VALUE;
+    private String trackNoticeKey;
+    /** 本帧真正画出的卡片矩形（布局单位 x,y,w,h,r），输入直接使用同一轮廓。 */
     private static volatile double[] MUSIC_CARD_BOUNDS;
+    private static volatile double[] MUSIC_CARD_ANCHOR_BOUNDS;
+    private static CloudMusic.PlaybackSnapshot musicCardDrawnSnapshot;
+    private static volatile boolean musicCardOwnsSurface;
 
-    /** 迷你卡此刻是否算展开（透明浮层据此决定去留）。 */
     public static boolean isMusicCardOpen() {
-        return INSTANCE.cardOpen > .35 && MUSIC_CARD_BOUNDS != null;
+        return musicCardOwnsSurface && INSTANCE.musicCardInteraction.canInteract() && MUSIC_CARD_BOUNDS != null;
     }
 
-    /** 迷你卡矩形（布局单位 x,y,w,h）；未展开返回 null。供透明浮层换算设计坐标。 */
     public static double[] musicCardBounds() {
-        return MUSIC_CARD_BOUNDS;
+        double[] bounds = MUSIC_CARD_BOUNDS;
+        return bounds == null ? null : bounds.clone();
     }
 
-    /** 收起迷你卡（Esc / 点外部 / 浮层被外部换屏时调用）。 */
+    /** Esc、点外部或外部换屏后，本次聊天会话不再自动重开。 */
     public static void collapseMusicCard() {
+        INSTANCE.musicCardInteraction.collapse();
         INSTANCE.cardOpenTarget = false;
-        INSTANCE.cardHoverSinceMs = -1L;
-        INSTANCE.cardLastActiveMs = 0L;
-        INSTANCE.cardPressLatched = false;
+        MusicCapsuleCard.INSTANCE.clearPointer();
+    }
+
+    /** Detect an audible session change before either HUD or Screen rendering gate runs. */
+    private static void startTrackNoticeIfNeeded() {
+        CloudMusic.PlaybackSnapshot playback = MusicCapsuleCard.currentSnapshot();
+        IslandVisibilityGate.Scene scene = IslandVisibilityGate.capture();
+        boolean chat = IslandVisibilityGate.isChatOpen();
+        boolean allowed = HudConfig.dynamicIslandEnabled && HudConfig.islandHoverExpand
+                && !playerSurfaceTransition && IslandVisibilityGate.allowTrackNoticeOverlay(scene, chat,
+                playerSurfaceTransition);
+        if (MusicCapsuleCard.trackNoticeVisible(playback)
+                && INSTANCE.trackNoticeRevision != MusicCapsuleCard.noticeRevision()) {
+            INSTANCE.trackNoticeRevision = MusicCapsuleCard.noticeRevision();
+            INSTANCE.trackNoticeSession = playback.sessionId;
+            INSTANCE.trackNoticeKey = playback.music.getStableKey();
+            if (!allowed) INSTANCE.musicCardInteraction.dismissEvent();
+            else {
+                if (!INSTANCE.musicCardInteraction.animationActive()) {
+                    boolean capsule = getStyle() == DynamicIslandStyle.MUSIC_CAPSULE;
+                    INSTANCE.liveAnchorLocalWidth = capsule ? MusicCapsuleCard.rowTargetWidth() : -1.0;
+                    INSTANCE.liveAnchorLocalHeight = capsule ? MusicCapsuleCard.ROW_HEIGHT : -1.0;
+                    INSTANCE.cardBaseWidth = -1.0;
+                    INSTANCE.cardBaseHeight = -1.0;
+                }
+                INSTANCE.musicCardInteraction.onTrackChanged(chat);
+                if (!chat && !INSTANCE.musicCardInteraction.eventLocked()) {
+                    INSTANCE.musicCardInteraction.startTrackNotice(MusicCardInteraction.TRACK_NOTICE_HOLD_MILLIS);
+                }
+            }
+        }
+        if (INSTANCE.musicCardInteraction.eventLocked()
+                && (!allowed || MusicCapsuleCard.pendingEndedWithoutPlayback())) {
+            INSTANCE.musicCardInteraction.dismissEvent();
+        }
+        if (playback.music != null) {
+            INSTANCE.trackNoticeSession = playback.sessionId;
+            INSTANCE.trackNoticeKey = playback.music.getStableKey();
+        }
+        // 准备态和可听升级属于同一展示事件，不二次起弹或清空当前姿态。
+    }
+
+    /** 不依赖绘制的失效维护：跳过覆盖层、换屏、失焦和资源重载也必须取消旧交互。 */
+    public static void maintainMusicCardContext() {
+        MusicCapsuleCard.observePlayback();
+        startTrackNoticeIfNeeded();
+        Object screen = IslandVisibilityGate.chatScreenIdentity();
+        boolean replaced = screen != INSTANCE.musicCardChatScreen;
+        INSTANCE.musicCardChatScreen = screen;
+        IslandVisibilityGate.Scene scene = IslandVisibilityGate.capture();
+        boolean valid = HudConfig.dynamicIslandEnabled && HudConfig.islandHoverExpand
+                && !playerSurfaceTransition && IslandVisibilityGate.allowTrackNoticeOverlay(scene,
+                IslandVisibilityGate.isChatOpen(), playerSurfaceTransition)
+                && MusicCapsuleCard.frameHasMusic();
+        if (!valid) {
+            INSTANCE.musicCardInteraction.reset();
+            INSTANCE.cardOpen = 0.0;
+            INSTANCE.cardOpenTarget = false;
+            musicCardOwnsSurface = false;
+            MUSIC_CARD_BOUNDS = null;
+            musicCardDrawnSnapshot = null;
+            MUSIC_CARD_ANCHOR_BOUNDS = null;
+            INSTANCE.cardBaseWidth = -1.0;
+            INSTANCE.cardBaseHeight = -1.0;
+            INSTANCE.cardReturnFromWidth = -1.0;
+            INSTANCE.cardReturnFromHeight = -1.0;
+            INSTANCE.previousCardTransitionActive = false;
+            INSTANCE.musicCardReturning = false;
+            INSTANCE.musicCardReturnAmbient = IslandAmbientStatus.EMPTY;
+            INSTANCE.musicCardMotionBlur.reset();
+            INSTANCE.previousMusicCardOwnsSurface = false;
+            MusicCapsuleCard.INSTANCE.clearPointer();
+            MusicCapsuleCard.INSTANCE.cancelConfirmation();
+        } else if (replaced && !INSTANCE.musicCardInteraction.eventLocked()) {
+            if (INSTANCE.musicCardInteraction.animationActive() && (screen != null || !scene.anyScreenOpen)) {
+                // 同一张正在收放的卡片重进聊天时保留姿态；关闭聊天只改目标，不清掉尾帧。
+                if (screen == null) INSTANCE.musicCardInteraction.collapse();
+            } else {
+                INSTANCE.musicCardInteraction.reset();
+                INSTANCE.cardOpen = 0.0;
+                INSTANCE.cardOpenTarget = false;
+                musicCardOwnsSurface = false;
+                MUSIC_CARD_BOUNDS = null;
+                MUSIC_CARD_ANCHOR_BOUNDS = null;
+            }
+            MusicCapsuleCard.INSTANCE.clearPointer();
+            MusicCapsuleCard.INSTANCE.cancelConfirmation();
+        }
+        if (musicCardSurfaceBlockedNow()) {
+            INSTANCE.cardBaseWidth = -1.0;
+            INSTANCE.cardBaseHeight = -1.0;
+            INSTANCE.musicCardMotionBlur.reset();
+            INSTANCE.musicCardInteraction.pauseTrackNotice();
+            MusicCapsuleCard.INSTANCE.clearPointer();
+            MusicCapsuleCard.INSTANCE.cancelConfirmation();
+        } else if (INSTANCE.musicCardInteraction.eventLocked()) {
+            INSTANCE.musicCardInteraction.resumeTrackNotice();
+        }
+    }
+
+    /** 卡片请求、自动切歌与收起尾巴统一拥有最高展示位。 */
+    private static boolean musicCardClaimsSurface() {
+        IslandVisibilityGate.Scene scene = IslandVisibilityGate.capture();
+        boolean chat = IslandVisibilityGate.isChatOpen();
+        boolean enabled = HudConfig.dynamicIslandEnabled && HudConfig.islandHoverExpand
+                && !playerSurfaceTransition && !playerAbsorbImpact
+                && IslandVisibilityGate.allowTrackNoticeOverlay(scene, chat, playerSurfaceTransition);
+        return INSTANCE.musicCardInteraction.claimsSurface(enabled, chat, MusicCapsuleCard.frameHasMusic(),
+                HudConfig.islandExpandTrigger);
+    }
+
+    private static boolean musicCardIsPresented() {
+        maintainMusicCardContext();
+        return musicCardClaimsSurface();
+    }
+
+    /** 聊天界面只请求岛的覆盖层；卡片收回尾帧也要在聊天关闭后继续绘制。 */
+    public static boolean needsChatOverlay() {
+        maintainMusicCardContext();
+        return HudConfig.dynamicIslandEnabled && HudConfig.islandHoverExpand
+                && (IslandVisibilityGate.isChatOpen() && MusicCapsuleCard.frameHasMusic()
+                || INSTANCE.musicCardInteraction.animationActive() && !playerSurfaceTransition
+                && IslandVisibilityGate.allowSurface(IslandVisibilityGate.capture()));
+    }
+
+    /** 切歌提示覆盖 HUD 与聊天栏，仍遵守非游戏屏幕及 Tab 门禁。 */
+    public static boolean needsTrackNoticeOverlay() {
+        maintainMusicCardContext();
+        return HudConfig.dynamicIslandEnabled && HudConfig.islandHoverExpand
+                && INSTANCE.musicCardInteraction.trackNoticeActive()
+                && IslandVisibilityGate.allowTrackNoticeOverlay(IslandVisibilityGate.capture(),
+                IslandVisibilityGate.isChatOpen(), playerSurfaceTransition);
+    }
+
+    /** 只在卡片展开提示可见时要求采集真背景。 */
+    public static boolean needsMusicCardBackdrop() {
+        return HudConfig.dynamicIslandEnabled && HudConfig.islandHoverExpand
+                && INSTANCE.cardOpen > .002 && !playerSurfaceTransition
+                && IslandVisibilityGate.allowSurface(IslandVisibilityGate.capture());
     }
 
     /** 将播放器表面移交到岛屿并启动撞击响应。 */
@@ -363,6 +506,15 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     // 布局轴几何 + 自带的 correction 矩阵层：一单位 = 恒定物理像素，与 GUI Scale 档位无关。
     // 括号由本方法自己进出（owned 守卫防嵌套），调用方零改动；HUD 编辑器的预览路径
     // （renderEditorPreview）不走这里 —— 编辑器已提供同一层外层矩阵，再包就是双乘。
+    /** HUD 与 Screen 二选一绘制；切歌时不能在聊天栏下方再合成旧的一帧卡片。 */
+    public static void renderHudOverlay() {
+        maintainMusicCardContext();
+        if (!IslandVisibilityGate.capture().anyScreenOpen) {
+            render();
+            if (!musicCardClaimsSurface()) AutomixTransitionAnimation.render();
+        }
+    }
+
     public static void render() {
         // 完整字体就绪后在渲染线程热接入；转场期间延后，播放器稳定帧也维护同一钩子。
         if (!com.muoniumplayer.core.screens.ncm.PlayerIslandTransition.needsFrameBudget()) {
@@ -389,9 +541,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         if (com.muoniumplayer.core.screens.ncm.PlayerIslandTransition.isBusy()) {
             return;
         }
-        playerLayoutPrewarmed = true;
         try {
             NCMScreen.prewarmLayout();
+            playerLayoutPrewarmed = NCMScreen.isLayoutPrewarmComplete();
         } catch (Throwable t) {
             // 预热永远不允许影响 HUD；真正打开播放器时 initGui 仍会走完整布局。
             System.err.println("[MuoniumPlayer] 播放器布局预热失败: " + t);
@@ -404,10 +556,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         if (playerSurfaceTransition) {
             pauseNoticeClock();
             INSTANCE.completionVisibleClock.pause();
-            return false;
+            return needsTrackNoticeOverlay();
         }
         return INSTANCE.visibility > .001f || playerAbsorbImpact || isDownloadActive()
-                || noticeType != IslandNoticeType.NONE || AutomixTransitionAnimation.islandFrame() != null;
+                || noticeType != IslandNoticeType.NONE || AutomixTransitionAnimation.islandFrame() != null
+                || needsTrackNoticeOverlay();
     }
 
     /** 紧凑岛屿的基础颜色，在 t=0 时被播放器形变使用。 */
@@ -441,10 +594,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         INSTANCE.ambientSampledAt = 0L;
         INSTANCE.animatedExpandedWidth = -1.0;
         INSTANCE.animatedExpandedHeight = -1.0;
+        INSTANCE.resetMotionBlur();
+        INSTANCE.resetExpansionClock();
         INSTANCE.cardOpen = 0.0;
         INSTANCE.cardOpenTarget = false;
-        INSTANCE.cardHoverSinceMs = -1L;
+        INSTANCE.musicCardInteraction.reset();
         MUSIC_CARD_BOUNDS = null;
+        musicCardOwnsSurface = false;
     }
 
     /** 即使没有正在进行的下载，HUD 编辑器也使用此实时尺寸预览。 */
@@ -463,7 +619,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         INSTANCE.shownAt = 0L;
         INSTANCE.cardOpen = 0.0;
         INSTANCE.cardOpenTarget = false;
+        INSTANCE.musicCardInteraction.reset();
         MUSIC_CARD_BOUNDS = null;
+        musicCardOwnsSurface = false;
     }
 
     /** 在使用紧凑图标后，于全局岛屿中显示当前主题。 */
@@ -495,10 +653,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double localWidth = bounceStyle
                 ? BounceIslandMath.SIDE_PADDING * 2.0 + BounceIslandMath.LOGO_AREA_WIDTH
                 : (style == DynamicIslandStyle.COMPACT ? 46.0
-                : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0
                 : (style == DynamicIslandStyle.MUSIC_CAPSULE
                 ? (MusicCapsuleCard.rowContentActive() ? MusicCapsuleCard.rowTargetWidth() : COMPACT_WIDTH)
-                : COMPACT_WIDTH)));
+                : COMPACT_WIDTH));
         double localHeight = bounceStyle ? BounceIslandMath.ROW_HEIGHT
                 : (style == DynamicIslandStyle.COMPACT ? 14.0
                 : (style == DynamicIslandStyle.MUSIC_CAPSULE
@@ -548,20 +705,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             BounceIslandMath.Tint tint = INSTANCE.bounceTint;
             return BounceIslandMath.argb(255, tint.redChannel(), tint.greenChannel(), tint.blueChannel());
         }
-        if (style == DynamicIslandStyle.GLASS) return NCMTheme.getAccentColor();
-        if (style == DynamicIslandStyle.CARD) return INSTANCE.hexColor(.028f, .034f, .046f, 1f);
-        if (style == DynamicIslandStyle.SYSTEM_CARD) return INSTANCE.hexColor(.025f, .031f, .043f, 1f);
-        if (style == DynamicIslandStyle.MUSIC_FOCUS) return INSTANCE.hexColor(.010f, .014f, .024f, 1f);
         if (style == DynamicIslandStyle.LIQUID_GLASS) return INSTANCE.hexColor(.050f, .064f, .098f, 1f);
         return INSTANCE.hexColor(.012f, .014f, .020f, 1f);
     }
 
     private static double compactRadius(DynamicIslandStyle style, double height) {
         if (style == DynamicIslandStyle.BOUNCE) return BounceIslandMath.pillRadius(height);
-        if (style == DynamicIslandStyle.SYSTEM_CARD) return Math.min(11.0, height * .25);
-        if (style == DynamicIslandStyle.MUSIC_FOCUS) return Math.min(14.0, height * .31);
         if (style == DynamicIslandStyle.LIQUID_GLASS) return Math.min(16.0, height * .40);
-        if (style == DynamicIslandStyle.CARD) return Math.min(12.0, height * .30);
         return height * .5;
     }
 
@@ -873,7 +1023,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
      */
     public static void finishModelInference(String trackName, String modelNames, long elapsedMillis) {
         completePersistentNotice(IslandNoticeType.MODEL_INFERENCE, IslandNoticeType.MODEL_INFERENCE_SUCCESS,
-                "模型推理完成", safeNoticeValue(trackName, "当前歌曲") + " · "
+                "模型推理完成", "下一首就绪 · " + safeNoticeValue(trackName, "当前歌曲") + " · "
                         + safeNoticeValue(modelNames, "Folia 模型") + " · "
                         + Math.max(0L, elapsedMillis) + " ms",operationKey(IslandNoticeType.MODEL_INFERENCE,trackName));
     }
@@ -932,72 +1082,39 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(IslandNoticeType.PLAYBACK_ERROR, "播放失败", safeSong + " · " + safeReason);
     }
 
-    /**
-     * 网易云上报进行中的提示。刻意和上报结果同属最低优先级并走排队通道：它是后台遥测，
-     * 不能抢占任何用户主动触发的反馈，也不做 persistent（否则会插队并需要超时兜底）。
-     */
+    /** 后台遥测状态保持静默，不占用播放反馈位。 */
     public static void showNeteaseUploadStarted(String label) {
-        publishNotice(IslandNoticeType.NETEASE_UPLOADING, safeNoticeValue(label, "网易云上报"),
-                "正在上报到网易云客户端");
     }
 
-    // 网易云收听时长上报属于后台遥测数据。让它们排在
+    /** 后台遥测成功无需占用可见提示位。 */
     public static void showRecentPlayUploadSuccess(long elapsedMillis) {
-        publishNotice(IslandNoticeType.RECENT_PLAY_SUCCESS, "听歌历史上报",
-                "最近播放上报成功 " + Math.max(0L, elapsedMillis) + "ms");
     }
 
+    /** 后台遥测失败记入日志，不和播放错误争夺灵动岛展示。 */
     public static void showRecentPlayUploadFailure(long elapsedMillis, String reason) {
-        publishNotice(IslandNoticeType.RECENT_PLAY_ERROR, "听歌历史上报",
-                "最近播放上报失败 " + Math.max(0L, elapsedMillis) + "ms · "
-                        + safeNoticeValue(reason, "请求失败"));
     }
 
-    // 所有可见/面向用户的通知之后，而不是允许它们打断它。
+    /** 听歌时长上报只属后台遥测，不覆盖播放状态。 */
     public static void showListeningDurationUploadSuccess(int playedSeconds, long elapsedMillis) {
-        publishNotice(IslandNoticeType.LISTENING_DURATION_SUCCESS, "听歌时长上报",
-                "听歌时长上报成功 时长" + Math.max(0, playedSeconds) + "秒 "
-                        + Math.max(0L, elapsedMillis) + "ms");
     }
 
+    /** 上报失败仍由日志/下次重试处理，不与播放错误混淆。 */
     public static void showListeningDurationUploadFailure(int playedSeconds, long elapsedMillis, String reason) {
-        publishNotice(IslandNoticeType.LISTENING_DURATION_ERROR, "听歌时长上报",
-                "听歌时长上报失败 时长" + Math.max(0, playedSeconds) + "秒 "
-                        + Math.max(0L, elapsedMillis) + "ms · "
-                        + safeNoticeValue(reason, "请求失败"));
     }
     // 后到的面向用户通知会占用活动槽位；把遥测卡片
     public static void showAutomixHandover(String trackName) {
-        // 标题带扫光（见 renderNotice 的 shimmerTitle），排队方式仍是普通通知。
-        // 但它多了一条时效：这张卡片说的是「此刻正在过渡」，重叠期一结束就作废。与其在过渡早已
-        // 完成之后才从队尾冒出来误导人，不如干脆不显示 —— 这就是「不抢优先级，但也不留过期卡」。
-        publishNotice(IslandNoticeType.AUTOMIX_BLENDING, "智能过渡中",
-                safeNoticeValue(trackName, "下一首"), false,
-                AutomixSettings.getOverlapMillis() + AUTOMIX_BLENDING_TTL_SLACK_MILLIS);
     }
 
-    /** 手动切歌先反馈加载意图，实际交接前仍保留旧歌及其播放时钟。 */
+    /** 点击“下一首”时的加载阶段保持当前表面；起播后由歌曲卡展示结果。 */
     public static void showManualTrackLoading(String trackName) {
-        publishNotice(IslandNoticeType.AUTOMIX, "正在准备切歌",
-                safeNoticeValue(trackName, "所选歌曲") + " · 原曲继续播放，就绪后淡入", false, 3_000L);
     }
 
-    /**
-     * 下一首已经解码好、静静等在备用轨上。
-     *
-     * <p>只报歌名 + 一句结论，同样不带交接计划里那串参数：这条的作用是让人知道「下一首会平滑接进来」，
-     * 而不是解释它将怎么接。</p>
-     */
+    /** 下一曲已预备/已就绪仅是内部播放状态，不单独占用灵动岛提示位。 */
     public static void showAutomixArmed(String trackName) {
-        publishNotice(IslandNoticeType.AUTOMIX, "下一首已就绪",
-                safeNoticeValue(trackName, "下一首") + " · 将无缝接入");
     }
 
-    // 用户配置的队列间隔，而非单通知完成保持时长。
+    /** 用户主动加入下一首时保留一次确认；后台预备状态不走此通知。 */
     public static void showQueuedNext(String trackName, int pending) {
-        // 这里说的「第几位」是<b>排在当前这首之后的第几位</b>，不是列表行号：曲目插在待播段末尾，
-        // 而当前播放的那一首仍然占着它前面那一格。写成「队列第 N 位」会被读成行号，用户按行号去找
-        // 下一首就永远差一格。
         String detail = pending > 1
                 ? "已排在当前这首之后第 " + pending + " 位 · 播完后回到歌单"
                 : "下一首就播 · 播完后回到歌单";
@@ -1005,43 +1122,28 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 safeNoticeValue(trackName, "所选歌曲") + " · " + detail);
     }
 
-    /**
-     * 搜索结果起播后，队列已经接上"最近播放"的提示。普通通道：歌已经在放了，这只是解释后面会播什么。
-     */
+    /** 已接入最近播放是队列后台变化，保持静默。 */
     public static void showSearchQueueFromRecentPlays(int count) {
-        // 带时效（见 SEARCH_QUEUE_NOTICE_TTL_MILLIS）：这条说的是一次已经过去的点击，
-        // 迟了好几秒再冒出来就不是解释而是惊吓，用户那时候早就换成别的队列了。
-        publishNotice(IslandNoticeType.PLAY_NEXT, "已接入最近播放",
-                Math.max(0, count) + " 首 · 播完当前歌曲后继续", false,
-                SEARCH_QUEUE_NOTICE_TTL_MILLIS);
     }
 
-    /**
-     * 私人 FM 已经把下一首推荐预备进队列的提示。普通通道：这只是解释接下来会播什么，必须老实排在用户
-     * 主动触发的反馈后面，不能抢占正在显示的下载 / 转码卡片。
-     */
+    /** 私人 FM 的后台预取属于内部状态；真正起播时由音乐卡片统一反馈。 */
     public static void showPersonalFmPrefetched(String trackName) {
-        publishNotice(IslandNoticeType.PLAY_NEXT, "已预备下一首",
-                safeNoticeValue(trackName, "下一首推荐") + " · 私人 FM 将无缝接入");
     }
 
-    /** 音量和持久进度/状态卡片保持即时，而不排队。 */
+    /** 通知队列结果不需要跟随当前播放反复提示。 */
     public static void showQueuedNextStarted(String trackName) {
-        publishNotice(IslandNoticeType.PLAY_NEXT, "开始播放",
-                safeNoticeValue(trackName, "所选歌曲") + " · 当前没有播放队列，已直接播放");
     }
 
-    /**
-     * 全局快捷键切换暂停/继续后的提示。刻意用普通通道（非 persistent）：这只是一次状态确认，必须
-     * 老实排在用户触发的其它反馈后面，不能抢占正在显示的下载/转码卡片。
-     */
+    /** 音乐卡片可见时不重复弹出状态确认；卡片未展示时保留快捷键反馈。 */
     public static void showPlaybackPaused(String trackName) {
+        if (musicCardIsPresented()) return;
         publishNotice(IslandNoticeType.PLAYBACK_TOGGLE, "已暂停",
                 safeNoticeValue(trackName, "当前播放") + " · 再按一次继续");
     }
 
-    /** 与 {@link #showPlaybackPaused(String)} 成对，报告播放已恢复。 */
+    /** 与暂停通知相同：播放状态已由音乐卡片呈现时静默降级。 */
     public static void showPlaybackResumed(String trackName) {
+        if (musicCardIsPresented()) return;
         publishNotice(IslandNoticeType.PLAYBACK_TOGGLE, "继续播放",
                 safeNoticeValue(trackName, "当前播放"));
     }
@@ -1063,35 +1165,21 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 safeNoticeValue(trackName, "正在按环境选歌"));
     }
 
-    // 未知通道：把岛屿交回等待中的通知，而不是
+    /** 播放过程中的 GD 解析保持静默；成功起播由音乐卡片反馈，失败仍发错误提示。 */
     public static void showGdSourceResolving(String sourceName) {
-        String source = safeNoticeValue(sourceName, "GD 音乐源");
-        publishOperation(IslandNoticeType.GD_SOURCE_LOADING, "GD音乐台获取链接",
-                "正在连接 " + source, "current");
     }
 
+    /** GD 播放流已解析；实际起播后音乐卡片显示曲目与来源，不另发成功提示。 */
     public static void showGdSourceResolved(String sourceName, String format) {
-        String source = safeNoticeValue(sourceName, "GD 音乐源");
-        String streamFormat = safeNoticeValue(format, "未知").toUpperCase(java.util.Locale.ROOT);
-        completePersistentNotice(IslandNoticeType.GD_SOURCE_LOADING, IslandNoticeType.GD_SOURCE_SUCCESS,
-                "音频直链已获取", source + " · " + streamFormat + " · 可开始播放",
-                gdSourceChannelKey());
-        // 卡住一张本身没有终止消息的卡片。
-        /** 持久刷新和 GD 链接卡片有独立的超时/完成通道。 */
-        publishNotice(IslandNoticeType.GD_SOURCE_HEALTHY, "当前音源正常",
-                source + " · 当前 API 已返回可播放链接");
+        completePersistentNoticeSilently(IslandNoticeType.GD_SOURCE_LOADING, gdSourceChannelKey());
     }
 
-    // 长曲目可能解码数分钟，因此只有停滞的解码器才会结束卡片。
+    /** GD 解析成功不再抢占曲目展示；来源由播放卡片说明。 */
     public static void showGdSearchFallback(String requestedSource, String servedSource,
                                             boolean requestedSourceFailed) {
-        publishNotice(IslandNoticeType.GD_SOURCE_HEALTHY, "音源已自动回退",
-                safeNoticeValue(requestedSource, "所选音源")
-                        + (requestedSourceFailed ? " 暂不可用 · 已用 " : " 无匹配结果 · 已用 ")
-                        + safeNoticeValue(servedSource, "备用音源") + " 返回结果");
     }
 
-    /** 每张实时状态卡片都需要有限的时限；未列出的则回退到默认值。 */
+    /** 搜索时所选音源与回退音源均不可用；这是可操作的播放错误，保留提示。 */
     public static void showGdSearchFailure(String requestedSource, String reason) {
         publishNotice(IslandNoticeType.GD_SOURCE_ERROR, "音源搜索失败",
                 safeNoticeValue(requestedSource, "所选音源") + " · "
@@ -1106,22 +1194,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
 
-    /**
-     * 网易云灰色歌曲解灰：开始找第三方源。
-     *
-     * <p>走普通通知通道（不抢队、不做常驻）：这一步之前官方链路已经失败了，用户只需要知道
-     * 播放器还在尝试，不该压掉正在展示的别的卡片。</p>
-     */
+    /** 网易云解灰搜索属于取流内部过程，成功/失败结果按最终起播或错误路径展示。 */
     public static void showNeteaseUnblockSearching(String trackName) {
-        publishNotice(IslandNoticeType.GD_SOURCE_LOADING, "正在尝试解灰",
-                safeNoticeValue(trackName, "当前歌曲") + " · 官方链路无可播放流");
     }
 
-    /** 网易云灰色歌曲解灰成功，说清是哪一家给的流。 */
+    /** 解灰成功由音乐卡片展示来源；不单独弹出状态提示。 */
     public static void showNeteaseUnblocked(String trackName, String sourceLabel, String format) {
-        publishNotice(IslandNoticeType.GD_SOURCE_SUCCESS, "已解灰 · " + safeNoticeValue(sourceLabel, "第三方源"),
-                safeNoticeValue(trackName, "当前歌曲") + " · "
-                        + safeNoticeValue(format, "未知").toUpperCase(java.util.Locale.ROOT));
     }
 
     /** 解灰也没找到；随后由既有的「没有可用音频源」流程停下等用户操作。 */
@@ -1130,16 +1208,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 safeNoticeValue(trackName, "当前歌曲") + " · 第三方源没有匹配到可播放版本");
     }
 
-    /** 跨平台换源：正在按曲名 / 艺人在别的平台找真正的替身曲目。 */
+    /** 后台换源搜索过程保持静默，真实起播时以音乐卡片展示结果。 */
     public static void showCrossSourceSearching(String trackName) {
-        publishNotice(IslandNoticeType.GD_SOURCE_LOADING, "正在换源",
-                safeNoticeValue(trackName, "当前歌曲") + " · 到其他音乐平台匹配这首歌");
     }
 
-    /** 换源成功：说的是换到了哪家、换成了哪一条曲目。 */
+    /** 换源成功并入下一次真实起播卡片；失败仍独立通知。 */
     public static void showCrossSourceSwitched(String trackName, String sourceLabel) {
-        publishNotice(IslandNoticeType.GD_SOURCE_SUCCESS, "已换源 · " + safeNoticeValue(sourceLabel, "其他平台"),
-                safeNoticeValue(trackName, "当前歌曲"));
     }
 
     /** 换源失败：带上为什么没换成，随后由既有的失败流程停下等用户操作。 */
@@ -1216,6 +1290,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         IslandNoticeType safeType = type == null ? IslandNoticeType.NONE : type;
         String safeTitle = safeNoticeValue(title, "状态");
         String safeValue = safeNoticeValue(value, "—");
+        boolean capsuleInferenceStatus = getStyle() == DynamicIslandStyle.MUSIC_CAPSULE
+                && AutomixSettings.isModelInferenceStatusEnabled();
+        if (IslandNoticeRules.suppressAuxiliaryNotice(safeType.name(), safeTitle,
+                HudConfig.islandAuxiliaryNotices, capsuleInferenceStatus)) return;
         long now = System.currentTimeMillis();
         long expiresAt = ttlMillis > 0L ? now + ttlMillis : 0L;
         if (isLowestPriorityNotice(safeType)) {
@@ -1361,6 +1439,17 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
     // 让阴影贴合岛屿自身的圆角轮廓。之前展开的、
+    private static void completePersistentNoticeSilently(IslandNoticeType loadingType, String channelKey) {
+        long now = System.currentTimeMillis();
+        synchronized (NOTICE_QUEUE_LOCK) {
+            dropQueuedOperationLocked(channelKey);
+            if (noticeType != loadingType || !noticePersistent || !noticeChannelKey.equals(channelKey)) return;
+            QueuedNotice next = pollNextNoticeLocked(now);
+            if (next != null) restoreQueuedNoticeLocked(next, now);
+            else publishActiveNoticeLocked(IslandNoticeType.NONE, "", "", false, false, now);
+        }
+    }
+
     private static NoticePriority noticePriority(IslandNoticeType type, boolean persistent) {
         if (isLowestPriorityNotice(type)) return NoticePriority.LOW;
         if (isHighPriorityNotice(type)) return NoticePriority.HIGH;
@@ -1588,6 +1677,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         if (type == IslandNoticeType.GD_SOURCE_LOADING) return GD_SOURCE_NOTICE_TIMEOUT_MILLIS;
         if (type == IslandNoticeType.PLAYLIST_TRACK_ADDING) return PLAYLIST_TRACK_ADD_NOTICE_TIMEOUT_MILLIS;
         if (type == IslandNoticeType.TRANSCODING) return TRANSCODE_STALL_TIMEOUT_MILLIS;
+        if (type == IslandNoticeType.MODEL_INFERENCE) return MODEL_INFERENCE_TIMEOUT_MILLIS;
         return DEFAULT_PERSISTENT_NOTICE_TIMEOUT_MILLIS;
     }
     private static final class QueuedNotice {
@@ -1662,11 +1752,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         downloading = false;
     }
 
-    /**
-     * MUSIC_FOCUS 风格的原创音乐卡片配图。它刻意使用图元 OpenGL 形状而非 Android
-     * 资源：旋转的强调色光带让紧凑和展开状态感觉相连，同时对 Minecraft 1.8.9 的
-     * 固定功能渲染管线保持安全。
-     */
+    /** 清除本次下载的进度与完成停留状态。 */
     public static void cancelDownload() {
         downloadProgress = 0.0;
         downloadStartedAt = 0L;
@@ -1682,7 +1768,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             suppressPlayerEntryAnimation = false;
         }
         advanceQueuedNotice(now);
-        if (playerSurfaceTransition) { pauseNoticeClock(); completionVisibleClock.pause(); return; }
+        if (playerSurfaceTransition) {
+            pauseNoticeClock();
+            completionVisibleClock.pause();
+            musicCardOwnsSurface = false;
+            MusicCapsuleCard.INSTANCE.cancelConfirmation();
+            return;
+        }
         double rawProgress = DynamicIslandMath.clamp01(downloadProgress);
         boolean activeDownload = downloading;
         final double sourceTranscodeProgress;
@@ -1713,37 +1805,43 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             ambientBlend = 0f;
             animatedExpandedWidth = -1.0;
             animatedExpandedHeight = -1.0;
+            resetMotionBlur();
+            resetExpansionClock();
             previousAlwaysOn = false;
             ambientSnapshot = IslandAmbientStatus.EMPTY;
             ambientSampledAt = 0L;
             cardOpen = 0.0;
             cardOpenTarget = false;
-            cardHoverSinceMs = -1L;
+            musicCardInteraction.reset();
             MUSIC_CARD_BOUNDS = null;
+            musicCardDrawnSnapshot = null;
+            MUSIC_CARD_ANCHOR_BOUNDS = null;
+            musicCardOwnsSurface = false;
+            previousMusicCardOwnsSurface = false;
+            musicCardMotionBlur.reset();
             pauseNoticeClock();
             completionVisibleClock.pause();
             return;
         }
 
         boolean enabled = HudConfig.dynamicIslandEnabled;
-        // 音乐胶囊款：「正在播放」本身就是这款的常驻内容——有歌在放（或暂停未退休）时本款
-        // 自己亮起，不依赖「常驻灵动岛」开关；场合门控（播放器界面/Tab 列表）照旧生效。
-        MusicCapsuleCard.observePlayback();
+        // Playback is sampled once by maintainMusicCardContext before any HUD/Screen gate.
+        CloudMusic.PlaybackSnapshot playback = MusicCapsuleCard.currentSnapshot();
+        MusicCapsuleCard.updateTrackNoticePlayback(playback);
+        boolean chatMusic = enabled && HudConfig.islandHoverExpand && IslandVisibilityGate.isChatOpen()
+                && playback.music != null;
         boolean musicCapsuleRow = enabled && getStyle() == DynamicIslandStyle.MUSIC_CAPSULE
                 && MusicCapsuleCard.rowContentActive();
         boolean alwaysOn = enabled
-                && (HudConfig.dynamicIslandAlwaysOn || musicCapsuleRow)
+                && (HudConfig.dynamicIslandAlwaysOn || musicCapsuleRow || chatMusic)
                 && (IslandVisibilityGate.allowAmbient(scene) || playerAbsorbImpact);
         /*
-         * 播放器交接回来的那一小段（PLAYER_ABSORB_FEEDBACK_MS）是岛唯一「没有任何事件也必须显示」
-         * 的场合——下面有一句 if (playerAbsorbImpact) shouldShow = enabled。常驻开着时这段走的
-         * 就是正常的常驻内容；常驻<b>关</b>着时上面那条 alwaysOn 是 false，ambientSnapshot 压根
-         * 没采样，内容于是落进 createIslandLayout 的下载兜底：表现就是「一关播放器，岛里冒出
-         * 正在下载 0 b/s」。这里给交接单独采一次「正在播放」，不参与状态页轮换。
+         * 播放器交接回来的那一小段是无事件也必须显示岛的场合。
+         * 常驻关闭时单独采一次「正在播放」，避免落入下载兜底文案。
          */
         boolean handoffAmbient = enabled && !alwaysOn && playerAbsorbImpact;
         // 常驻内容按固定节拍采样：帧率和延迟每帧都在抖，直接跟帧读会让数字闪烁得没法看。
-        if (alwaysOn || handoffAmbient) {
+        if (alwaysOn || handoffAmbient || musicCardClaimsSurface()) {
             if (ambientSampledAt <= 0L || now - ambientSampledAt >= IslandAmbientStatus.SAMPLE_INTERVAL_MILLIS) {
                 ambientSnapshot = handoffAmbient
                         ? IslandAmbientStatus.captureHandoff(now)
@@ -1755,7 +1853,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             ambientSampledAt = 0L;
         }
         // 已经稳定停在屏幕上的常驻岛必须锁住入场动画，否则每来一条通知都要重播一次缩放入场。
-        boolean suppressEntry = IslandAmbientStatus.suppressEntry(alwaysOn, visibility);
+        boolean suppressEntry = musicCardClaimsSurface() || IslandAmbientStatus.suppressEntry(alwaysOn, visibility);
         boolean alwaysOnJustEnabled = alwaysOn && !previousAlwaysOn;
         previousAlwaysOn = alwaysOn;
         if (alwaysOnJustEnabled && !suppressEntry) {
@@ -1883,79 +1981,86 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 && sourceNoticeShownAt > 0L
                 && now >= sourceNoticeShownAt
                 && (sourceNoticeExpiresAt <= 0L || now < sourceNoticeExpiresAt);
-        // 曲线是岛的独立内容通道，不发布通知，也不丢弃下载/错误/用户操作的展示位。
-        // 与播放相关的提示可让位给曲线；其他通知照常优先，混音时钟不会被它们重置。
-        final AutomixIslandRenderer.Frame mixFrame = enabled && !activeDownload && !holdingCompletion
+        double frameDelta = Math.min(4.0, Math.max(0.0, RenderSystem.getFrameDeltaTime()));
+        boolean surfaceBlocked = musicCardSurfaceBlockedNow();
+        tickMusicCardState(surfaceBlocked, frameDelta * 10.0);
+        final boolean cardOwnsFrame = musicCardClaimsSurface();
+        // 通道事实仍正常观察；音乐卡拥有表面时只暂停它们的展示与计时。
+        final AutomixIslandRenderer.Frame mixFrame = !cardOwnsFrame && enabled && !activeDownload && !holdingCompletion
                 && (!activeNotice || allowsAutomixCurves(sourceNoticeType))
                 ? AutomixTransitionAnimation.islandFrame() : null;
         boolean mixMode = mixFrame != null;
-        boolean noticeMode=IslandNoticeRules.ownsSurface(activeNotice,
-                noticePriority(sourceNoticeType,sourceNoticePersistent).rank, activeDownload, holdingCompletion);
-        // 常驻只是多了一条"没有任何事件也留在屏幕上"的显示理由；下载、完成停留、通知这三条
-        // 原有理由与判定顺序都没有改动，所以通知排队的时序与关闭常驻时完全一致。
-        // 交接段、且下载/完成/通知这三条真都没在发生时，才让「正在播放」顶上；三者任一在发生
-        // 都按原来的内容走，交接不抢它们的展示位。采到的快照是 EMPTY（没歌）时
-        // expansionTarget 会返回 0，于是收成紧凑胶囊，而不是展开一张假的下载卡片。
-        boolean handoffShowsAmbient = handoffAmbient && !activeDownload && !holdingCompletion
-                && !activeNotice;
-        boolean ambientMode = !mixMode && (handoffShowsAmbient || IslandAmbientStatus.isAmbient(enabled, alwaysOn,
-                activeDownload, holdingCompletion, activeNotice));
+        int sourceNoticePriority = noticePriority(sourceNoticeType, sourceNoticePersistent).rank;
+        boolean noticeMode = IslandNoticeRules.ownsSurface(activeNotice, sourceNoticePriority,
+                activeDownload, holdingCompletion, cardOwnsFrame);
+        boolean handoffShowsAmbient = handoffAmbient && !activeDownload && !holdingCompletion && !activeNotice;
+        boolean ambientMode = !cardOwnsFrame && !mixMode && (handoffShowsAmbient
+                || IslandAmbientStatus.isAmbient(enabled, alwaysOn, activeDownload, holdingCompletion, noticeMode));
         IslandAmbientStatus.Snapshot ambient = ambientSnapshot;
-        boolean shouldShow = IslandAmbientStatus.shouldShow(enabled, alwaysOn, activeDownload,
+        boolean shown = cardOwnsFrame ? enabled : IslandAmbientStatus.shouldShow(enabled, alwaysOn, activeDownload,
                 holdingCompletion, activeNotice);
-        // 即使用户不使用常驻灵动岛，关闭的播放器也必须落在某个
-        // 位置上。在撞击过程中保持可见，然后让普通可见性目标将其隐藏。
-        if (playerAbsorbImpact || mixMode) shouldShow = enabled;
-        // 常驻但三项内容全关时收成紧凑胶囊，而不是展开一张空白卡片。
-        double expansionGoal = mixMode ? 1.0
-                : IslandAmbientStatus.expansionTarget(shouldShow, ambientMode, !ambient.isEmpty());
+        if (playerAbsorbImpact || mixMode) shown = enabled;
+        double expansionGoal = musicCapsuleRow && !surfaceBlocked ? 1.0
+                : cardOwnsFrame ? IslandAmbientStatus.expansionTarget(true, true, alwaysOn && !ambient.isEmpty())
+                : IslandAmbientStatus.expansionTarget(shown, ambientMode, !ambient.isEmpty());
 
         // 动画节奏来自配置：每个逼近系数乘以对应的速度倍率，再钳到 (0,.95] 以免越过目标值抖动。
-        float expandRate = animationRate(shouldShow ? HudConfig.dynamicIslandExpandSpeed
-                : HudConfig.dynamicIslandCollapseSpeed, shouldShow ? .28f : .22f);
-        float expansionRate = animationRate(shouldShow ? HudConfig.dynamicIslandExpandSpeed
-                : HudConfig.dynamicIslandCollapseSpeed, shouldShow ? .24f : .25f);
-        float contentRate = animationRate(shouldShow ? HudConfig.dynamicIslandContentSpeed
-                : HudConfig.dynamicIslandCollapseSpeed, shouldShow ? .32f : .24f);
-        float transitionRate = animationRate(shouldShow ? HudConfig.dynamicIslandContentSpeed
-                : HudConfig.dynamicIslandCollapseSpeed, shouldShow ? .38f : .26f);
-        float copyRate = animationRate(shouldShow ? HudConfig.dynamicIslandContentSpeed
-                : HudConfig.dynamicIslandCollapseSpeed, shouldShow ? .32f : .26f);
+        float expandRate = animationRate(shown ? HudConfig.dynamicIslandExpandSpeed
+                : HudConfig.dynamicIslandCollapseSpeed, shown ? .42f : .48f);
         float successRate = animationRate(HudConfig.dynamicIslandContentSpeed, .28f);
 
-        visibility = Interpolations.interpolate(visibility, shouldShow ? 1f : 0f, expandRate);
-        expansion = Interpolations.interpolate(expansion, expansionGoal, expansionRate);
-        float contentTarget = shouldShow && expansion > .30 ? 1f : 0f;
-        contentAlpha = Interpolations.interpolate(contentAlpha, contentTarget, contentRate);
-        contentTransition = Interpolations.interpolate(contentTransition, shouldShow ? 1f : 0f, transitionRate);
-        noticeCopyTransition = Interpolations.interpolate(noticeCopyTransition, 1f, copyRate);
-        ambientBlend = Interpolations.interpolate(ambientBlend, ambientMode ? 1f : 0f, contentRate);
+        long clockNow = System.nanoTime();
+        double speedFactor = DynamicIslandMath.clamp(shown
+                ? HudConfig.dynamicIslandExpandSpeed : HudConfig.dynamicIslandCollapseSpeed, .40, 2.50);
+        double durationMillis = (shown ? 165.0 : 180.0) / speedFactor;
+        if (!visibilityClockInitialized || shown != visibilityClockTarget) {
+            visibilityClockInitialized = true;
+            visibilityClockTarget = shown;
+            visibilityStart = visibility;
+            visibilityElapsedMillis = 0.0;
+            visibilityDurationMillis = durationMillis;
+            visibilityLastNanos = clockNow;
+        }
+        double elapsedMillis = visibilityLastNanos <= 0L ? 0.0
+                : Math.max(0.0, Math.min(40.0, (clockNow - visibilityLastNanos) / 1_000_000.0));
+        visibilityLastNanos = clockNow;
+        visibilityElapsedMillis = Math.min(visibilityDurationMillis, visibilityElapsedMillis + elapsedMillis);
+        double progress = visibilityDurationMillis <= 0.0 ? 1.0
+                : visibilityElapsedMillis / visibilityDurationMillis;
+        double visibilityEased = com.muoniumplayer.core.screens.ncm.TransitionCurveCache.MUSIC_CARD.at(progress);
+        visibility = (float) DynamicIslandMath.lerp(visibilityStart, shown ? 1.0 : 0.0, visibilityEased);
+        if (progress >= 1.0) visibility = shown ? 1f : 0f;
+        expansion = tickIslandExpansion(shown, expansionGoal, frameDelta);
+        contentAlpha = (float) DynamicIslandMath.clamp01(expansion);
+        contentTransition = (float) DynamicIslandMath.clamp01(expansion);
+        noticeCopyTransition = (float) DynamicIslandMath.clamp01(expansion);
+        ambientBlend = (float) DynamicIslandMath.clamp01(DynamicIslandMath.lerp(ambientBlend,
+                ambientMode ? 1.0 : 0.0, com.muoniumplayer.core.screens.ncm.TransitionCurveCache.MOTION.at(
+                        Math.max(0.0, Math.min(1.0, frameDelta * 3.0)))));
         successMorph = Interpolations.interpolate(successMorph,
                 enabled && holdingCompletion && !noticeMode ? 1f : 0f, successRate);
 
-        double frameDelta = Math.min(4.0, Math.max(0.0, RenderSystem.getFrameDeltaTime()));
         spinnerRotation = (spinnerRotation + frameDelta * 7.2
                 * DynamicIslandMath.clamp(HudConfig.dynamicIslandSpinnerSpeed, .30, 3.0)) % 360.0;
-
-        // 音乐胶囊款的悬停/展开状态机：隐藏早退之前推进，收起动画在岛不可见时也能走完。
-        tickMusicCardState(now, frameDelta);
 
         previousDownloading = activeDownload;
         lastObservedProgress = rawProgress;
 
-        if (visibility <= .012f && !shouldShow) {
+        if (visibility <= .012f && !shown) {
             successMorph = 0f;
             pauseNoticeClock();
             completionVisibleClock.pause();
             return;
         }
 
-        final boolean renderedShouldShow = shouldShow;
+        final boolean renderedShouldShow = shown;
         final double easedExpansion = DynamicIslandMath.smoothStep(expansion);
         final float alpha = DynamicIslandMath.clamp01f(visibility);
         final float renderedContentTransition = DynamicIslandMath.clamp01f(contentTransition);
         final String speed = downloadSpeed;
         final boolean renderNotice = noticeMode;
+        final boolean renderedHoldingCompletion = !cardOwnsFrame && holdingCompletion;
+        final long renderedCardRevision = musicCardInteraction.eventRevision();
         final IslandNoticeType renderedNoticeType = sourceNoticeType;
         final String renderedNoticeTitle = sourceNoticeTitle;
         final String renderedNoticeValue = sourceNoticeValue;
@@ -1969,12 +2074,26 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             @Override
             public void run() {
                 drawIsland(easedExpansion, alpha, renderedContentTransition, animatedProgress,
-                        renderNotice ? 0f : successMorph, speed,
+                        renderNotice || cardOwnsFrame ? 0f : successMorph, speed,
                         System.currentTimeMillis(), shownAt, false, renderNotice,
                         renderedNoticeType, renderedNoticeTitle, renderedNoticeValue,
                         renderedOutgoingNoticeTitle, renderedOutgoingNoticeValue,
                         renderedNoticeCopyTransition, renderedNoticeProgress, sourceNoticePersistent,
                         renderedAmbient, renderedAmbientBlend, mixFrame, renderedShouldShow);
+                boolean cardPresented = cardOwnsFrame && musicCardOwnsSurface && MUSIC_CARD_BOUNDS != null
+                        && visibility > .90f && musicCardInteraction.openness() >= .995
+                        && SkijaGfx.active() && SkijaGfx.canvas() != null
+                        && MusicCapsuleCard.matchesFrame(MusicCapsuleCard.trackNoticeSnapshot())
+                        && MusicCapsuleCard.presentationReady() && !MusicCapsuleCard.trackTransitionActive();
+                musicCardInteraction.recordPresentation(renderedCardRevision, cardPresented, System.currentTimeMillis());
+                if (cardOwnsFrame) {
+                    pauseNoticeClock();
+                    completionVisibleClock.pause();
+                }
+                double[] mouse = musicMouseLayout();
+                if (mouse != null && IslandVisibilityGate.isChatOpen()) {
+                    MusicCapsuleCard.INSTANCE.drawConfirmation(mouse[0], mouse[1]);
+                }
                 // 回执必须在绘制成功之后。旧帧不替新消息消费时间；下载/Automix/不可见帧完全不计时。
                 boolean presented=IslandNoticeRules.presentationReady(
                         enabled && renderNotice && mixFrame == null,
@@ -1982,7 +2101,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         visibility, expansion, contentAlpha, contentTransition,
                         renderedNoticeCopyTransition, isInstantStateChannel(renderedNoticeType));
                 recordNoticePresentation(sourceNoticeRevision, presented, System.currentTimeMillis());
-                if (enabled && holdingCompletion && !renderNotice && mixFrame == null && visibility > .75f
+                if (enabled && renderedHoldingCompletion && !renderNotice && mixFrame == null && visibility > .75f
                         && !downloading && downloadCompletedAt == sourceCompletedAt
                         && expansion > .70 && contentAlpha > .70f && successMorph > .70f
                         && SkijaGfx.active() && SkijaGfx.canvas() != null) {
@@ -2062,15 +2181,39 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean bounce = style == DynamicIslandStyle.BOUNCE;
         boolean musicCapsule = style == DynamicIslandStyle.MUSIC_CAPSULE;
         // 回弹胶囊把所有事件按行堆出来，所以先要问出本帧到底有几行；其他样式不读这个列表。
-        List<BounceRow> bounceStack = bounce
+        boolean cardOwnsFrame = !preview && musicCardOwnsSurface && !playerSurfaceTransition;
+        double cardTransition = musicCardInteraction.openness();
+        boolean cardTransitionActive = cardOwnsFrame && musicCardInteraction.animationActive();
+        boolean cardReleased = !preview && !cardTransitionActive && previousCardTransitionActive;
+        boolean returnContentAvailable = !noticeMode && mixFrame == null && !isDownloadActive() && !completing;
+        if (!preview) {
+            if (cardTransitionActive) {
+                musicCardReturnAmbient = ambient == null ? IslandAmbientStatus.EMPTY : ambient;
+                musicCardReturning = false;
+            } else if (cardReleased && returnContentAvailable) {
+                musicCardReturning = true;
+            }
+            if (!returnContentAvailable || surfaceActive && ambient != null && !ambient.isEmpty()
+                    && ambientBlendValue >= .999f || alpha <= .012f || playerSurfaceTransition) musicCardReturning = false;
+        }
+        boolean returningIsland = !preview && musicCardReturning;
+        if (returningIsland) ambient = musicCardReturnAmbient;
+        List<BounceRow> bounceStack = bounce && (!musicCardOwnsSurface || preview)
                 ? bounceCollectRows(now, noticeMode, activeNoticeType, activeNoticeTitle,
                 activeNoticeValue, preview)
                 : java.util.Collections.<BounceRow>emptyList();
         IslandLayout layout = createIslandLayout(style, noticeMode, activeNoticeType, activeNoticeTitle,
                 activeNoticeValue, speedValue, preview, configuredScale, screenWidth);
-        float ambientMix = DynamicIslandMath.clamp01f(ambientBlendValue);
+        boolean returningAmbient = cardOwnsFrame && ambient != null && !ambient.isEmpty();
+        float ambientMix = returningAmbient || returningIsland ? 1f : DynamicIslandMath.clamp01f(ambientBlendValue);
         boolean hasAmbient = ambient != null && !ambient.isEmpty();
         if (!hasAmbient) ambientMix = 0f;
+        boolean idleWithoutContent = !preview && !musicCapsule && !hasAmbient && returnContentAvailable;
+        if (idleWithoutContent) {
+            progress = 0.0;
+            success = 0f;
+            contentFade = 0f;
+        }
 
         // 常驻文字的排版比例：内容超出可用宽度时先缩字号，永远不截断实时数值。
         double ambientScale = DynamicIslandMath.clamp(HudConfig.dynamicIslandTextScale,
@@ -2096,6 +2239,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean ambientGeometry = hasAmbient && ambientMix >= .5f;
         double targetExpandedWidth = ambientGeometry ? ambientTargetWidth : layout.targetWidth;
         double targetExpandedHeight = ambientGeometry ? ambientTargetHeight : layout.targetHeight;
+        if (musicCapsule && noticeMode) {
+            targetExpandedWidth = MusicCapsuleCard.capsuleNoticeWidth(layout.targetWidth,
+                    targetExpandedWidth, configuredScale, screenWidth);
+        }
         if (bounce) {
             // 参考稿的行高恒定：一个事件一行、每行 32，多事件把胶囊往上叠，而不是换一张更高的卡。
             double rowScale = bounceRowTextScale(layout);
@@ -2113,11 +2260,25 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
 
         double compactWidth = bounce ? BounceIslandMath.SIDE_PADDING * 2.0 + BounceIslandMath.LOGO_AREA_WIDTH
-                : (style == DynamicIslandStyle.COMPACT ? 46.0
-                : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0 : COMPACT_WIDTH));
+                : (style == DynamicIslandStyle.COMPACT ? 46.0 : COMPACT_WIDTH);
         double compactHeight = bounce ? BounceIslandMath.ROW_HEIGHT
                 : (style == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT);
-        if (!surfaceActive) {
+        double islandHandoff = cardTransitionActive ? MusicCardMotion.islandHandoff(cardTransition) : 0.0;
+        boolean trackNotice = cardTransitionActive && musicCardInteraction.trackNoticeActive();
+        boolean inferenceCapsule = musicCapsule && noticeMode
+                && activeNoticeType == IslandNoticeType.MODEL_INFERENCE;
+        boolean musicRow = MusicCapsuleCard.showCapsuleRow(musicCapsule, preview, noticeMode,
+                !cardOwnsFrame && isDownloadActive(), !cardOwnsFrame && completing, mixFrame != null,
+                MusicCapsuleCard.rowContentActive(), cardTransitionActive, inferenceCapsule);
+        if (musicRow || cardOwnsFrame && musicCapsule && MusicCapsuleCard.rowContentActive()) {
+            targetExpandedWidth = MusicCapsuleCard.rowTargetWidth();
+            targetExpandedHeight = MusicCapsuleCard.ROW_HEIGHT;
+        }
+        if (returningIsland) {
+            targetExpandedWidth = animatedExpandedWidth > 0.0 ? animatedExpandedWidth : compactWidth;
+            targetExpandedHeight = animatedExpandedHeight > 0.0 ? animatedExpandedHeight : compactHeight;
+        } else if (!surfaceActive || !musicCapsule && !hasAmbient && (cardOwnsFrame
+                || !noticeMode && mixFrame == null && !isDownloadActive() && !completing)) {
             // 混音结束且没有接替内容时，目标仍是紧凑轮廓；不能在退场一帧回跳到下载兜底大卡片。
             targetExpandedWidth = compactWidth;
             targetExpandedHeight = compactHeight;
@@ -2130,16 +2291,6 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             targetExpandedWidth = DynamicIslandMath.lerp(compactWidth, mixWidth, mixFrame.opacity);
             targetExpandedHeight = DynamicIslandMath.lerp(compactHeight, mixHeight, mixFrame.opacity);
         }
-        if (musicCapsule && mixFrame == null && surfaceActive && !noticeMode
-                && MusicCapsuleCard.rowContentActive()) {
-            // 本款的展开态不是「通知卡」而是迷你卡：行↔卡按 cardOpen 插值，再走同一条低通
-            // 尺寸动画，展开/收起与其它款的内容变形共用同一条轨迹。
-            double rowWidth = MusicCapsuleCard.rowTargetWidth();
-            double cardWidth = MusicCapsuleCard.CARD_WIDTH * cardFittedScale;
-            double cardHeight = MusicCapsuleCard.CARD_HEIGHT * cardFittedScale;
-            targetExpandedWidth = DynamicIslandMath.lerp(rowWidth, cardWidth, cardOpen);
-            targetExpandedHeight = DynamicIslandMath.lerp(MusicCapsuleCard.ROW_HEIGHT, cardHeight, cardOpen);
-        }
         double expandedWidth;
         double expandedHeight;
         if (bounce) {
@@ -2150,7 +2301,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
              */
             boolean primed = animatedExpandedWidth > 0.0 && animatedExpandedHeight > 0.0;
             double springDt = bounceFrameSeconds();
-            if (preview || !primed) {
+            if (preview || !primed || returningIsland || cardTransitionActive) {
                 bounceWidth.snapTo(targetExpandedWidth);
                 bounceHeight.snapTo(targetExpandedHeight);
             } else {
@@ -2165,6 +2316,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             expandedHeight = preview ? targetExpandedHeight
                     : animateExpandedDimension(animatedExpandedHeight, targetExpandedHeight);
         }
+        if (!preview && cardReleased && returnContentAvailable && liveAnchorLocalWidth > 0.0
+                && liveAnchorLocalHeight > 0.0) {
+            // 末帧就是普通岛的首帧；接管不重新套一遍展开系数或弹簧。
+            expandedWidth = liveAnchorLocalWidth;
+            expandedHeight = liveAnchorLocalHeight;
+            if (bounce) {
+                bounceWidth.snapTo(expandedWidth);
+                bounceHeight.snapTo(expandedHeight);
+            }
+        }
         if (!preview) {
             animatedExpandedWidth = expandedWidth;
             animatedExpandedHeight = expandedHeight;
@@ -2172,7 +2333,44 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
         double width = DynamicIslandMath.lerp(compactWidth, expandedWidth, expansionValue);
         double height = DynamicIslandMath.lerp(compactHeight, expandedHeight, expansionValue);
+        if (returningIsland) {
+            width = expandedWidth;
+            height = expandedHeight;
+        }
         double centerX = screenWidth * .5;
+        MusicCardMotion.Frame anchorFrame = null;
+        MusicCardMotion.Frame cardFrame = null;
+        MusicCardMotionBlur.Sample cardMotion = MusicCardMotionBlur.Sample.STILL;
+        if (cardTransitionActive) {
+            // 普通岛的平滑器在后台跟踪收起终点；卡片轮廓只使用本次交接的锚点，不级联平滑。
+            double anchorWidth = liveAnchorLocalWidth > 0.0 ? liveAnchorLocalWidth : width;
+            double anchorHeight = liveAnchorLocalHeight > 0.0 ? liveAnchorLocalHeight : height;
+            boolean ownershipChanged = cardTransitionActive != previousCardTransitionActive;
+            cardBaseWidth = ownershipChanged || cardBaseWidth <= 0.0 ? anchorWidth : cardBaseWidth;
+            cardBaseHeight = ownershipChanged || cardBaseHeight <= 0.0 ? anchorHeight : cardBaseHeight;
+            boolean opening = musicCardInteraction.wantsOpen();
+            if (ownershipChanged || opening != previousCardOpening || cardReturnFromWidth <= 0.0) {
+                cardReturnFromWidth = cardBaseWidth;
+                cardReturnFromHeight = cardBaseHeight;
+                cardReturnStart = Math.max(.001, Math.min(MusicCardMotion.JOIN_OPENNESS, cardTransition));
+            }
+            double returnBlend = opening ? 0.0
+                    : 1.0 - DynamicIslandMath.smoothStep(cardTransition / cardReturnStart);
+            cardBaseWidth = opening ? cardBaseWidth : DynamicIslandMath.lerp(cardReturnFromWidth, width, returnBlend);
+            cardBaseHeight = opening ? cardBaseHeight : DynamicIslandMath.lerp(cardReturnFromHeight, height, returnBlend);
+            previousCardOpening = opening;
+            anchorFrame = MusicCardMotion.frame(cardTransition, centerX, 0.0, cardBaseWidth, cardBaseHeight,
+                    compactWidth, compactHeight, cardFittedScale, musicCardInteraction.contentReveal());
+            width = anchorFrame.anchorWidth();
+            height = anchorFrame.anchorHeight();
+        } else {
+            cardBaseWidth = -1.0;
+            cardBaseHeight = -1.0;
+            cardReturnFromWidth = -1.0;
+            cardReturnFromHeight = -1.0;
+            previousCardOpening = false;
+        }
+        if (!preview) previousCardTransitionActive = cardTransitionActive;
 
         // Apple 风格的撞击：进入的表面以紧凑胶囊形态落下，先被挤压成
         // 水平宽、垂直扁的形状，然后回弹得更高/更窄，最后稳定下来。
@@ -2194,11 +2392,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double topMargin = (bounce ? BounceIslandMath.TOP : TOP_MARGIN)
                 + DynamicIslandMath.clamp(HudConfig.dynamicIslandY, -20.0, 400.0);
         double y = topMargin - (height + 11.0) * (1.0 - visibilityEase);
+        double anchorOriginY = y;
+        if (anchorFrame != null) y += anchorFrame.anchorY();
 
         double entryScale = 1.0;
         if (!preview && animationStart > 0L && !suppressPlayerEntryAnimation) {
             double entranceDuration = DynamicIslandMath.clamp(HudConfig.dynamicIslandEntranceDuration,
-                    160.0, 1200.0);
+                    150.0, 260.0);
             double entryProgress = DynamicIslandMath.clamp01((now - animationStart) / entranceDuration);
             double cubicOut = 1.0 - Math.pow(1.0 - entryProgress, 3.0);
             double restrainedOvershoot = Math.sin(entryProgress * Math.PI)
@@ -2212,6 +2412,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         scaleAtPos(centerX, y + height * .5, entryScale);
 
         double x = centerX - width * .5;
+        boolean liquidGlass = style == DynamicIslandStyle.LIQUID_GLASS;
+        boolean motionBlurEligible = !preview && !bounce && !liquidGlass && mixFrame == null
+                && !noticeMode && !cardTransitionActive && !playerSurfaceTransition;
+        if (cardTransitionActive != previousMusicCardOwnsSurface) {
+            resetMotionBlur();
+            musicCardMotionBlur.reset();
+        }
+        previousMusicCardOwnsSurface = cardTransitionActive;
+        if (motionBlurEligible) drawMotionBlur(centerX, y, width, height, height * .5, alpha);
+        else resetMotionBlur();
         if (bounce) {
             /*
              * 吸附到物理像素网格。其他样式的表面靠抗锯齿渐变收尾，缩放 2/3 档时那根半透明灰线
@@ -2224,19 +2434,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             width = BounceIslandMath.alignSize(width, pixelScale);
             height = BounceIslandMath.alignUp(height, pixelScale);
         }
-        boolean systemCard = style == DynamicIslandStyle.SYSTEM_CARD;
-        boolean musicFocus = style == DynamicIslandStyle.MUSIC_FOCUS;
-        boolean liquidGlass = style == DynamicIslandStyle.LIQUID_GLASS;
         double radius = bounce ? BounceIslandMath.pillRadius(height)
-                : (systemCard ? Math.min(11.0, height * .25)
-                : (musicFocus ? Math.min(14.0, height * .31)
-                : (liquidGlass ? Math.min(16.0, height * .40)
-                : (musicCapsule ? DynamicIslandMath.lerp(height * .5,
-                        MusicCapsuleCard.CARD_RADIUS * cardFittedScale, cardOpen)
-                : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5)))));
+                : liquidGlass ? Math.min(16.0, height * .40) : height * .5;
         // 记录变换后的确切轮廓。播放器过渡必须从这个
         // 形状开始，而不是从与当前驻留灵动岛不匹配的紧凑胶囊开始。
         if (!preview) {
+            liveAnchorLocalWidth = width;
+            liveAnchorLocalHeight = height;
             double renderedScale = configuredScale * entryScale;
             double renderedCenterY = topMargin + configuredScale * (y + height * .5 - topMargin);
             LIVE_ANCHOR_BOUNDS[0] = centerX - width * renderedScale * .5;
@@ -2244,14 +2448,65 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             LIVE_ANCHOR_BOUNDS[2] = width * renderedScale;
             LIVE_ANCHOR_BOUNDS[3] = height * renderedScale;
             LIVE_ANCHOR_BOUNDS[4] = radius * renderedScale;
+            MUSIC_CARD_ANCHOR_BOUNDS = anchorFrame == null || anchorFrame.anchorAlpha() <= .05
+                    ? null : LIVE_ANCHOR_BOUNDS.clone();
+        }
+        if (anchorFrame != null) {
+            cardFrame = MusicCardMotion.frame(cardTransition, centerX, anchorOriginY, cardBaseWidth, cardBaseHeight,
+                    compactWidth, compactHeight, cardFittedScale, musicCardInteraction.contentReveal());
+            cardMotion = musicCardMotionBlur.advance(cardFrame, System.nanoTime());
+            if (cardFrame.contentReveal() > .08 && alpha > .75f) {
+                MusicCapsuleCard.tickTrackTransition((float) Math.min(40.0,
+                        Math.max(0.0, RenderSystem.getFrameDeltaTime() * 10.0)));
+            }
+            CloudMusic.PlaybackSnapshot cardSnapshot = trackNotice ? MusicCapsuleCard.trackNoticeSnapshot()
+                    : MusicCapsuleCard.currentSnapshot();
+            MusicCardTransitionSurface.draw(cardFrame, alpha, cardSnapshot, cardMotion);
+            musicCardDrawnSnapshot = cardFrame.alpha() > .01 ? cardSnapshot : null;
+            double renderedScale = configuredScale * entryScale;
+            double[] bounds = {
+                    centerX + (cardFrame.x() - centerX) * renderedScale,
+                    topMargin + (y + height * .5 - topMargin) * configuredScale
+                            + (cardFrame.y() - y - height * .5) * renderedScale,
+                    cardFrame.width() * renderedScale, cardFrame.height() * renderedScale,
+                    cardFrame.radius() * renderedScale
+            };
+            MUSIC_CARD_BOUNDS = bounds;
+            if (cardFrame.alpha() >= .5 && cardTransition > MusicCardMotion.JOIN_OPENNESS) {
+                System.arraycopy(bounds, 0, LIVE_ANCHOR_BOUNDS, 0, bounds.length);
+            }
+            alpha *= (float) cardFrame.anchorAlpha();
+            if (alpha <= .001f) {
+                api.getGLStateManager().popMatrix();
+                return;
+            }
+            progress = 0.0;
+            success = 0f;
+            if (!returningAmbient) contentFade = 0f;
+            expansionValue *= 1.0 - islandHandoff;
+            contentFade *= (float) (1.0 - islandHandoff);
+        } else {
+            MUSIC_CARD_BOUNDS = null;
+            musicCardDrawnSnapshot = null;
+            MUSIC_CARD_ANCHOR_BOUNDS = null;
+        }
+        if (cardTransitionActive && !musicCapsule && !bounce && islandHandoff > .999) {
+            drawMusicCardAnchorSurface(x, y, width, height, radius, alpha, liquidGlass, now);
+            api.getGLStateManager().popMatrix();
+            return;
+        }
+        if (cardOwnsFrame && !musicCapsule && !returningAmbient) expansionValue = 0.0;
+        if (returningIsland) {
+            contentFade = hasAmbient ? contentFade : 0f;
+            progress = 0.0;
+            success = 0f;
         }
         int accentColor = NCMTheme.getAccentColor();
         int iconAccentColor = DynamicIslandMath.brightenAccent(accentColor, .30f);
 
         // 阴影保持在灵动岛自身的圆角轮廓上。之前的扩展、
         // 左移矩形看起来像一个独立的深色背景画布。
-        float shadowAlpha = alpha * (style == DynamicIslandStyle.GLASS ? .13f
-                : (liquidGlass ? .15f : (musicFocus ? .23f : .19f)));
+        float shadowAlpha = alpha * (liquidGlass ? .15f : .19f);
         if (!bounce) {
             roundedRect(x + 1.0, y + 1.8, width, height, radius,
                     hexColor(0f, 0f, 0f, shadowAlpha));
@@ -2259,14 +2514,28 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     hexColor(0f, 0f, 0f, shadowAlpha * .42f));
         }
         if (bounce && mixFrame == null) {
-            drawBounceIsland(x, y, width, height, radius, alpha, expansionValue, contentFade,
-                    now, preview, noticeMode, activeNoticeType, activeNoticeTitle, activeNoticeValue,
-                    noticeProgress, ambient, ambientMix, layout, bounceStack, progress, success,
-                    configuredScale, accentColor);
+            if (cardTransitionActive && islandHandoff > .999) {
+                roundedRect(x, y, width, height, radius, BounceIslandMath.argb(
+                        (int) Math.round(BounceIslandMath.SURFACE_ALPHA * DynamicIslandMath.clamp01(alpha)),
+                        bounceTint.redChannel(), bounceTint.greenChannel(), bounceTint.blueChannel()));
+            } else {
+                if (!cardTransitionActive) {
+                    previousMusicCardOwnsSurface = false;
+                    musicCardMotionBlur.reset();
+                    resetMotionBlur();
+                }
+                drawBounceIsland(x, y, width, height, radius, alpha, expansionValue, contentFade,
+                        now, preview, noticeMode, activeNoticeType, activeNoticeTitle, activeNoticeValue,
+                        noticeProgress, ambient, ambientMix, layout, bounceStack, progress, success,
+                        configuredScale, accentColor);
+            }
             api.getGLStateManager().popMatrix();
             return;
         }
         if (mixFrame != null) {
+            previousMusicCardOwnsSurface = false;
+            musicCardMotionBlur.reset();
+            resetMotionBlur();
             // 已处于岛本身的矩阵、圆角和锚点内：不另开画布，不画大图例/多色网格。
             GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha * .64f);
             AutomixIslandRenderer.draw(SkijaGfx.canvas(), mixFrame, x, y, width, height, radius,
@@ -2274,66 +2543,28 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             api.getGLStateManager().popMatrix();
             return;
         }
-        if (musicCapsule && (preview || (ambientMix > .02f && MusicCapsuleCard.rowContentActive()))) {
-            // 本款自己的绘制路径：收起行 ↔ 悬停展开的迷你卡。通知/下载/Automix 不进这里
-            // （ambientMix≈0 时落回上面的通用路径，表面与常驻行的交叉淡入照旧）；
-            // 暂停退休后同样落回通用路径——常驻开着时接手的是标准的「正在播放」常驻行。
-            drawMusicCapsuleIsland(x, y, width, height, radius, alpha, now, preview,
-                    DynamicIslandMath.clamp01f(ambientMix));
+        if (cardTransitionActive && musicCapsule) {
+            drawMusicCapsuleIsland(x, y, width, height, radius, alpha, (float) (1.0 - islandHandoff));
             api.getGLStateManager().popMatrix();
             return;
         }
-        /*
-         * 真背景铺进岛的轮廓，然后让样式自己那层深色底按「玻璃浓度」压薄——这一步以前只有
-         * 液态玻璃那一款有。2026-09-30 玩家报「灵动岛不是实时渲染」，根因就在这：八款样式里
-         * 只有 LIQUID_GLASS 调过 paintFrost，而他用的是默认的经典胶囊，看到的从来就是那套
-         * 按时间摆动的假渐变——它当然不会跟着身后的画面走。
-         * 铺不上（没选琉璃、生效面关了、这一帧没有背景）时 frosted=false、thin 恒等于 1，
-         * 六款画法一个像素都不变；回弹胶囊在上面就 return 了，那是作者另一份稿子的 1:1 复刻，
-         * 纯色平面是它造型的一部分，不在这次改动里。
-         */
-        boolean frosted = !liquidGlass
+        if (musicCapsule && !musicRow) {
+            drawMusicCapsuleSurface(x, y, width, height, radius, alpha);
+        } else if (musicRow) {
+            float rowAlpha = cardFrame == null ? 1f
+                    : 1f - (float) DynamicIslandMath.smoothStep(cardTransition / .30);
+            drawMusicCapsuleIsland(x, y, width, height, radius, alpha, rowAlpha);
+            if (inferenceCapsule) drawInferenceCapsuleMarquee(x, y, width, height, radius, alpha, accentColor, now);
+            api.getGLStateManager().popMatrix();
+            return;
+        }
+        // 常规胶囊先铺真背景，再按玻璃浓度压薄深色底；回弹样式单独处理。
+        boolean frosted = !liquidGlass && !musicCapsule
                 && GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
         float thin = frosted ? GlassLook.tintedAlpha(GlassLook.Surface.ISLAND, 1.0f) : 1.0f;
         if (liquidGlass) {
             renderLiquidGlassSurface(x, y, width, height, radius, alpha, now);
-        } else if (style == DynamicIslandStyle.GLASS) {
-            roundedRect(x, y, width, height, radius, RenderSystem.reAlpha(accentColor, alpha * .20f * thin));
-            roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height * .46),
-                    Math.max(1.0, radius - 1.0), hexColor(1f, 1f, 1f, alpha * .075f * thin));
-            roundedOutline(x, y, width, height, radius, .75,
-                    new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 62f)));
-        } else if (style == DynamicIslandStyle.CARD) {
-            roundedRect(x, y, width, height, radius, hexColor(.028f, .034f, .046f, alpha * .985f * thin));
-            roundedRect(x, y + radius, 2.2, Math.max(1.0, height - radius * 2.0), 1.1,
-                    RenderSystem.reAlpha(accentColor, alpha * .90f));
-            roundedOutline(x, y, width, height, radius, .65,
-                    new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 30f)));
-        } else if (musicFocus) {
-            // 音乐聚焦卡片：表面先扩展，然后动画封面和文字逐渐就位。
-            roundedRect(x, y, width, height, radius, hexColor(.010f, .014f, .024f, alpha * .99f * thin));
-            roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
-                    Math.max(1.0, radius - 1.0), hexColor(.050f, .064f, .098f, alpha * .46f * thin));
-            roundedRect(x + 1.2, y + 1.2, Math.max(1.0, width - 2.4), Math.max(1.0, height * .36),
-                    Math.max(1.0, radius - 1.2), RenderSystem.reAlpha(accentColor, alpha * .10f * thin));
-            roundedOutline(x, y, width, height, radius, .80,
-                    new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 54f)));
-            roundedRect(x + 8.0, y + height - 5.0, Math.max(1.0, width - 16.0), 1.0, .5,
-                    RenderSystem.reAlpha(accentColor, alpha * .22f));
-        } else if (systemCard) {
-            // 受提供的参考项目启发的专用内容驱动系统通知卡片。
-            roundedRect(x, y, width, height, radius, hexColor(.025f, .031f, .043f, alpha * .99f * thin));
-            roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
-                    Math.max(1.0, radius - 1.0), hexColor(.075f, .088f, .118f, alpha * .32f * thin));
-            roundedOutline(x, y, width, height, radius, .80,
-                    new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 46f)));
-            double tileSize = Math.min(24.0, Math.max(16.0, height - 16.0));
-            roundedRect(x + 8.0, y + (height - tileSize) * .5, tileSize, tileSize,
-                    Math.min(7.0, tileSize * .30), RenderSystem.reAlpha(accentColor, alpha * .26f));
-            roundedOutline(x + 8.0, y + (height - tileSize) * .5, tileSize, tileSize,
-                    Math.min(7.0, tileSize * .30), .65,
-                    new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 36f)));
-        } else {
+        } else if (!musicCapsule) {
             // 经典胶囊与紧凑状态共用这一张底。
             roundedRect(x, y, width, height, radius, hexColor(.012f, .014f, .020f, alpha * .985f * thin));
             roundedOutline(x, y, width, height, radius, .65,
@@ -2345,84 +2576,67 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         if (frosted) {
             GlassLook.paintEdge(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
         }
-        if (absorbGlow > .01) {
+        if (!musicCapsule && absorbGlow > .01) {
             roundedOutline(x - 1.0, y - 1.0, width + 2.0, height + 2.0, radius + .7, .82,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255((float) (alpha * absorbGlow * 128f))));
             roundedOutline(x - 1.8, y - 1.8, width + 3.6, height + 3.6, radius + 1.2, .62,
                     new Color(RenderSystem.reAlpha(accentColor, (float) (alpha * absorbGlow * .52f)), true));
         }
-        if (!systemCard && !musicFocus && !liquidGlass) {
-            // 顶部那条镜面高光也跟着浓度走：铺上真背景之后它还按原强度亮着，读起来就像胶囊
-            // 上面又贴了一条不透明的膜，把刚透出来的画面重新挡回去。
+        if (!liquidGlass && !musicCapsule) {
+            // 顶部镜面高光随玻璃浓度压薄。
             roundedRect(x + radius * .70, y + .8, Math.max(2.0, width - radius * 1.40), .75, .38,
-                    hexColor(1f, 1f, 1f, alpha * (style == DynamicIslandStyle.GLASS ? .13f : .055f) * thin));
+                    hexColor(1f, 1f, 1f, alpha * .055f * thin));
         }
 
-        // 图标安全地保持在圆角轮廓内，并在文字前保留实际间距。
-        // 之前 1.16x 的图标缩放可能将其外边缘推入过期裁剪区域或胶囊的
-        // 弧形肩部，使左边缘看起来不完整。
-        // 这几个内缩值加上托盘半宽、再乘下面 scaleAtPos 的绘制缩放，就是托盘的视觉右缘；
-        // DynamicIslandLayoutCalculator#styleContentLeft 按它推内容区左边界。改这里要一起改那边，
-        // 否则文案/常驻行会重新贴回托盘上（历史上默认样式只剩 1.25px，CARD 是负的）。
-        double iconInset = systemCard ? 20.0 : (musicFocus ? 26.0
-                : (liquidGlass ? 24.0 : (style == DynamicIslandStyle.CARD ? 25.0 : 23.0)));
-        double iconExpandedX = centerX - expandedWidth * .5 + iconInset;
+        // 图标托盘与布局计算共用内缩口径，内容区留出固定呼吸位。
+        double iconInset = liquidGlass ? 24.0 : 23.0;
+        double iconExpandedX = centerX - (cardOwnsFrame ? width : expandedWidth) * .5 + iconInset;
         double iconX = DynamicIslandMath.lerp(centerX, iconExpandedX, expansionValue);
         double iconY = y + height * .5;
         double pulse = .5 + .5 * Math.sin(now / 260.0);
-        float iconAlpha = alpha * (.87f + (float) pulse * .10f);
 
         api.getGLStateManager().pushMatrix();
-        if (musicFocus) {
-            renderMusicFocusArtwork(iconX, iconY, height, iconAlpha, accentColor, iconAccentColor, now,
-                    preview, noticeMode, activeNoticeType, success, ambientMix, ambient);
-        } else {
-            double iconPlateBase = systemCard ? 17.0 : (liquidGlass ? 19.6 : 18.4);
-            // 折叠态的岛只有 16px 高，而托盘固定 18.4px：它会顶出胶囊的圆肩，看起来正像"图标加载不全"。
-            // 让托盘随岛高收缩，图标就始终整枚落在轮廓内，展开/收起全过程都不会被切边。
-            double iconFit = DynamicIslandMath.clamp((height - 3.6) / iconPlateBase, .40, 1.0);
-            // 再按展开度淡入：紧凑态只留一枚淡淡的圆点，不会在极小的胶囊里塞满高对比图形。
-            double iconReveal = DynamicIslandMath.smoothStep(
-                    DynamicIslandMath.clamp01((expansionValue - .10) / .68));
-            double iconPlate = iconPlateBase * iconFit;
-            float plateAlpha = alpha * (.82f + (float) pulse * .12f) * (.34f + .66f * (float) iconReveal);
-            // 字形不再跟着呼吸忽明忽暗——那正是"图标动效看不清"的主因，常亮才读得出形状。
-            float glyphAlpha = alpha * .98f * (.40f + .60f * (float) iconReveal);
-            // 这一帧会盖上歌曲封面时，托盘只留深色底衬、不再刷强调色。封面是半透明画上去的，
-            // 底下那层强调色会透过来，看起来就是「整张封面被主题色染了」。
-            float artworkMix = ambientMix > .005f && hasAmbientArtwork() ? ambientMix : 0f;
-            scaleAtPos(iconX, iconY, (systemCard ? 1.0 : 1.06) * iconFit);
-            // 深色底衬：液态玻璃这类亮表面上，只靠一层薄强调色会让字形糊进背景里。
-            roundedRect(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
-                    iconPlate * .5, hexColor(.020f, .026f, .038f, plateAlpha * (.60f + .36f * artworkMix)));
-            roundedRect(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
-                    iconPlate * .5, RenderSystem.reAlpha(liquidGlass ? GLASS_TINT : accentColor,
-                            plateAlpha * (liquidGlass ? .20f : .26f) * (1f - artworkMix)));
-            if (liquidGlass) {
-                // 磨砂托盘：上亮下暗的一层反光，让图标像压在玻璃里而不是贴在表面。
-                roundedRectGradientVertical(iconX - iconPlate * .5, iconY - iconPlate * .5,
-                        iconPlate, iconPlate, iconPlate * .5,
-                        new Color(255, 255, 255, DynamicIslandMath.clamp255(plateAlpha * 34f)),
-                        new Color(255, 255, 255, 0));
+        double iconPlateBase = liquidGlass ? 19.6 : 18.4;
+        // 托盘随岛高收缩，避免在收起过程中越出胶囊的圆肩。
+        double iconFit = DynamicIslandMath.clamp((height - 3.6) / iconPlateBase, .40, 1.0);
+        double iconReveal = DynamicIslandMath.smoothStep(
+                DynamicIslandMath.clamp01((expansionValue - .10) / .68));
+        double iconPlate = iconPlateBase * iconFit;
+        float plateAlpha = alpha * (.82f + (float) pulse * .12f) * (.34f + .66f * (float) iconReveal);
+        float glyphAlpha = alpha * .98f * (.40f + .60f * (float) iconReveal)
+                * (cardOwnsFrame ? (float) (1.0 - islandHandoff) : 1f)
+                * (idleWithoutContent || cardOwnsFrame && !returningAmbient || returningIsland && !hasAmbient ? 0f : 1f);
+        // 半透明封面下不刷强调色，避免封面被主题色染色。
+        float artworkMix = ambientMix > .005f && hasAmbientArtwork() ? ambientMix : 0f;
+        scaleAtPos(iconX, iconY, 1.06 * iconFit);
+        roundedRect(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
+                iconPlate * .5, hexColor(.020f, .026f, .038f, plateAlpha * (.60f + .36f * artworkMix)));
+        roundedRect(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
+                iconPlate * .5, RenderSystem.reAlpha(liquidGlass ? GLASS_TINT : accentColor,
+                        plateAlpha * (liquidGlass ? .20f : .26f) * (1f - artworkMix)));
+        if (liquidGlass) {
+            // 磨砂托盘：上亮下暗的一层反光，让图标像压在玻璃里而不是贴在表面。
+            roundedRectGradientVertical(iconX - iconPlate * .5, iconY - iconPlate * .5,
+                    iconPlate, iconPlate, iconPlate * .5,
+                    new Color(255, 255, 255, DynamicIslandMath.clamp255(plateAlpha * 34f)),
+                    new Color(255, 255, 255, 0));
+        }
+        roundedOutline(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
+                iconPlate * .5, .95, new Color(255, 255, 255, DynamicIslandMath.clamp255(plateAlpha * 92f)));
+        if (ambientMix < .995f) {
+            float eventGlyphAlpha = glyphAlpha * (1f - ambientMix);
+            if (noticeMode) {
+                renderNoticeIcon(activeNoticeType, activeNoticeValue, iconX, iconY,
+                        eventGlyphAlpha, iconAccentColor, now);
+            } else {
+                renderSpinner(iconX, iconY, eventGlyphAlpha * (1f - success), iconAccentColor, now, preview);
+                renderSuccess(iconX, iconY, alpha * success * (1f - ambientMix));
             }
-            roundedOutline(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
-                    iconPlate * .5, .95, new Color(255, 255, 255, DynamicIslandMath.clamp255(plateAlpha * 92f)));
-            if (ambientMix < .995f) {
-                float eventGlyphAlpha = glyphAlpha * (1f - ambientMix);
-                if (noticeMode) {
-                    renderNoticeIcon(activeNoticeType, activeNoticeValue, iconX, iconY,
-                            eventGlyphAlpha, iconAccentColor, now);
-                } else {
-                    renderSpinner(iconX, iconY, eventGlyphAlpha * (1f - success), iconAccentColor, now, preview);
-                    renderSuccess(iconX, iconY, alpha * success * (1f - ambientMix));
-                }
-            }
-            if (ambientMix > .005f) {
-                // 托盘是个整圆（圆角 = 半径），封面必须沿用同一个圆角才能铺满，
-                // 否则圆托盘里塞一枚小圆角方封面，四周各露一道月牙形的空隙。
-                renderAmbientIcon(iconX, iconY, iconPlate, iconPlate * .5, 1.0,
-                        glyphAlpha * ambientMix, iconAccentColor);
-            }
+        }
+        if (ambientMix > .005f) {
+            // 封面沿用圆托盘的尺寸与圆角，铺满后四周不留月牙形空隙。
+            renderAmbientIcon(iconX, iconY, iconPlate, iconPlate * .5, 1.0,
+                    glyphAlpha * ambientMix, iconAccentColor);
         }
         api.getGLStateManager().popMatrix();
 
@@ -2430,6 +2644,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         float eventFade = 1f - ambientMix;
         float textAlpha = alpha * contentAlpha * (float) expansionValue
                 * DynamicIslandMath.clamp01f(contentFade) * eventFade;
+        boolean styleNoticeCopy = musicCapsule && noticeMode && cardFrame == null;
+        if (styleNoticeCopy) {
+            double widthSpan = Math.max(1.0, layout.targetWidth - compactWidth);
+            double noticeWidthProgress = DynamicIslandMath.clamp01((width - compactWidth) / widthSpan);
+            textAlpha *= (float) DynamicIslandMath.smoothStep((noticeWidthProgress - .42) / .52);
+        }
         if (preview) textAlpha = alpha * (float) expansionValue * eventFade;
         boolean staticVolumeCopy = noticeMode && activeNoticeType == IslandNoticeType.VOLUME;
         boolean transcodeCopy = noticeMode && activeNoticeType == IslandNoticeType.TRANSCODING;
@@ -2446,8 +2666,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             double textRight = x + width - DynamicIslandLayoutCalculator.styleRightPadding(style);
             double textCenter = (textLeft + textRight) * .5;
             double copySlide = (1.0 - DynamicIslandMath.clamp01(contentFade)) * CONTENT_CHANGE_SLIDE;
-            double baseTitleY = y + (systemCard ? 9.0 : (musicFocus ? 10.0 : 5.4));
-            double baseValueY = y + (systemCard ? 23.0 : (musicFocus ? 25.0 : 16.6));
+            double baseTitleY = y + 5.4;
+            double baseValueY = y + 16.6;
             double titleY = baseTitleY + copySlide;
             double valueY = baseValueY + copySlide;
 
@@ -2517,8 +2737,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 if (staticVolumeCopy || transcodeCopy) {
                     double progressX = textLeft;
                     double progressWidth = Math.max(28.0, textRight - textLeft);
-                    double progressHeight = systemCard ? 3.2 : (musicFocus ? 2.6 : 2.8);
-                    double progressY = y + height - (systemCard ? 8.2 : (musicFocus ? 7.0 : 6.0));
+                    double progressHeight = 2.8;
+                    double progressY = y + height - 6.0;
                     double progressRadius = progressHeight * .5;
                     roundedRect(progressX, progressY, progressWidth, progressHeight, progressRadius,
                             hexColor(1f, 1f, 1f, renderedTextAlpha * .12f));
@@ -2557,16 +2777,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 int statusColor = success > .52f
                         ? hexColor(.58f, 1f, .68f, textAlpha)
                         : hexColor(.82f, .85f, .91f, textAlpha);
-                roundedRect(statusX, y + (systemCard ? 8.5 : (musicFocus ? 11.0 : 4.2)), statusWidth, 12.5, 6.25,
+                roundedRect(statusX, y + 4.2, statusWidth, 12.5, 6.25,
                         success > .52f ? hexColor(.18f, .55f, .32f, textAlpha * .34f)
                                 : hexColor(1f, 1f, 1f, textAlpha * .10f));
                 drawCenteredIslandText(FontManager.pf12bold, status, statusX + statusWidth * .5,
-                        y + (systemCard ? 10.4 : (musicFocus ? 12.9 : 6.1)), statusWidth - 4.0, layout.textScale, statusColor);
+                        y + 6.1, statusWidth - 4.0, layout.textScale, statusColor);
 
-                double progressX = x + (systemCard ? 8.0 : (musicFocus ? 10.0 : 9.0));
-                double progressY = y + height - (systemCard ? 7.0 : (musicFocus ? 6.8 : 3.7));
-                double progressWidth = width - (systemCard ? 16.0 : (musicFocus ? 20.0 : 18.0));
-                double progressHeight = Math.min(systemCard ? 3.8 : (musicFocus ? 3.0 : height * .22),
+                double progressX = x + 9.0;
+                double progressY = y + height - 3.7;
+                double progressWidth = width - 18.0;
+                double progressHeight = Math.min(height * .22,
                         DynamicIslandMath.clamp(HudConfig.dynamicIslandProgressHeight, .75, 4.0));
                 double progressRadius = progressHeight * .5;
                 roundedRect(progressX, progressY, progressWidth, progressHeight, progressRadius,
@@ -2593,6 +2813,88 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         SkijaGfx.setColor(1f, 1f, 1f, 1f);
     }
 
+    private double tickIslandExpansion(boolean visibleTarget, double target, double frameDelta) {
+        double safeTarget = DynamicIslandMath.clamp01(target);
+        long nowNanos = System.nanoTime();
+        if (!expansionClockInitialized) {
+            expansionClockInitialized = true;
+            expansionFrom = expansion;
+            expansionClockTarget = expansion;
+            expansionElapsedMillis = 0.0;
+            expansionDurationMillis = 180.0;
+            expansionLastNanos = nowNanos;
+        }
+        if (Math.abs(safeTarget - expansionClockTarget) > .001) {
+            expansionFrom = expansion;
+            expansionClockTarget = safeTarget;
+            expansionElapsedMillis = 0.0;
+            expansionLastNanos = nowNanos;
+            double configured = visibleTarget ? HudConfig.dynamicIslandExpandSpeed
+                    : HudConfig.dynamicIslandCollapseSpeed;
+            double baseDuration = visibleTarget ? 165.0 : 180.0;
+            expansionDurationMillis = baseDuration / DynamicIslandMath.clamp(configured, .40, 2.50);
+            if (Math.abs(expansionClockTarget - expansionFrom) <= .001) {
+                expansion = expansionClockTarget;
+                return expansion;
+            }
+        }
+        double dt = expansionLastNanos <= 0L ? 0.0
+                : Math.max(0.0, Math.min(40.0, (nowNanos - expansionLastNanos) / 1_000_000.0));
+        expansionLastNanos = nowNanos;
+        expansionElapsedMillis = Math.min(expansionDurationMillis, expansionElapsedMillis + dt);
+        double progress = expansionDurationMillis <= 0.0 ? 1.0 : expansionElapsedMillis / expansionDurationMillis;
+        double eased = com.muoniumplayer.core.screens.ncm.TransitionCurveCache.MUSIC_CARD.at(progress);
+        expansion = DynamicIslandMath.lerp(expansionFrom, expansionClockTarget, eased);
+        if (expansionElapsedMillis >= expansionDurationMillis) expansion = expansionClockTarget;
+        return expansion;
+    }
+
+    private double animateExpandedDimension(double current, double target) {
+        if (current <= 0.0) return target;
+        if (Math.abs(target - current) < .15) return target;
+        return Interpolations.interpolate(current, target, target > current ? .40f : .38f);
+    }
+
+    private void resetExpansionClock() {
+        cardBaseWidth = -1.0;
+        cardBaseHeight = -1.0;
+        cardReturnFromWidth = -1.0;
+        cardReturnFromHeight = -1.0;
+        previousCardOpening = false;
+        musicCardReturning = false;
+        musicCardReturnAmbient = IslandAmbientStatus.EMPTY;
+        musicCardMotionBlur.reset();
+        previousMusicCardOwnsSurface = false;
+        previousCardTransitionActive = false;
+        MUSIC_CARD_ANCHOR_BOUNDS = null;
+        liveAnchorLocalWidth = -1.0;
+        liveAnchorLocalHeight = -1.0;
+        visibilityClockInitialized = false;
+        visibilityClockTarget = false;
+        visibilityStart = 0f;
+        visibilityElapsedMillis = 0.0;
+        visibilityDurationMillis = 0.0;
+        visibilityLastNanos = 0L;
+        expansionClockInitialized = false;
+        expansionFrom = 0.0;
+        expansionClockTarget = 0.0;
+        expansionElapsedMillis = 0.0;
+        expansionDurationMillis = 0.0;
+        expansionLastNanos = 0L;
+    }
+
+    private void resetMotionBlur() {
+        previousMotionX = Double.NaN;
+        previousMotionY = Double.NaN;
+        previousMotionWidth = Double.NaN;
+        previousMotionHeight = Double.NaN;
+        motionVelocityX = 0.0;
+        motionVelocityY = 0.0;
+        previousMotionNanos = 0L;
+        motionBlurStrength = 0.0;
+        previousMotionAlpha = 0f;
+    }
+
     private IslandLayout createIslandLayout(DynamicIslandStyle style, boolean noticeMode,
                                             IslandNoticeType noticeType, String noticeTitleValue,
                                             String noticeBodyValue, String speedValue, boolean preview,
@@ -2604,13 +2906,55 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         return new IslandLayout(layout.title, layout.value, layout.textScale,
                 layout.targetWidth, layout.targetHeight);
     }
-    private double animateExpandedDimension(double current, double target) {
-        if (current <= .0) return target;
-        // 宽度和高度必须使用相同时钟。不同速率会使短内容坍缩成
-        // 尴尬的两阶段形状，而不是一个连续的居中收缩。
-        float speed = target > current ? .40f : .38f;
-        if (Math.abs(target - current) < .15) return target;
-        return Interpolations.interpolate(current, target, speed);
+    private void drawMotionBlur(double centerX, double y, double width, double height, double radius,
+                                float alpha) {
+        long nowNanos = System.nanoTime();
+        double dt = .016;
+        double dx = 0.0;
+        double dy = 0.0;
+        double dw = 0.0;
+        double dh = 0.0;
+        if (previousMotionNanos > 0L && Double.isFinite(previousMotionX)
+                && Double.isFinite(previousMotionY) && Double.isFinite(previousMotionWidth)
+                && Double.isFinite(previousMotionHeight)) {
+            dt = Math.max(.001, Math.min(.05, (nowNanos - previousMotionNanos) / 1_000_000_000.0));
+            double previousCenterX = previousMotionX;
+            double previousCenterY = previousMotionY + previousMotionHeight * .5;
+            double newCenterY = y + height * .5;
+            dx = centerX - previousCenterX;
+            dy = newCenterY - previousCenterY;
+            dw = width - previousMotionWidth;
+            dh = height - previousMotionHeight;
+            double speed = (Math.abs(dx) + Math.abs(dy) + Math.abs(dw) * .5 + Math.abs(dh) * .5) / dt;
+            double target = DynamicIslandMath.clamp01((speed - 180.0) / 1800.0);
+            double decayMillis = 72.0 / DynamicIslandMath.clamp(HudConfig.dynamicIslandExpandSpeed, .40, 2.50);
+            double decay = 1.0 - Math.exp(-dt * 1000.0 / decayMillis);
+            motionBlurStrength += (target - motionBlurStrength) * decay;
+        }
+        if (previousMotionNanos == 0L || dt >= .049) previousMotionAlpha = alpha;
+        else previousMotionAlpha += (alpha - previousMotionAlpha) * (float) (1.0 - Math.exp(-dt * 1000.0 / 48.0));
+        previousMotionX = centerX;
+        previousMotionY = y;
+        previousMotionWidth = width;
+        previousMotionHeight = height;
+        previousMotionNanos = nowNanos;
+
+        if (motionBlurStrength <= .004 || alpha <= .01f) return;
+        float opacityBase = (float) Math.min(previousMotionAlpha * .12f, motionBlurStrength * .12f);
+        if (opacityBase <= .001f) return;
+        double distance = Math.min(5.0, 1.0 + motionBlurStrength * 4.0);
+        for (int layer = 3; layer >= 1; layer--) {
+            double trail = layer / 3.0;
+            double offsetX = -dx * .45 * layer;
+            double offsetY = -dy * .45 * layer;
+            double expand = Math.min(3.0, Math.abs(dw) * .28 + Math.abs(dh) * .18) * layer;
+            float opacity = opacityBase * (float) (trail * trail);
+            roundedRect(centerX - width * .5 + offsetX - expand,
+                    y + offsetY - expand * .35 - Math.copySign(distance, dy == 0.0 ? 1.0 : dy) * trail,
+                    width + expand * 2.0, height + expand * .7,
+                    Math.min(radius, height * .5) + expand * .5,
+                    hexColor(.72f, .84f, 1f, opacity));
+        }
     }
 
     private void drawCenteredIslandText(CFontRenderer font, String text, double centerX, double y,
@@ -2892,8 +3236,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
      *
      * @param plateSize   托盘边长。封面按它铺满整块托盘，不再自己先缩一圈
      * @param plateRadius 托盘圆角。封面沿用它才能严丝合缝：圆托盘传半径，方砖传方砖的圆角
-     * @param glyphScale  退回字形时相对托盘的缩放。封面是满幅位图、字形自带大片空白边距，
-     *                    两者不能共用一个尺寸口径（MUSIC_FOCUS 那块 31px 的方砖需要 .64）
+     * @param glyphScale  退回字形时相对托盘的缩放；只缩字形，封面仍铺满托盘
      */
     private void renderAmbientIcon(double centerX, double centerY,
                                    double plateSize, double plateRadius, double glyphScale,
@@ -2915,9 +3258,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
      * 画当前歌曲封面。动态封面就绪时 {@code preferredCoverLocation} 会返回抽帧纹理，
      * 于是常驻岛上的封面和桌面歌曲信息、全屏歌词页用的是同一张。
      *
-     * <p>尺寸和圆角都由调用方按托盘给定。原来这里自作主张缩到 82% 又固定 5px 小圆角：
-     * 圆托盘上于是四周各露一道约 1.6px 的月牙，MUSIC_FOCUS 的方砖上更是只盖住一半边长，
-     * 底下那两条旋转的强调条纹全露在封面外圈。</p>
+     * <p>尺寸和圆角都由调用方按托盘给定，封面铺满托盘，避免缩图和小圆角留下月牙形空隙。</p>
      *
      * @param radius 圆角，会夹到 {@code size * .5}（即整圆）以内
      * @return 是否真的画出来了；没有歌曲或纹理还没加载好时返回 false，调用方退回字形图标
@@ -3350,69 +3691,6 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 hexColor(1f, 1f, 1f, alpha * .58f));
     }
 
-    /**
-     * MUSIC_FOCUS 样式的原始音乐卡片封面。有意使用原始 OpenGL
-     * 形状而非 Android 素材：旋转的强调色带使紧凑和展开
-     * 状态感觉连贯，同时对 Minecraft 1.8.9 的固定功能管线保持安全。
-     */
-    private void renderMusicFocusArtwork(double centerX, double centerY, double islandHeight, float alpha,
-                                         int accentColor, int iconAccentColor, long now, boolean preview,
-                                         boolean noticeMode, IslandNoticeType noticeType, float success,
-                                         float ambientMix, IslandAmbientStatus.Snapshot ambient) {
-        double tileSize = Math.min(31.0, Math.max(21.0, islandHeight - 16.0));
-        double tileRadius = Math.min(8.0, tileSize * .28);
-        double beat = .985 + .025 * (.5 + .5 * Math.sin((preview ? now / 8.0 : now / 290.0)));
-        // 同 drawIsland 的托盘：封面会盖在这块砖上，砖上那层 66% 的强调色会透过半透明的封面，
-        // 把封面染成主题色。要盖封面就把强调色让出来，只留下面那层深色。
-        float tileArtworkMix = ambientMix > .005f && hasAmbientArtwork() ? ambientMix : 0f;
-        scaleAtPos(centerX, centerY, beat);
-        roundedRect(centerX - tileSize * .5, centerY - tileSize * .5, tileSize, tileSize, tileRadius,
-                RenderSystem.reAlpha(accentColor, alpha * .66f * (1f - tileArtworkMix)));
-        roundedRect(centerX - tileSize * .5 + 1.0, centerY - tileSize * .5 + 1.0,
-                Math.max(1.0, tileSize - 2.0), Math.max(1.0, tileSize - 2.0), Math.max(1.0, tileRadius - 1.0),
-                hexColor(.018f, .026f, .045f, alpha * (.76f + .22f * tileArtworkMix)));
-        roundedOutline(centerX - tileSize * .5, centerY - tileSize * .5, tileSize, tileSize, tileRadius, .80,
-                new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 92f)));
-
-        // 封面铺满整砖之后，这两条旋转条纹和下面那枚深色圆芯全在封面之下，留着只会在圆角
-        // 抗锯齿的那一两个像素上透出转动的色边。跟着 tileArtworkMix 淡出即可 —— 没有封面时
-        // （没在播放、或纹理还没加载好）它是 0，条纹照常全亮，字形分支也仍有圆芯当底衬。
-        float tileDecorAlpha = alpha * (1f - tileArtworkMix);
-        if (tileDecorAlpha > .004f) {
-            api.getGLStateManager().pushMatrix();
-            api.getGLStateManager().translate(centerX, centerY, 0);
-            api.getGLStateManager().rotate((float) ((preview ? now / 7.0 : spinnerRotation * .75) % 360.0), 0, 0, 1);
-            roundedRect(-tileSize * .34, -1.25, tileSize * .68, 2.5, 1.25,
-                    RenderSystem.reAlpha(iconAccentColor, tileDecorAlpha * .58f));
-            roundedRect(-1.25, -tileSize * .34, 2.5, tileSize * .68, 1.25,
-                    RenderSystem.reAlpha(accentColor, tileDecorAlpha * .46f));
-            api.getGLStateManager().popMatrix();
-
-            double coreSize = Math.max(8.0, tileSize * .37);
-            roundedRect(centerX - coreSize * .5, centerY - coreSize * .5, coreSize, coreSize, coreSize * .5,
-                    hexColor(.012f, .016f, .029f, tileDecorAlpha * .96f));
-        }
-        float eventMix = 1f - DynamicIslandMath.clamp01f(ambientMix);
-        if (eventMix > .005f) {
-            if (noticeMode) {
-                api.getGLStateManager().pushMatrix();
-                scaleAtPos(centerX, centerY, .64);
-                renderNoticeIcon(noticeType, noticeValue, centerX, centerY, alpha * eventMix,
-                        iconAccentColor, now);
-                api.getGLStateManager().popMatrix();
-            } else {
-                renderSpinner(centerX, centerY, alpha * (1f - success) * .72f * eventMix,
-                        iconAccentColor, now, preview);
-                renderSuccess(centerX, centerY, alpha * success * eventMix);
-            }
-        }
-        if (ambientMix > .005f) {
-            // 封面按整砖的边长和圆角铺满；.64 只留给退回的字形 —— 原来这层缩放套在封面上，
-            // 叠上封面自己的 82%，封面就只有砖的一半大（31 → 16.3），四周整圈都是砖。
-            renderAmbientIcon(centerX, centerY, tileSize, tileRadius, .64,
-                    alpha * ambientMix, iconAccentColor);
-        }
-    }
     private void renderSuccess(double centerX, double centerY, float alpha) {
         if (alpha <= .01f) return;
         double scale = .78 + .22 * DynamicIslandMath.smoothStep(successMorph);
@@ -3435,97 +3713,151 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         api.getGLStateManager().popMatrix();
     }
 
-    /*
-     * ============================ 音乐胶囊（MUSIC_CAPSULE）============================
-     *
-     * 收起行 + 悬停展开迷你卡。与回弹胶囊同一条分家规矩：只在 style == MUSIC_CAPSULE 时
-     * 经 drawIsland 进来，现有八款的绘制路径一行未动。内容绘制委托 {@link MusicCapsuleCard}
-     * （迷你卡的绘制与点击共用同一套 296×130 设计空间常量）；展开后的输入由全透明浮层
-     * {@code MusicCardOverlay} 承接（岛内搜索同款先例，零 mixin）。
-     */
+    /* 音乐收起行及五款共用的聊天音乐卡，几何与输入都使用实际绘制边界。 */
 
-    /**
-     * 悬停/展开状态机，每帧一次（renderInternal 里推进，隐藏早退之前，收起动画在
-     * 岛不可见时也能走完）。悬停驻留 → 展开目标；移开超时 / 暂停退休 / 播放器形变 → 收起。
-     * 展开完成后第一次按下鼠标交给透明浮层。
-     */
-    private void tickMusicCardState(long now, double frameDelta) {
-        boolean capsule = HudConfig.dynamicIslandEnabled
-                && getStyle() == DynamicIslandStyle.MUSIC_CAPSULE;
-        if (!capsule) {
-            cardOpenTarget = false;
-            if (cardOpen > 0.0) {
-                cardOpen = Math.max(0.0, cardOpen - frameDelta / 200.0);
-            }
-            if (cardOpen <= 0.0) MUSIC_CARD_BOUNDS = null;
-            return;
-        }
-        MusicCapsuleCard.tick((float) DynamicIslandMath.clamp(frameDelta, 1.0, 100.0));
-        boolean customPossible = !playerSurfaceTransition && !playerAbsorbImpact
-                && MusicCapsuleCard.rowContentActive()
-                && IslandVisibilityGate.allowAmbient(IslandVisibilityGate.capture())
-                && visibility > .5f;
-        if (!customPossible) {
-            cardOpenTarget = false;
-        } else {
-            double[] bounds = getLiveAnchorBounds();
-            double[] mouse = musicMouseLayout();
-            boolean inside = mouse != null && bounds != null && bounds[2] > 1.0 && bounds[3] > 1.0
-                    && mouse[0] >= bounds[0] && mouse[0] <= bounds[0] + bounds[2]
-                    && mouse[1] >= bounds[1] && mouse[1] <= bounds[1] + bounds[3];
-            if (inside) {
-                cardLastActiveMs = now;
-                if (cardHoverSinceMs < 0L) cardHoverSinceMs = now;
-            } else if (now - cardLastActiveMs > MUSIC_CARD_LEAVE_GRACE_MS) {
-                cardHoverSinceMs = -1L;
-            }
-            cardOpenTarget = HudConfig.islandHoverExpand && cardHoverSinceMs >= 0L
-                    && now - cardHoverSinceMs >= MUSIC_CARD_HOVER_DWELL_MS;
-            boolean lmb = com.muoniumplayer.compat.lwjgl2.Mouse.isButtonDown(0);
-            if (lmb && !cardPressLatched) {
-                cardPressLatched = true;
-                if (inside && cardOpen > .90
-                        && !com.muoniumplayer.core.screens.ncm.MusicCardOverlay.isActive()) {
-                    // 展开态上的第一下按下直接作为点击送达（浮层 initGui 消费）：
-                    // 否则用户要点两次——第一次只"打开交互"，第二次才真正按到按钮。
-                    com.muoniumplayer.core.screens.ncm.MusicCardOverlay.arm(musicCardDesignPoint(mouse));
-                    com.muoniumplayer.core.screens.ncm.MusicCardOverlay.open();
-                }
-            }
-            if (!lmb) cardPressLatched = false;
-        }
-        cardOpen = DynamicIslandMath.clamp(DynamicIslandMath.clamp01(
-                Interpolations.interpolate(cardOpen, cardOpenTarget ? 1.0 : 0.0,
-                        cardOpenTarget ? .30 : .22)), 0.0, 1.0);
+    /** 隐藏早退前推进；只在聊天界面接受输入，不创建第二个 Screen。 */
+    private void tickMusicCardState(boolean surfaceBlocked, double deltaMillis) {
+        maintainMusicCardContext();
+        boolean chat = IslandVisibilityGate.isChatOpen();
+        boolean enabled = HudConfig.dynamicIslandEnabled && HudConfig.islandHoverExpand;
+        boolean blocked = surfaceBlocked || musicCardSurfaceBlockedNow();
+        double motionDelta = !blocked && SkijaGfx.active() && SkijaGfx.canvas() != null ? deltaMillis : 0.0;
+        if (motionDelta <= .001) musicCardInteraction.pausePresentation();
+        MusicCapsuleCard.tick((float) motionDelta, (float) (blocked ? 0.0 : deltaMillis));
+        CloudMusic.PlaybackSnapshot snapshot = MusicCapsuleCard.currentSnapshot();
+        musicCardInteraction.update(enabled, chat, snapshot.music != null, blocked,
+                HudConfig.islandExpandTrigger, motionDelta, MusicCapsuleCard.presentationReady());
+        boolean event = musicCardInteraction.trackNoticeActive();
+        cardOpenTarget = musicCardInteraction.wantsOpen();
+        cardOpen = musicCardInteraction.openness();
         cardFittedScale = fitMusicCardScale();
-        // 展开期间的实时矩形交给透明浮层做点击换算；LIVE_ANCHOR_BOUNDS 由绘制段更新，
-        // 这里用上一帧的值——浮动一帧，换算误差小于一个物理像素。
-        if (cardOpen > .35) {
-            double[] live = getLiveAnchorBounds();
-            MUSIC_CARD_BOUNDS = live != null && live[2] > 1.0 && live[3] > 1.0 ? live : null;
-        } else if (cardOpen <= .05) {
-            MUSIC_CARD_BOUNDS = null;
+        musicCardOwnsSurface = musicCardClaimsSurface();
+        if (!musicCardOwnsSurface) MUSIC_CARD_BOUNDS = null;
+        if ((!chat && !event) || !enabled || blocked) MusicCapsuleCard.INSTANCE.cancelConfirmation();
+
+        double[] mouse = chat && !event ? musicMouseLayout() : null;
+        double[] point = mouse == null ? null : MusicCardLayout.designPoint(mouse[0], mouse[1], MUSIC_CARD_BOUNDS);
+        if (musicCardInteraction.canInteract() && !snapshot.preparing && point != null) {
+            MusicCapsuleCard.INSTANCE.setPointer(point[0], point[1]);
+        } else {
+            MusicCapsuleCard.INSTANCE.clearPointer();
+        }
+        String key = snapshot.music == null ? null : snapshot.music.getStableKey();
+        if (chat && musicCardInteraction.dragging(snapshot.sessionId, key) && point != null) {
+            if (com.muoniumplayer.compat.lwjgl2.Mouse.isButtonDown(0)) {
+                musicCardInteraction.previewSeek(MusicCardLayout.seekFraction(point[0]));
+            } else {
+                musicCardInteraction.cancelSeek();
+                MusicCapsuleCard.INSTANCE.releasePointer();
+            }
         }
     }
 
-    /** 鼠标布局坐标 → 迷你卡 296×130 设计空间坐标（展开中才有意义）。 */
-    private static double[] musicCardDesignPoint(double[] mouseLayout) {
-        double[] bounds = MUSIC_CARD_BOUNDS;
-        if (mouseLayout == null || bounds == null || bounds[2] <= 1.0 || bounds[3] <= 1.0) return null;
-        double scale = bounds[3] / MusicCapsuleCard.CARD_HEIGHT;
-        if (scale <= 0 || !Double.isFinite(scale)) return null;
-        return new double[]{(mouseLayout[0] - bounds[0]) / scale, (mouseLayout[1] - bounds[1]) / scale};
+    /** 输入与绘制共用场景门禁；通知、下载和曲线不再阻塞音乐卡。 */
+    private static boolean musicCardSurfaceBlockedNow() {
+        return playerSurfaceTransition || playerAbsorbImpact
+                || !IslandVisibilityGate.allowTrackNoticeOverlay(IslandVisibilityGate.capture(),
+                IslandVisibilityGate.isChatOpen(), playerSurfaceTransition);
     }
 
-    /** 迷你卡本帧的实际缩放：用户档位再按屏幕可用宽高收口，窄窗口上宁可缩小也不裁边。 */
+    /** 七树鼠标宿主在 vanilla 分派前调用，只有卡片按下及其配对抬起会被消费。 */
+    public static boolean handleMusicCardMouseButton(int button, int action) {
+        if (button != 0) return false;
+        maintainMusicCardContext();
+        MusicCardInteraction interaction = INSTANCE.musicCardInteraction;
+        if (action == 1) interaction.release();
+        if (musicCardSurfaceBlockedNow()) {
+            boolean captured = action == 0 && interaction.release();
+            interaction.suspend();
+            MusicCapsuleCard.INSTANCE.cancelConfirmation();
+            MusicCapsuleCard.INSTANCE.clearPointer();
+            return captured;
+        }
+        if (action == 0) {
+            CloudMusic.PlaybackSnapshot snapshot = CloudMusic.getSnapshot();
+            String key = snapshot.music == null ? null : snapshot.music.getStableKey();
+            if (IslandVisibilityGate.isChatOpen() && interaction.dragging(snapshot.sessionId, key)) {
+                double[] mouse = musicMouseLayout();
+                double[] point = mouse == null ? null
+                        : MusicCardLayout.designPoint(mouse[0], mouse[1], MUSIC_CARD_BOUNDS);
+                if (point != null) interaction.previewSeek(MusicCardLayout.seekFraction(point[0]));
+                MusicCapsuleCard.INSTANCE.seekToFraction(interaction.seekFraction(), snapshot);
+            }
+            MusicCapsuleCard.INSTANCE.releasePointer();
+            return interaction.release();
+        }
+        if (action == 1 && interaction.eventLocked()) return false;
+        if (action != 1 || !HudConfig.dynamicIslandEnabled || !HudConfig.islandHoverExpand
+                || !IslandVisibilityGate.isChatOpen() || playerSurfaceTransition
+                || !IslandVisibilityGate.allowSurface(IslandVisibilityGate.capture())) return false;
+        double[] mouse = musicMouseLayout();
+        if (mouse == null || !MusicCapsuleCard.hasMusic()) return false;
+        if (MusicCapsuleCard.INSTANCE.clickConfirmation(mouse[0], mouse[1])) {
+            interaction.capturePress();
+            return true;
+        }
+        double[] bounds = musicCardOwnsSurface ? MUSIC_CARD_BOUNDS : getLiveAnchorBounds();
+        if (bounds == null) return false;
+        double radius = bounds.length > 4 ? bounds[4] : Math.min(bounds[2], bounds[3]) * .5;
+        boolean inside = MusicCardLayout.containsRounded(mouse[0], mouse[1], bounds[0], bounds[1],
+                bounds[2], bounds[3], radius);
+        double[] anchorBounds = musicCardOwnsSurface && !interaction.canInteract() ? MUSIC_CARD_ANCHOR_BOUNDS : null;
+        if (!inside && anchorBounds != null) {
+            inside = MusicCardLayout.containsRounded(mouse[0], mouse[1], anchorBounds[0], anchorBounds[1],
+                    anchorBounds[2], anchorBounds[3], anchorBounds[4]);
+        }
+        if (!inside) {
+            if (cardIsExpanded()) collapseMusicCard();
+            return false;
+        }
+        if (!interaction.available()) return false;
+        interaction.capturePress();
+        if (!interaction.canInteract()) {
+            interaction.expand();
+            return true;
+        }
+        if (musicCardOwnsSurface && MusicCapsuleCard.currentSnapshot().preparing) return true;
+        double[] point = MusicCardLayout.designPoint(mouse[0], mouse[1], bounds);
+        if (point == null) return true;
+        CloudMusic.PlaybackSnapshot snapshot = CloudMusic.getSnapshot();
+        if (!MusicCapsuleCard.matchesFrame(snapshot) || musicCardDrawnSnapshot == null
+                || musicCardDrawnSnapshot.preparing || musicCardDrawnSnapshot.sessionId != snapshot.sessionId
+                || musicCardDrawnSnapshot.music == null
+                || !musicCardDrawnSnapshot.music.getStableKey().equals(snapshot.music.getStableKey())) return true;
+        MusicCardLayout.Target target = MusicCapsuleCard.INSTANCE.targetAt(point[0], point[1], snapshot);
+        MusicCapsuleCard.INSTANCE.pressPointer(target);
+        if (target == MusicCardLayout.Target.SEEK && snapshot.music != null) {
+            interaction.beginSeek(snapshot.sessionId, snapshot.music.getStableKey(), MusicCardLayout.seekFraction(point[0]));
+        } else {
+            MusicCapsuleCard.INSTANCE.click(point[0], point[1], snapshot);
+        }
+        return true;
+    }
+
+    private static boolean cardIsExpanded() {
+        return INSTANCE.cardOpen > .05 || INSTANCE.cardOpenTarget;
+    }
+
+    static double musicCardProgress(double fallback) {
+        CloudMusic.PlaybackSnapshot snapshot = MusicCapsuleCard.currentSnapshot();
+        String key = snapshot.music == null ? null : snapshot.music.getStableKey();
+        return INSTANCE.musicCardInteraction.dragging(snapshot.sessionId, key)
+                ? INSTANCE.musicCardInteraction.seekFraction() : fallback;
+    }
+
+    /** 卡片与当前窗口可用区域一起收口，位置偏移和整体岛缩放同样计入。 */
     private float fitMusicCardScale() {
         double configuredScale = DynamicIslandMath.clamp(HudConfig.dynamicIslandScale, .60, 1.35);
-        double availableWidth = Math.max(80.0, (RenderSystem.getLayoutWidth() - 24.0) / configuredScale);
-        double availableHeight = Math.max(60.0, (RenderSystem.getLayoutHeight() - 40.0) / configuredScale);
+        double top = (getStyle() == DynamicIslandStyle.BOUNCE ? BounceIslandMath.TOP : TOP_MARGIN)
+                + DynamicIslandMath.clamp(HudConfig.dynamicIslandY, -20.0, 400.0);
+        double availableWidth = Math.max(1.0, (RenderSystem.getLayoutWidth() - 24.0) / configuredScale);
+        double availableHeight = Math.max(1.0, (RenderSystem.getLayoutHeight() - Math.max(6.0, top) - 12.0)
+                / configuredScale);
+        double compactHeight = getStyle() == DynamicIslandStyle.BOUNCE ? BounceIslandMath.ROW_HEIGHT
+                : getStyle() == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT;
         double fit = Math.min(availableWidth / MusicCapsuleCard.CARD_WIDTH,
-                availableHeight / MusicCapsuleCard.CARD_HEIGHT);
-        float base = MusicCapsuleCard.cardScale();
-        return (float) DynamicIslandMath.clamp(Math.min(base, fit), 0.35, base);
+                Math.max(1.0, availableHeight - compactHeight) / (MusicCapsuleCard.CARD_HEIGHT + 12.0));
+        return (float) Math.max(.1, Math.min(MusicCapsuleCard.cardScale(), fit));
     }
 
     /**
@@ -3552,32 +3884,68 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
     }
 
-    /**
-     * 本款的整体绘制：深色卡面（真玻璃配方与其它款一致）+ 收起行 ↔ 迷你卡内容交叉过渡。
-     * 行侧按 {@code (1-cardOpen)²} 退场，比尺寸动画先一步让位，避免文本被拉宽的那几帧露馅。
-     */
-    private void drawMusicCapsuleIsland(double x, double y, double width, double height, double pillRadius,
-                                        float alpha, long now, boolean preview, float ambientAlpha) {
-        int accent = NCMTheme.getAccentColor();
-        double rowFadeValue = (1.0 - cardOpen) * (1.0 - cardOpen);
-        float rowAlpha = alpha * ambientAlpha * (float) DynamicIslandMath.clamp01(rowFadeValue);
-        float cardAlpha = alpha * ambientAlpha * (float) DynamicIslandMath.clamp01(cardOpen);
-        double radius = DynamicIslandMath.lerp(pillRadius,
-                MusicCapsuleCard.CARD_RADIUS * cardFittedScale, cardOpen);
+    private void drawMusicCardAnchorSurface(double x, double y, double width, double height,
+                                            double radius, float alpha, boolean liquidGlass, long now) {
+        if (liquidGlass) {
+            renderLiquidGlassSurface(x, y, width, height, radius, alpha, now);
+            return;
+        }
+        boolean frosted = GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
+        float thin = frosted ? GlassLook.tintedAlpha(GlassLook.Surface.ISLAND, 1.0f) : 1.0f;
+        roundedRect(x, y, width, height, radius, hexColor(.012f, .014f, .020f, alpha * .985f * thin));
+    }
+
+    private void drawMusicCapsuleSurface(double x, double y, double width, double height,
+                                         double radius, float alpha) {
         boolean frosted = GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
         float thin = frosted ? GlassLook.tintedAlpha(GlassLook.Surface.ISLAND, 1.0f) : 1.0f;
         roundedRect(x, y, width, height, radius, hexColor(.010f, .014f, .024f, alpha * .99f * thin));
-        if (frosted) {
-            GlassLook.paintEdge(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
+        roundedOutline(x, y, width, height, radius, .55,
+                new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 22f)));
+        if (frosted) GlassLook.paintEdge(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
+        roundedRect(x + radius * .70, y + .8, Math.max(2.0, width - radius * 1.40), .65, .32,
+                hexColor(1f, 1f, 1f, alpha * .035f * thin));
+    }
+
+    private void drawInferenceCapsuleMarquee(double x, double y, double width, double height,
+                                             double radius, float alpha, int accentColor, long now) {
+        Canvas canvas = SkijaGfx.canvas();
+        if (canvas == null || alpha <= .01f || width <= 8.0 || height <= 8.0) return;
+        double inset = 1.25;
+        double innerWidth = width - inset * 2.0;
+        double innerHeight = height - inset * 2.0;
+        double innerRadius = Math.max(0.0, Math.min(radius - inset, innerHeight * .5));
+        int save = canvas.save();
+        try {
+            canvas.clipRRect(RRect.makeXYWH((float) x, (float) y, (float) width, (float) height,
+                    (float) Math.min(radius, height * .5)), true);
+            roundedOutline(x + inset, y + inset, innerWidth, innerHeight, innerRadius, 1.05,
+                    new Color(RenderSystem.reAlpha(accentColor, alpha * .24f), true));
+            double phase = InferenceCapsuleMotion.phase(now);
+            int samples = InferenceCapsuleMotion.sampleCount(innerWidth, innerHeight, innerRadius);
+            int trailSamples = Math.max(8, (int) Math.ceil(samples * .26));
+            for (int index = 0; index < trailSamples; index++) {
+                InferenceCapsuleMotion.Point point = InferenceCapsuleMotion.pointAt(
+                        innerWidth, innerHeight, innerRadius, phase - index / (double) samples * .26);
+                double trail = 1.0 - index / (double) trailSamples;
+                double glow = trail * trail;
+                int color = trail > .72 ? DynamicIslandMath.brightenAccent(accentColor, .46f) : accentColor;
+                float tickAlpha = alpha * (float) (.16 + .84 * glow);
+                drawRotatedPill(x + inset + point.x, y + inset + point.y,
+                        2.5 + 1.9 * glow, 1.2, (float) point.tangentDegrees,
+                        RenderSystem.reAlpha(color, tickAlpha));
+            }
+        } finally {
+            canvas.restoreToCount(save);
         }
-        roundedOutline(x, y, width, height, radius, .70,
-                new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 34f)));
-        if (rowAlpha > .01f) {
-            MusicCapsuleCard.INSTANCE.drawRow(x, y, width, height, rowAlpha, accent);
-        }
-        if (cardAlpha > .01f) {
-            MusicCapsuleCard.INSTANCE.drawCard(x, y, cardFittedScale, cardAlpha, preview);
-        }
+    }
+
+    /** 音乐胶囊收起行的表面，聊天音乐卡使用独立的高斯模糊材质。 */
+    private void drawMusicCapsuleIsland(double x, double y, double width, double height, double radius,
+                                        float alpha, float ambientAlpha) {
+        int accent = NCMTheme.getAccentColor();
+        drawMusicCapsuleSurface(x, y, width, height, radius, alpha);
+        MusicCapsuleCard.INSTANCE.drawRow(x, y, width, height, alpha * ambientAlpha, accent);
     }
 
     /*

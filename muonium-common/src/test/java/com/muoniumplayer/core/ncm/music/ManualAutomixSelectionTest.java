@@ -194,6 +194,87 @@ class ManualAutomixSelectionTest {
     }
 
     @Test
+    void islandSelectionPreviewNeverBorrowsTheOldClockAndOnlyTheActiveRequestIsPresented() throws Exception {
+        Music audible = new StubSong();
+        Music selected = new StubSong();
+        CloudMusic.currentlyPlaying = audible;
+        CloudMusic.playThread = (Thread) owner;
+        PlaybackSession oldSession = CloudMusic.currentSession;
+        PlaybackSession current = new PlaybackSession(CloudMusic.generation.get(), audible.getStableKey(), audible.getId());
+        CloudMusic.currentSession = current;
+        try {
+            Object selection = selection(selected);
+            set(owner, "manualSelection", selection);
+            CloudMusic.PlaybackSnapshot actual = new CloudMusic.PlaybackSnapshot(current.sessionId,
+                    audible.getId(), 82_000L, 180_000L, true, null, audible);
+            CloudMusic.PlaybackSnapshot preview = CloudMusic.islandPresentationSnapshot(actual);
+            assertTrue(preview.preparing);
+            assertSame(selected, preview.music);
+            assertEquals(-1L, preview.sessionId, "pending identity is not an audio session");
+            assertTrue(preview.requestNanos > 0L);
+            assertNull(preview.player);
+            assertEquals(0L, preview.positionMs);
+            assertFalse(preview.playing);
+            assertSame(audible, CloudMusic.currentlyPlaying);
+            call(owner, "cancelManualSelection");
+            assertSame(actual, CloudMusic.islandPresentationSnapshot(actual));
+            set(owner, "manualSelection", selection(selected));
+            current.invalidate();
+            assertSame(actual, CloudMusic.islandPresentationSnapshot(actual), "invalid session cannot publish a pending island");
+        } finally {
+            CloudMusic.currentSession = oldSession;
+        }
+    }
+
+    @Test
+    void normalPreparingSessionIsVisibleBeforeAudibleAndStopsAdvertisingPreparationAfterFailure() throws Exception {
+        Music selected = new StubSong();
+        CloudMusic.currentlyPlaying = selected;
+        CloudMusic.playThread = (Thread) owner;
+        PlaybackSession oldSession = CloudMusic.currentSession;
+        PlaybackSession current = new PlaybackSession(CloudMusic.generation.get(), selected.getStableKey(), selected.getId());
+        CloudMusic.currentSession = current;
+        set(owner, "session", current);
+        set(owner, "preparingSong", true);
+        CloudMusic.PlaybackSnapshot actual = new CloudMusic.PlaybackSnapshot(current.sessionId,
+                selected.getId(), 67_000L, 180_000L, false, null, selected);
+        try {
+            CloudMusic.PlaybackSnapshot view = CloudMusic.islandPresentationSnapshot(actual);
+            assertTrue(view.preparing);
+            assertEquals(current.sessionId, view.sessionId);
+            assertSame(selected, view.music);
+            assertEquals(0L, view.positionMs);
+            assertEquals(0L, view.requestNanos);
+            set(owner, "preparingSong", false);
+            assertSame(actual, CloudMusic.islandPresentationSnapshot(actual), "failed resolver must not pretend to be preparing forever");
+            set(owner, "preparingSong", true);
+            current.invalidate();
+            assertSame(actual, CloudMusic.islandPresentationSnapshot(actual));
+        } finally {
+            set(owner, "preparingSong", false);
+            CloudMusic.currentSession = oldSession;
+        }
+    }
+
+    @Test
+    void staleIslandCommandsCannotPauseOrSeekTheNewlyCommittedSession() {
+        Music old = new StubSong(), currentTrack = new StubSong();
+        PlaybackSession previous = CloudMusic.currentSession;
+        Music oldPlaying = CloudMusic.currentlyPlaying;
+        CloudMusic.currentlyPlaying = currentTrack;
+        CloudMusic.currentSession = new PlaybackSession(CloudMusic.generation.get(), currentTrack.getStableKey(), currentTrack.getId());
+        CloudMusic.PlaybackSnapshot stale = new CloudMusic.PlaybackSnapshot(CloudMusic.generation.get() - 1L,
+                old.getId(), 0L, 180_000L, true, null, old);
+        try {
+            assertFalse(CloudMusic.seekToMillis(60_000f, stale));
+            assertEquals(CloudMusic.PlayPauseResult.UNAVAILABLE, CloudMusic.togglePlayPause(stale));
+        } finally {
+            CloudMusic.currentSession = previous;
+            CloudMusic.currentlyPlaying = oldPlaying;
+        }
+    }
+
+    @Test
     void invalidOrSupersededSelectionCannotRemainHighlighted() throws Exception {
         CloudMusic.playThread = (Thread) owner;
         Music first = new StubSong();

@@ -2,6 +2,7 @@ package com.muoniumplayer.compat.mc;
 
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexSorting;
 import com.muoniumplayer.core.lyrics3d.WorldLyricsRenderer;
@@ -276,7 +277,17 @@ public final class WorldLyricsBridge {
 
             try {
                 WorldBillboard.forceVanillaType = true;
-                                renderInner(hudBasePose, mc, mc.gameRenderer.getMainCamera());
+                // HUD 直画持有自己的立即提交缓冲，不能继承宿主文字的挂起批次。
+                // 生命周期限定本次绘制：所有批次在透视/单位视图仍有效时收完，
+                // 成功或异常都关闭原生存储，不向下一帧/资源重载遗留顶点。
+                try (ByteBufferBuilder storage = new ByteBufferBuilder(1536)) {
+                    MultiBufferSource.BufferSource lyricBuffers = MultiBufferSource.immediate(storage);
+                    try {
+                        renderInner(hudBasePose, mc, mc.gameRenderer.getMainCamera(), lyricBuffers);
+                    } finally {
+                        lyricBuffers.endBatch();
+                    }
+                }
                 if (TRACE && hudDiagFrame++ % 60 == 0) {
                     Camera c = mc.gameRenderer.getMainCamera();
                     org.joml.Matrix4f P = RenderSystem.getProjectionMatrix();
@@ -423,6 +434,11 @@ public final class WorldLyricsBridge {
     private static final org.joml.Matrix4f bobFreeBackup = new org.joml.Matrix4f();
 
     private static void renderInner(Matrix4f basePose, Minecraft mc, Camera camera) {
+        renderInner(basePose, mc, camera, mc.renderBuffers().bufferSource());
+    }
+
+    private static void renderInner(Matrix4f basePose, Minecraft mc, Camera camera,
+                                    MultiBufferSource.BufferSource lyricBuffers) {
         CameraAccess cameraAccess = CameraAccess.capture(0f);
         if (cameraAccess == null) return;
 
@@ -462,7 +478,7 @@ public final class WorldLyricsBridge {
         poseStack.last().pose().set(basePose);
 
         WorldBillboard.INSTANCE.begin(poseStack,
-                mc.renderBuffers().bufferSource(),
+                lyricBuffers,
                 cameraAccess.eyeX(), cameraAccess.eyeY(), cameraAccess.eyeZ());
         try {
             WorldLyricsRenderer.render(WorldLyricsState.get(), cameraAccess, settings,

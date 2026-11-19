@@ -24,6 +24,37 @@ public final class MinPhaseIIRCoeffs {
             2500.0f, 3150.0f, 4000.0f, 5000.0f, 6300.0f, 8000.0f, 10000.0f, 12500.0f, 16000.0f, 20000.0f
     };
 
+    /** 支持的图形 EQ 段数；纯元数据，不创建/更新滤波系数。 */
+    public static int[] supportedBandCounts() {
+        return new int[] {10, 15, 25, 31};
+    }
+
+    /** 引擎实际中心频点（Hz）的防御副本；不支持的段数明确拒绝。 */
+    public static double[] frequenciesForBandCount(int bandCount) {
+        float[] source;
+        switch (bandCount) {
+            case 10:
+                source = K_MIN_PHASE_IIR_COEFFS_FREQ10_BANDS;
+                break;
+            case 15:
+                source = K_MIN_PHASE_IIR_COEFFS_FREQ15_BANDS;
+                break;
+            case 25:
+                source = K_MIN_PHASE_IIR_COEFFS_FREQ25_BANDS;
+                break;
+            case 31:
+                source = K_MIN_PHASE_IIR_COEFFS_FREQ31_BANDS;
+                break;
+            default:
+                throw new IllegalArgumentException("不支持的 EQ 段数：" + bandCount);
+        }
+        double[] frequencies = new double[source.length];
+        for (int index = 0; index < source.length; index++) {
+            frequencies[index] = source[index];
+        }
+        return frequencies;
+    }
+
     // 上游 bands_ 为 uint32_t -> int
     private int bands_;
 

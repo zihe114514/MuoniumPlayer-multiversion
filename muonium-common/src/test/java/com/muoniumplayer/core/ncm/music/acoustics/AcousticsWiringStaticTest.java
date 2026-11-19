@@ -98,7 +98,43 @@ class AcousticsWiringStaticTest {
         assertTrue(src.contains("AcousticsRuntime.onTrackChanged"), "换曲/seek 必须清声场");
     }
 
-    // ---- 世界声源(暂仅 26.3;铺树后把 26.3 专属断言并入全树循环) ----
+    @Test
+    @DisplayName("七树声源状态先于声学采样,GUI 不停 tick,音箱键不嵌在环境选曲键里")
+    void speakerLifecycleAndKeysAreIndependent() throws IOException {
+        for (String tree : TREES) {
+            String src = read(repoRoot().resolve(tree)
+                    .resolve("src/main/java/com/muoniumplayer/MuoniumPlayerClient.java"));
+            int tick = src.indexOf("com.muoniumplayer.compat.mc.SpeakerManager.tick();");
+            int capture = src.indexOf("AcousticsRuntime.onClientTick(");
+            int keyGate = src.indexOf("if (keyOpenMusic == null)");
+            assertTrue(tick >= 0 && tick < capture && tick < keyGate,
+                    tree + " 音箱状态必须在采样及GUI按键闸之前更新");
+            assertTrue(src.indexOf("SpeakerManager.tick();",
+                            tick + "com.muoniumplayer.compat.mc.SpeakerManager.tick();".length()) < 0,
+                    tree + " 不应在GUI按键分支重复tick");
+            int ambient = src.indexOf("if (keyAmbientNow.consumeClick())");
+            int speaker = src.indexOf("if (keySpeakerPlace.consumeClick())");
+            assertTrue(ambient >= 0 && speaker > ambient);
+            String between = src.substring(ambient, speaker);
+            int balance = 0;
+            for (char c : between.toCharArray()) {
+                if (c == '{') balance++;
+                if (c == '}') balance--;
+            }
+            assertTrue(balance == 0, tree + " 音箱键仍嵌在环境选曲键内");
+
+            String probe = read(repoRoot().resolve(tree)
+                    .resolve("src/main/java/com/muoniumplayer/compat/mc/ListenerProbe.java"));
+            assertTrue(probe.contains("public Object contextKey()")
+                            && probe.contains("world != expectedWorld"),
+                    tree + " 没有过期世界采样隔离");
+            assertTrue(probe.contains("DirectPath.arrivalPan"), tree + " 来声投影没有统一符号");
+            assertTrue(probe.contains("shape.clip(from, to, pos) != null"),
+                    tree + " 仍把仅经过体素当成命中遮挡");
+        }
+    }
+
+    // ---- 世界声源(主开发树渲染桥的额外守卫) ----
 
     private static final String SPEAKER_TREE = "26.3";
 

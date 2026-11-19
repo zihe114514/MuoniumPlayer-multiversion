@@ -43,13 +43,11 @@ final class DynamicIslandLayoutCalculator {
                     ? "正在连接音频源" : speed);
         }
 
-        boolean systemCard = style == DynamicIslandStyle.SYSTEM_CARD;
-        boolean musicFocus = style == DynamicIslandStyle.MUSIC_FOCUS;
         double minWidth = styleMinWidth(style, noticeMode);
         double targetHeight = styleTargetHeight(style, noticeMode);
 
         if (volumeNotice) {
-            targetHeight += systemCard ? 8.0 : 7.0;
+            targetHeight += 7.0;
         }
 
         /*
@@ -125,6 +123,31 @@ final class DynamicIslandLayoutCalculator {
         return new LayoutData("", "", 1.0, targetWidth, targetHeight);
     }
 
+    /** 音乐静息行的基础尺寸，仍受屏幕边距约束。 */
+    static double musicRowWidth(double baseWidth, double configuredScale, double screenWidth) {
+        double base = Double.isFinite(baseWidth) ? DynamicIslandMath.clamp(baseWidth, MIN_BASE_WIDTH, MAX_BASE_WIDTH)
+                : DEFAULT_BASE_WIDTH;
+        double scale = Double.isFinite(configuredScale) ? DynamicIslandMath.clamp(configuredScale, .60, 1.35) : 1.0;
+        double width = styleMinWidth(DynamicIslandStyle.MUSIC_CAPSULE, true) * base / DEFAULT_BASE_WIDTH;
+        double available = Double.isFinite(screenWidth) && screenWidth > 0.0
+                ? Math.max(1.0, (screenWidth - 24.0) / scale) : width;
+        return Math.min(width, available);
+    }
+
+    /** 短句按内容伸长，只有达到胶囊最大长度（或屏幕上限）后才需要滚动。 */
+    static double musicRowWidth(double baseWidth, double maximumWidth, double contentWidth,
+                                double configuredScale, double screenWidth) {
+        double base = musicRowWidth(baseWidth, configuredScale, screenWidth);
+        double maximum = Double.isFinite(maximumWidth)
+                ? DynamicIslandMath.clamp(maximumWidth, MIN_BASE_WIDTH, MAX_BASE_WIDTH) : 320.0;
+        double scale = Double.isFinite(configuredScale) ? DynamicIslandMath.clamp(configuredScale, .60, 1.35) : 1.0;
+        if (Double.isFinite(screenWidth) && screenWidth > 0.0) {
+            maximum = Math.min(maximum, Math.max(1.0, (screenWidth - 24.0) / scale));
+        }
+        double desired = Double.isFinite(contentWidth) ? Math.max(base, contentWidth) : base;
+        return Math.min(maximum, desired);
+    }
+
     /** 常驻内容可用的横向空间,渲染层据此决定要不要丢掉优先级最低的条目。 */
     static double ambientContentBudget(DynamicIslandStyle style, double configuredScale, double screenWidth) {
         double screenMaxWidth = Math.max(60.0, (screenWidth - 12.0) / configuredScale);
@@ -153,12 +176,9 @@ final class DynamicIslandLayoutCalculator {
         // 回弹胶囊本身按"测出来的文字宽度"定尺寸，这里给的是静息地板值，基础宽度滑块仍从它缩放。
         if (style == DynamicIslandStyle.BOUNCE) return noticeMode ? 118.0 : 140.0;
         if (style == DynamicIslandStyle.COMPACT) return noticeMode ? 118.0 : 146.0;
-        if (style == DynamicIslandStyle.CARD) return noticeMode ? 146.0 : 170.0;
-        if (style == DynamicIslandStyle.MUSIC_FOCUS) return noticeMode ? 172.0 : 194.0;
-        if (style == DynamicIslandStyle.SYSTEM_CARD) return noticeMode ? 154.0 : 176.0;
-        // 液态玻璃要给折射亮带和边缘光留出余量,所以比通透玻璃再宽一点。
+        // 液态玻璃要给折射亮带和边缘光留出余量。
         if (style == DynamicIslandStyle.LIQUID_GLASS) return noticeMode ? 142.0 : 168.0;
-        if (style == DynamicIslandStyle.GLASS) return noticeMode ? 132.0 : 158.0;
+        if (style == DynamicIslandStyle.MUSIC_CAPSULE) return noticeMode ? 176.0 : 152.0;
         return noticeMode ? 126.0 : 152.0;
     }
 
@@ -166,11 +186,7 @@ final class DynamicIslandLayoutCalculator {
         // 一款恒定的行高：多事件靠叠行变高，不靠把卡片拉高（见 drawIsland 的 bounce 分支）。
         if (style == DynamicIslandStyle.BOUNCE) return BounceIslandMath.ROW_HEIGHT;
         if (style == DynamicIslandStyle.COMPACT) return noticeMode ? 30.0 : 32.0;
-        if (style == DynamicIslandStyle.CARD) return noticeMode ? 38.0 : 42.0;
-        if (style == DynamicIslandStyle.MUSIC_FOCUS) return noticeMode ? 50.0 : 56.0;
-        if (style == DynamicIslandStyle.SYSTEM_CARD) return noticeMode ? 46.0 : 52.0;
         if (style == DynamicIslandStyle.LIQUID_GLASS) return noticeMode ? 38.0 : 42.0;
-        if (style == DynamicIslandStyle.GLASS) return noticeMode ? 34.0 : 38.0;
         return noticeMode ? 34.0 : 38.0;
     }
 
@@ -186,48 +202,23 @@ final class DynamicIslandLayoutCalculator {
      */
     private static final double CONTENT_SLACK = 3.0;
 
-    /**
-     * 内容区左边界距灵动岛左边的距离。
-     *
-     * <p>通知文案的 {@code textLeft}、常驻行的 gutter、以及本类的 {@link #styleSideReserve}
-     * 原来各写一份常数，三者互相漂移。默认样式托盘的视觉右缘已经在 32.75
-     * （图标内缩 23 + 托盘 18.4 的半宽 × 绘制时的 1.06 缩放），而常驻行的 gutter 只有 34.0，
-     * 歌名距封面就剩 1.25px；CARD 的 34.75、LIQUID_GLASS 的 34.39 更是直接压到封面上。
-     * 现在三处都收到这一个方法，右侧同理收到 {@link #styleRightPadding}。</p>
-     *
-     */
+    /** 通知文案、常驻行和宽度预算共用同一条内容区左边界。 */
     static double styleContentLeft(DynamicIslandStyle style) {
         return stylePlateRight(style) + CONTENT_GAP;
     }
 
-    /**
-     * 左侧图标托盘的视觉右缘距灵动岛左边的距离 = 图标中心内缩 + 托盘半宽 × 绘制时的额外缩放。
-     *
-     * <p>刻意把式子摊开写而不是填一张算好的表：托盘尺寸的权威定义在
-     * {@code DownloadDynamicIsland#drawIsland}（{@code iconInset} / {@code iconPlateBase} /
-     * {@code scaleAtPos} 的 1.06），改那边时这里的三个因子能被一眼对上；填死数字的话
-     * 对不上也看不出来，而这正是间距一路缩到 1.25px 的来路。</p>
-     *
-     * <p>MUSIC_FOCUS 不走圆托盘而是一块方砖：满高时边长 31（{@code min(31, max(21, 高 - 16))}），
-     * 外面还套一层最大 1.01 的呼吸缩放。</p>
-     */
+    /** 图标中心内缩 + 托盘半宽 × 绘制缩放，与 drawIsland 的托盘几何保持一致。 */
     private static double stylePlateRight(DynamicIslandStyle style) {
-        // 回弹胶囊不走"托盘居中"那套推算：参考稿把文字左边界直接钉在 端距 + 托盘区宽 = 35，
-        // 于是这里反着补一个值，让 styleContentLeft 算回同一个 35，两套版式对得上。
         if (style == DynamicIslandStyle.BOUNCE) {
             return BounceIslandMath.SIDE_PADDING + BounceIslandMath.LOGO_AREA_WIDTH - CONTENT_GAP;
         }
-        if (style == DynamicIslandStyle.SYSTEM_CARD) return 20.0 + 17.0 * .5;
-        if (style == DynamicIslandStyle.MUSIC_FOCUS) return 26.0 + 31.0 * .5 * 1.01;
         if (style == DynamicIslandStyle.LIQUID_GLASS) return 24.0 + 19.6 * .5 * 1.06;
-        if (style == DynamicIslandStyle.CARD) return 25.0 + 18.4 * .5 * 1.06;
         return 23.0 + 18.4 * .5 * 1.06;
     }
 
-    /** 内容区右侧留白。两种大卡片的圆角更大，要多让一点才不会压到圆角上。 */
+    /** 内容区右侧留白。 */
     static double styleRightPadding(DynamicIslandStyle style) {
-        return style == DynamicIslandStyle.SYSTEM_CARD || style == DynamicIslandStyle.MUSIC_FOCUS
-                ? 12.0 : 9.0;
+        return 9.0;
     }
 
     /**

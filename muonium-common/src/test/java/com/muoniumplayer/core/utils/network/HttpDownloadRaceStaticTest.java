@@ -73,29 +73,41 @@ class HttpDownloadRaceStaticTest {
     }
 
     @Test
-    @DisplayName("写入隔离：每路写自己的 .race<N> 临时文件，退出路径都删")
+    @DisplayName("写入隔离：每路写自己的 .race<N> 临时文件；全败保留，产生冠军后清理")
     void perSlotPartFiles() throws Exception {
         String race = raceSource();
         assertTrue(race.contains("PART_SUFFIX + slot"), "每路的临时文件必须带自己的槽位号");
-        assertTrue(race.contains("deleteQuietly(part)"), "临时文件在 finally 里删，不许留垃圾");
+        assertTrue(race.contains("if (started.contains(allWorkers[index])) deleteQuietly(partFile(target, index))"),
+                "只有竞速成功并选出冠军后才清理失败线路的续传残片");
+        int worker = race.indexOf("Thread worker = new Thread");
+        int workerEnd = race.indexOf("}, \"muonium-download-race-\"", worker);
+        assertTrue(worker >= 0 && workerEnd > worker, "竞速工作线程必须存在");
+        assertFalse(race.substring(worker, workerEnd).contains("deleteQuietly(part)"),
+                "全败或等待下次重试时不得清掉断点文件");
     }
 
     @Test
-    @DisplayName("断点续传：Range 接着拉、200 全量回退清残片、终验整包盖住前缀")
+    @DisplayName("断点续传：重定向携带 Range，206 与 Content-Range 校验；200/416 不拼接异版本")
     void resumeSemanticsPinned() throws Exception {
         String race = raceSource();
         assertTrue(race.contains("\"Range\", \"bytes=\" + rangeFrom + \"-\""),
                 "续传必须挂 Range 头（bytes=<已收>-）");
-        assertTrue(race.contains("code != 206") && race.contains("续传未生效"),
-                "续传必须核对服务端回 206，不是 206 就算这路失败");
+        assertTrue(race.contains("already > 0L && code != 206") && race.contains("续传未生效"),
+                "续传必须核对服务端回 206");
+        assertTrue(race.contains("validateContentRange(connection.getHeaderField(\"Content-Range\"), already, expectedBytes)"),
+                "续传必须核对响应起点和完整对象总大小");
+        assertTrue(race.contains("HTTP 200") || race.contains("already > 0L && code == 200"),
+                "Range 被忽略并返回全量响应时必须清残片重下");
+        assertTrue(race.contains("already > 0L && code == 416"),
+                "416 时要先校验本地完整文件，不能盲目失败或追加");
         assertTrue(race.contains("resumeBytes(part, expectedBytes)"),
-                "开跑前必须经 resumeBytes 判定残片可续（越界/满额残片要清）");
+                "开跑前必须检查残片长度");
         assertTrue(race.contains("new FileOutputStream(part, already > 0L)"),
-                "续传必须以追加模式写残片，不能截断重写");
-        // 残片前缀不单独过哈希，但整包 sha256 终验把它一起盖住——这条不许退回去。
-        assertTrue(race.contains("sha256 不符"), "终验 sha256 是前缀污染的唯一防线");
-        assertTrue(race.indexOf("resumeBytes") < race.indexOf("openFollowing(URI.create(url).toURL(), 0, already)"),
-                "Range 头的起点必须来自 resumeBytes 的判定结果");
+                "续传必须以追加模式写残片");
+        assertTrue(race.contains("updateDigestFromFile(digest, part)"),
+                "整包 SHA-256 必须覆盖已收前缀");
+        assertTrue(race.contains("openFollowing(new URL(url, location), depth + 1, rangeFrom)"),
+                "重定向后 Range 起点必须不变");
     }
 
     @Test
@@ -106,8 +118,8 @@ class HttpDownloadRaceStaticTest {
         // 开关语义（源码级）：与其它下载器同款——null/空白/任意非 false 值都算开。
         assertTrue(race.contains("!\"false\".equalsIgnoreCase(value.trim())"),
                 "只有显式 false 才关，其它值（含乱写）一律开");
-        assertTrue(race.contains("settled.compareAndSet(false, true)"),
-                "冠军判定必须是 CAS：任何时刻最多一条路改名");
+        assertTrue(race.contains("synchronized (winnerLock)") && race.contains("settled.set(true)"),
+                "正式文件移动成功后才置竞速完成标记");
     }
 
     @Test

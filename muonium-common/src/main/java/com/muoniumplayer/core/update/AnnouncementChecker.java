@@ -9,6 +9,9 @@ import com.muoniumplayer.core.utils.network.HttpUtils;
 
 import java.io.File;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -18,6 +21,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
@@ -69,8 +74,50 @@ public final class AnnouncementChecker {
     private static final Object LOCK = new Object();
     private static final Gson GSON = new Gson();
 
-    /** 当前公告列表。不可变表，整体替换，所以读侧不需要锁。 */
-    private static volatile List<Announcement> announcements = Collections.emptyList();
+    /** One immutable publication: readers must not combine lists from different fetches. */
+    public static final class Snapshot {
+        private final List<Announcement> announcements;
+        private final List<Announcement> sponsorships;
+        private final List<Announcement> communities;
+
+        public Snapshot(List<Announcement> announcements, List<Announcement> sponsorships,
+                        List<Announcement> communities) {
+            this.announcements = immutable(announcements);
+            this.sponsorships = immutable(sponsorships);
+            this.communities = immutable(communities);
+        }
+
+        public List<Announcement> announcements() {
+            return this.announcements;
+        }
+
+        public List<Announcement> sponsorships() {
+            return this.sponsorships;
+        }
+
+        public List<Announcement> communities() {
+            return this.communities;
+        }
+
+        public boolean hasContent() {
+            return !this.announcements.isEmpty() || !this.sponsorships.isEmpty()
+                    || !this.communities.isEmpty();
+        }
+
+        private static List<Announcement> immutable(List<Announcement> cards) {
+            return cards == null ? Collections.<Announcement>emptyList()
+                    : Collections.unmodifiableList(new ArrayList<Announcement>(cards));
+        }
+    }
+
+    private static volatile Snapshot currentSnapshot = new Snapshot(null, null, null);
+    /** Read-side calls never load files or wait on persistence. */
+    private static volatile Set<String> readSnapshot = Collections.emptySet();
+    private static final ExecutorService STATE_WRITER = Executors.newSingleThreadExecutor(task -> {
+        Thread thread = new Thread(task, "muonium-announcement-state");
+        thread.setDaemon(true);
+        return thread;
+    });
     /** 这一次启动里有没有拿到过任何一份清单（成功的或本地覆盖的）。界面据此区分「加载中」与「没有公告」。 */
     private static volatile boolean resolved;
     private static volatile boolean fetching;
@@ -84,6 +131,8 @@ public final class AnnouncementChecker {
 
     // 以下几项由 LOCK 保护，只在持久化读写时访问。
     private static boolean loaded;
+    private static boolean loading;
+    private static boolean savePending;
     /** 已经看过的公告 id，按看过先后排列。 */
     private static final List<String> readIds = new ArrayList<String>();
     private static long cachedAt;
@@ -110,7 +159,7 @@ public final class AnnouncementChecker {
         currentVersion = modVersion == null ? "" : modVersion.trim();
         mcVersion = minecraftVersion == null ? "" : minecraftVersion.trim();
         loaderId = loader == null ? "" : loader.trim();
-        startThread();
+        startThread(false);
     }
 
     /**
@@ -119,18 +168,20 @@ public final class AnnouncementChecker {
      * <p>正在拉的时候不叠第二条线程，返回 {@code false} —— 界面据此提示「上一次还在跑」。</p>
      */
     public static boolean refresh() {
-        synchronized (LOCK) {
-            if (fetching) {
-                return false;
-            }
-        }
-        startThread();
-        return true;
+        return startThread(true);
     }
 
     /** 当前公告列表（不可变，永不为 null）。 */
     public static List<Announcement> all() {
-        return announcements;
+        return snapshot().announcements();
+    }
+
+    public static Snapshot snapshot() {
+        return currentSnapshot;
+    }
+
+    public static boolean hasContent() {
+        return snapshot().hasContent();
     }
 
     /** 还没拿到任何结论（启动后的头几秒、或点了刷新正在等）。 */
@@ -138,34 +189,26 @@ public final class AnnouncementChecker {
         return fetching;
     }
 
-    /** 这一次是否已经问过清单（无论问没问到内容）。用来区分「还在加载」与「确实没有公告」。 */
+    /** Have we accepted a valid manifest this session? False on an initial failed fetch. */
     public static boolean isResolved() {
         return resolved;
     }
 
     public static boolean isRead(String id) {
-        load();
-        synchronized (LOCK) {
-            return id != null && readIds.contains(id);
-        }
+        return id != null && readSnapshot.contains(id);
     }
 
     /** 没读过的条数。侧栏那颗红点与页眉上的「N 条未读」都读它。 */
     public static int unreadCount() {
-        List<Announcement> list = announcements;
-        if (list.isEmpty()) {
-            return 0;
-        }
-        load();
-        synchronized (LOCK) {
-            int unread = 0;
-            for (Announcement announcement : list) {
-                if (!readIds.contains(announcement.id())) {
-                    unread++;
-                }
+        List<Announcement> list = all();
+        Set<String> read = readSnapshot;
+        int unread = 0;
+        for (Announcement announcement : list) {
+            if (!read.contains(announcement.id())) {
+                unread++;
             }
-            return unread;
         }
+        return unread;
     }
 
     public static boolean hasUnread() {
@@ -208,7 +251,7 @@ public final class AnnouncementChecker {
      * 记账的是「当前清单上的条目」，所以上面写着的那些即使一条都没展开，下次也不会再自动弹。</p>
      */
     public static void markAllRead() {
-        List<Announcement> list = announcements;
+        List<Announcement> list = all();
         if (list.isEmpty()) {
             return;
         }
@@ -216,18 +259,23 @@ public final class AnnouncementChecker {
         for (Announcement announcement : list) {
             ids.add(announcement.id());
         }
-        load();
         synchronized (LOCK) {
+            boolean changed = false;
             for (String id : ids) {
                 if (readIds.contains(id)) {
                     continue;
                 }
                 readIds.add(id);
+                changed = true;
+            }
+            if (!changed) {
+                return;
             }
             while (readIds.size() > MAX_READ_IDS) {
                 readIds.remove(0);
             }
-            save();
+            publishReadIds();
+            saveLater();
         }
     }
 
@@ -246,38 +294,41 @@ public final class AnnouncementChecker {
 
     // ==================== 内部实现 ====================
 
-    private static void startThread() {
-        // fetching 的检查在 refresh() 的锁里，置位必须也在锁里——原来这一句在锁外，
-        // 两个线程可以同时通过「还没在拉」的检查，然后各自起一条拉取线程重复打源。
+    private static boolean startThread(final boolean forceNetwork) {
         synchronized (LOCK) {
             if (fetching) {
-                return;
+                return false;
             }
             fetching = true;
         }
         Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {
-                runFetch();
+                runFetch(forceNetwork);
             }
         }, "muonium-announcement-fetch");
-        // 守护线程：网络卡住时不能拖着游戏退不出去。
         thread.setDaemon(true);
-        thread.start();
+        try {
+            thread.start();
+            return true;
+        } catch (RuntimeException | Error cannotStart) {
+            fetching = false;
+            return false;
+        }
     }
 
-    private static void runFetch() {
+    private static void runFetch(boolean forceNetwork) {
         try {
+            load();
             String body = localOverride();
             if (body != null) {
-                apply(body);
-                log("local override " + ConfigPaths.ANNOUNCEMENTS_LOCAL.getName() + ", no network");
+                log((apply(body) ? "local override " : "invalid local override ")
+                        + ConfigPaths.ANNOUNCEMENTS_LOCAL.getName() + ", no network");
                 return;
             }
-            String cached = cachedBody();
-            if (cached != null) {
-                apply(cached);
-                log("cache " + announcements.size() + " announcements");
+            String cached = cachedBody(forceNetwork);
+            if (cached != null && apply(cached)) {
+                log("cache " + all().size() + " announcements");
                 return;
             }
             String fetched = fetchAll();
@@ -286,9 +337,10 @@ public final class AnnouncementChecker {
                 log("unreachable, silent");
                 return;
             }
-            apply(fetched);
-            remember(fetched);
-            log(announcements.size() + " announcements, channel=" + channelKey());
+            if (apply(fetched)) {
+                remember(fetched);
+                log(all().size() + " announcements, channel=" + channelKey());
+            }
         } catch (Throwable ignored) {
             // 公告拉失败的正确表现是「什么都不提示」，绝不能影响启动。
         } finally {
@@ -299,24 +351,33 @@ public final class AnnouncementChecker {
     /**
      * 开发者覆盖：本地存在 {@code announcements_local.json} 时只用它。
      *
-     * @return 文件内容；文件不存在或读不出来时 {@code null}（那就照常联网）
+     * @return Content (possibly invalid/empty), or null only when no override file exists.
      */
     private static String localOverride() {
-        File file = ConfigPaths.ANNOUNCEMENTS_LOCAL;
+        return localOverride(ConfigPaths.ANNOUNCEMENTS_LOCAL);
+    }
+
+    static String localOverride(File file) {
         if (!file.isFile()) {
             return null;
         }
         try {
-            String text = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
-            return text.trim().isEmpty() ? null : text;
+            if (Files.size(file.toPath()) > UpdateManifest.MAX_MANIFEST_CHARS) {
+                return "";
+            }
+            return new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
         } catch (Throwable unreadable) {
             log("local override unreadable: " + unreadable);
-            return null;
+            // Existing override is authoritative even when invalid: never fall back to networking.
+            return "";
         }
     }
 
     /** 缓存还新鲜（同一个 channel + 30 分钟内）时直接用，完全不联网。 */
-    private static String cachedBody() {
+    private static String cachedBody(boolean forceNetwork) {
+        if (forceNetwork) {
+            return null;
+        }
         load();
         synchronized (LOCK) {
             if (cachedBody.isEmpty() || !cachedChannel.equals(channelKey())) {
@@ -375,10 +436,22 @@ public final class AnnouncementChecker {
             }
         }
 
+        String[] candidates = new String[count];
+        for (int index = 0; index < count; index++) {
+            candidates[index] = bodies.get(index);
+        }
+        return pickNewestBody(candidates);
+    }
+
+    /** Pure selection keeps same-version remote edits independent of response timing. */
+    static String pickNewestBody(String... candidates) {
+        if (candidates == null) {
+            return null;
+        }
         String winner = null;
         String winnerLatest = "";
-        for (int index = 0; index < count; index++) {
-            String body = bodies.get(index);
+        long winnerRevision = 0L;
+        for (String body : candidates) {
             if (body == null) {
                 // 预算用完了还没交卷，或这个源这次不可用：不连累其它源。
                 continue;
@@ -393,12 +466,17 @@ public final class AnnouncementChecker {
             if (winner == null) {
                 winner = body;
                 winnerLatest = latest;
+                winnerRevision = manifest.contentRevision();
                 continue;
             }
-            // 空版本号不当「新」；同版本号时保留排前面的源（源 1 的缓存最新），与更新检查的平局规则一致。
-            if (!latest.isEmpty() && SemVer.isNewer(latest, winnerLatest)) {
+            // Release version remains primary; contentRevision only breaks semantic-version ties.
+            // Legacy equal revisions retain source order, including content-only manifests.
+            if ((!latest.isEmpty() && SemVer.isNewer(latest, winnerLatest))
+                    || (SemVer.compare(latest, winnerLatest) == 0
+                        && manifest.contentRevision() > winnerRevision)) {
                 winner = body;
                 winnerLatest = latest;
+                winnerRevision = manifest.contentRevision();
             }
         }
         return winner;
@@ -412,7 +490,7 @@ public final class AnnouncementChecker {
             if (stream == null) {
                 return null;
             }
-            return HttpUtils.readString(stream);
+            return readManifest(stream);
         } catch (Throwable unreachable) {
             return null;
         } finally {
@@ -420,13 +498,31 @@ public final class AnnouncementChecker {
         }
     }
 
-    private static void apply(String body) {
+    static String readManifest(InputStream stream) throws IOException {
+        StringBuilder body = new StringBuilder();
+        try (Reader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
+            char[] buffer = new char[4096];
+            int read;
+            while ((read = reader.read(buffer)) != -1) {
+                if (body.length() + read > UpdateManifest.MAX_MANIFEST_CHARS) {
+                    throw new IOException("Manifest text exceeds budget");
+                }
+                body.append(buffer, 0, read);
+            }
+        }
+        return body.toString();
+    }
+
+    private static boolean apply(String body) {
         UpdateManifest manifest = UpdateManifest.parse(body);
-        List<Announcement> parsed = manifest == null
-                ? Collections.<Announcement>emptyList()
-                : manifest.announcements();
-        announcements = parsed;
+        if (manifest == null) {
+            // Failed refresh/invalid override must not erase the last useful publication.
+            return false;
+        }
+        currentSnapshot = new Snapshot(manifest.announcements(), manifest.sponsorships(),
+                manifest.communities());
         resolved = true;
+        return true;
     }
 
     private static String channelKey() {
@@ -439,76 +535,133 @@ public final class AnnouncementChecker {
             cachedChannel = channelKey();
             cachedBody = body;
             cachedAt = System.currentTimeMillis();
-            save();
+            saveLater();
         }
     }
 
     private static void load() {
         synchronized (LOCK) {
-            if (loaded) {
+            if (loaded || loading) {
                 return;
             }
-            loaded = true;
-            try {
-                File file = ConfigPaths.ANNOUNCEMENTS;
-                if (!file.isFile()) {
-                    return;
-                }
-                JsonObject root = JsonConfigStorage.readObject(file, GSON);
-                if (root == null) {
-                    return;
-                }
-                JsonArray ids = root.has("readIds") && root.get("readIds").isJsonArray()
-                        ? root.getAsJsonArray("readIds") : new JsonArray();
-                Set<String> unique = new HashSet<String>();
-                for (int index = 0; index < ids.size(); index++) {
-                    try {
-                        String id = ids.get(index).getAsString();
-                        if (id != null && !id.trim().isEmpty() && unique.add(id.trim())) {
-                            readIds.add(id.trim());
+            loading = true;
+        }
+        JsonObject root = null;
+        try {
+            File file = ConfigPaths.ANNOUNCEMENTS;
+            if (file.isFile()) {
+                root = JsonConfigStorage.readObject(file, GSON);
+            }
+        } catch (Throwable ignored) {
+            // Corrupt state is an empty disk snapshot, not a UI error.
+        }
+        acceptSavedState(root);
+    }
+
+    /** Merge an off-thread disk read with any close action that happened while reading. */
+    static void acceptSavedState(JsonObject root) {
+        List<String> persisted = new ArrayList<String>();
+        if (root != null && root.has("readIds") && root.get("readIds").isJsonArray()) {
+            JsonArray ids = root.getAsJsonArray("readIds");
+            for (int index = 0; index < ids.size(); index++) {
+                try {
+                    if (ids.get(index).isJsonPrimitive()
+                            && ids.get(index).getAsJsonPrimitive().isString()) {
+                        String id = ids.get(index).getAsString().trim();
+                        if (!id.isEmpty() && id.length() <= Announcement.MAX_ID_CHARS) {
+                            persisted.add(id);
                         }
-                    } catch (Throwable malformedItem) {
-                        // 数组里混进非字符串项：跳过这一条，其余照用。
                     }
+                } catch (RuntimeException malformedItem) {
+                    // Ignore this item only.
                 }
-                while (readIds.size() > MAX_READ_IDS) {
-                    readIds.remove(0);
-                }
-                cachedAt = root.has("cachedAt") && root.get("cachedAt").isJsonPrimitive()
-                        ? root.get("cachedAt").getAsLong() : 0L;
-                cachedChannel = root.has("cachedChannel") && root.get("cachedChannel").isJsonPrimitive()
-                        ? root.get("cachedChannel").getAsString() : "";
-                cachedBody = root.has("cachedBody") && root.get("cachedBody").isJsonPrimitive()
-                        ? root.get("cachedBody").getAsString() : "";
-                if (cachedChannel == null) {
-                    cachedChannel = "";
-                }
-                if (cachedBody == null) {
-                    cachedBody = "";
-                }
-            } catch (Throwable ignored) {
-                // 读坏了就当作全新状态：最坏结果是多弹一次、多打一次网络请求。
+            }
+        }
+        long savedAt = stateLong(root, "cachedAt");
+        String savedChannel = stateString(root, "cachedChannel");
+        String savedBody = stateString(root, "cachedBody");
+        synchronized (LOCK) {
+            List<String> merged = mergeReadIds(persisted, readIds);
+            readIds.clear();
+            readIds.addAll(merged);
+            cachedAt = savedAt;
+            cachedChannel = savedChannel;
+            cachedBody = savedBody.length() > UpdateManifest.MAX_MANIFEST_CHARS ? "" : savedBody;
+            loaded = true;
+            loading = false;
+            publishReadIds();
+            if (savePending) {
+                savePending = false;
+                saveLater();
             }
         }
     }
 
-    private static void save() {
+    static List<String> mergeReadIds(List<String> persisted, List<String> recent) {
+        List<String> merged = new ArrayList<String>();
+        for (String id : persisted) {
+            if (!merged.contains(id)) {
+                merged.add(id);
+            }
+        }
+        for (String id : recent) {
+            merged.remove(id);
+            merged.add(id);
+        }
+        while (merged.size() > MAX_READ_IDS) {
+            merged.remove(0);
+        }
+        return merged;
+    }
+
+    private static long stateLong(JsonObject root, String key) {
         try {
-            File parent = ConfigPaths.ANNOUNCEMENTS.getParentFile();
-            if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.isDirectory()) {
-                return;
-            }
-            JsonObject root = new JsonObject();
-            JsonArray ids = new JsonArray();
-            for (String id : readIds) {
-                ids.add(id);
-            }
-            root.add("readIds", ids);
-            root.addProperty("cachedAt", cachedAt);
-            root.addProperty("cachedChannel", cachedChannel);
-            root.addProperty("cachedBody", cachedBody);
-            JsonConfigStorage.writeObject(ConfigPaths.ANNOUNCEMENTS, GSON, root);
+            return root == null || !root.has(key) ? 0L : root.get(key).getAsLong();
+        } catch (RuntimeException invalid) {
+            return 0L;
+        }
+    }
+
+    private static String stateString(JsonObject root, String key) {
+        try {
+            return root == null || !root.has(key) ? "" : root.get(key).getAsString();
+        } catch (RuntimeException invalid) {
+            return "";
+        }
+    }
+
+    private static void publishReadIds() {
+        readSnapshot = Collections.unmodifiableSet(new HashSet<String>(readIds));
+    }
+
+    /** Capture under LOCK; a single daemon writer serializes disk writes outside LOCK. */
+    private static void saveLater() {
+        if (!loaded) {
+            // Preserve the on-disk cache/read ids until the outstanding load can merge them.
+            savePending = true;
+            return;
+        }
+        JsonObject root = new JsonObject();
+        JsonArray ids = new JsonArray();
+        for (String id : readIds) {
+            ids.add(id);
+        }
+        root.add("readIds", ids);
+        root.addProperty("cachedAt", cachedAt);
+        root.addProperty("cachedChannel", cachedChannel);
+        root.addProperty("cachedBody", cachedBody);
+        STATE_WRITER.execute(() -> save(root));
+    }
+
+    private static void save(JsonObject root) {
+        save(ConfigPaths.ANNOUNCEMENTS, root);
+    }
+
+    static void save(File file, JsonObject root) {
+        try {
+            JsonConfigStorage.writeObject(file, GSON, root);
         } catch (Throwable ignored) {
+            // Persistence failure is silent, like network failure.
         }
     }
 

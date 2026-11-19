@@ -141,6 +141,18 @@ public final class QishuiCompanionDownload {
         return state;
     }
 
+    public static String catalogPhase() {
+        return state.phase().name();
+    }
+
+    public static String catalogFailure() {
+        return state.phase() == Phase.FAILED ? state.detail() : null;
+    }
+
+    public static int catalogProgress() {
+        return state.percent();
+    }
+
     static void markBackendStarting() {
         state = new State(Phase.STARTING, 100, null);
     }
@@ -224,7 +236,7 @@ public final class QishuiCompanionDownload {
     }
 
     /** 伴生包安装根：{@code config/muonium/qishui-backend/}，与 zip 内布局对齐。 */
-    static File installRoot() {
+    public static File installRoot() {
         return new File(new File("config", "muonium"), "qishui-backend");
     }
 
@@ -262,6 +274,14 @@ public final class QishuiCompanionDownload {
         File root = installRoot();
         File server = new File(root, "server.mjs");
         return server.isFile() && server.length() > 10_000L && findRuntime(root) != null;
+    }
+
+    public static boolean catalogIsInstalled() {
+        return isInstalled();
+    }
+
+    public static void requestInstall() {
+        onBackendMissing();
     }
 
     private static File versionMarker() {

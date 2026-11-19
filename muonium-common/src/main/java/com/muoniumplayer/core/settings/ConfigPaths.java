@@ -442,6 +442,9 @@ public final class ConfigPaths {
      */
     public static final File UPDATE_NOTICE = new File(CONFIG_DIRECTORY, "update_notice.json");
 
+    /** Local startup sponsorship reminder count and suppression; never part of the remote manifest. */
+    public static final File SPONSOR_NOTICE = new File(CONFIG_DIRECTORY, "sponsor_notice.json");
+
     /**
      * 公告中心的已读记账与清单缓存。
      *
@@ -499,6 +502,9 @@ public final class ConfigPaths {
 
     /** 首次运行设置门控。独立保存，使引导状态不会污染播放器偏好设置。 */
     public static final File ONBOARDING = new File(CONFIG_DIRECTORY, "onboarding.json");
+
+    /** Download manager visibility preferences; separate from playback and onboarding settings. */
+    public static final File DOWNLOADS = new File(CONFIG_DIRECTORY, "downloads.json");
 
     /**
      * 首启引导那张「当前画面」抓帧的落盘草稿。

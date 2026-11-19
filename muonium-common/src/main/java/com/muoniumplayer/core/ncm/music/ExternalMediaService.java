@@ -6,6 +6,9 @@ import java.io.File;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -16,7 +19,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <ul>
  *   <li><b>绝不在渲染线程碰进程与文件。</b>编译助手要跑 csc（秒级），启动进程要等
  *       {@code waitFor}，全部放在一条后台引导线程里做；界面只读 {@link #snapshot()}
- *       与 {@link #cachedState()} 这两个内存值。</li>
+ *       与 {@link #cachedState()} 这两个内存值。命令下发同理：主线程 tick 只往
+ *       {@link #OUTBOX} 里塞一行字符串（{@link #sendLine(String)} 的全部成本是
+ *       一次入队），真正的管道写发生在专职写线程 {@code Muonium-SMTC-Writer-*} 上。</li>
  *   <li><b>读不到就是读不到。</b>没有会话时快照里 {@code session=false} 一路传到界面，
  *       不做任何"看起来也能播"的替代时间轴。外部那套 LyricSync 为了测试方便在 SMTC
  *       不可用时退到内部模拟时间轴，玩家看到的是歌词在滚、系统其实根本没读到 ——
@@ -44,9 +49,36 @@ public final class ExternalMediaService {
     /** 等待进程自己退出时的上限，超过就强杀。游戏关闭路径上不能卡住。 */
     private static final long EXIT_WAIT_MS = 1_500L;
 
+    // ── 管道写的防冻结三件套 ────────────────────────────────────────────────────
+    //
+    // 2.5.2 的事故形态：poll 线程持着 STDIN_LOCK 阻塞在 native write（子进程串行读
+    // stdin、又被自己的 SMTC 调用拖住不读），渲染线程 tick 里 sendPublishAppId 等
+    // 那把锁 —— 管道写满 = 画面永久冻结，音乐照放。三层解法（缺一层都会回到事故）：
+    //   1. 主线程只入队（sendLine），写线程独占管道；
+    //   2. OUTBOX 有界 + 按前缀丢弃：SMTC 是展示信息，丢帧不丢命；
+    //   3. WRITER_STALL_MS 看门狗：写线程卡死 = 助手卡死，杀掉走既有重启/降级链。
+
+    /** 命令队列上限。超了丢最旧：宁可 SMTC 信息慢半拍，也不让队列长到内存出事。 */
+    private static final int OUTBOX_CAPACITY = 128;
+    /** 写线程一次 native write 允许的最大时长；超时视为管道已死，杀助手走重启。 */
+    private static final long WRITER_STALL_MS = 10_000L;
+    /** 「pub 系」命令的合并前缀：队列满时丢最旧一条同类，新命令顶上（状态是最新即正确）。 */
+    private static final String[] MERGE_PREFIXES = {
+            "pub meta ", "pub state ", "pub tl ", "pub art ", "vol ", "use ", "list"};
+
     private static final Object LOCK = new Object();
     private static final Object STDIN_LOCK = new Object();
     private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
+
+    /** 待写命令。写线程持 STDIN_LOCK 消费，其他线程只调用 sendLine 入队。 */
+    private static final ArrayDeque<String> OUTBOX = new ArrayDeque<String>(OUTBOX_CAPACITY);
+    private static Thread writerThread;
+    /** 当前进程世代：每次 spawn 递增。写线程拿它识别「自己的进程」，换代即自停；发布器也拿它检测换代。 */
+    private static volatile int generation;
+    /** 写线程最近一次 native write 的起点；0 = 空闲。写线程自己更新，看门狗读。 */
+    private static volatile long writerBusySinceMs;
+    /** 写线程记录的最近一次管道异常；非 null 时入队侧直接丢命令，直到进程换代。 */
+    private static volatile boolean writerBroken;
 
     private static Process process;
     private static BufferedWriter stdin;
@@ -71,6 +103,14 @@ public final class ExternalMediaService {
     private static volatile String pendingCommandResult;
 
     private ExternalMediaService() {
+    }
+
+    /** 看门狗随类加载起一次、终生跑：它是纯后台守护，不持任何进程引用。 */
+    static {
+        Thread watchdog = new Thread(ExternalMediaService::watchdogLoop,
+                "Muonium-SMTC-Watchdog-" + THREAD_SEQUENCE.incrementAndGet());
+        watchdog.setDaemon(true);
+        watchdog.start();
     }
 
     /**
@@ -162,8 +202,19 @@ public final class ExternalMediaService {
             builder.redirectErrorStream(false);
             Process started = builder.start();
             process = started;
-            stdin = new BufferedWriter(new OutputStreamWriter(
+            final BufferedWriter startedStream = new BufferedWriter(new OutputStreamWriter(
                     started.getOutputStream(), StandardCharsets.UTF_8));
+            stdin = startedStream;
+            // 世代号先递增：写线程靠它认「自己的进程」，换代会自停。
+            generation++;
+            writerBroken = false;
+            writerBusySinceMs = 0L;
+            resetWriterStateLocked();
+            final int bornGeneration = generation;
+            writerThread = new Thread(() -> writeLoop(started, startedStream, bornGeneration),
+                    "Muonium-SMTC-Writer-" + THREAD_SEQUENCE.incrementAndGet());
+            writerThread.setDaemon(true);
+            writerThread.start();
             readerThread = new Thread(() -> readLoop(started),
                     "Muonium-SMTC-Reader-" + THREAD_SEQUENCE.incrementAndGet());
             readerThread.setDaemon(true);
@@ -258,6 +309,9 @@ public final class ExternalMediaService {
             if (process != ended) return;   // 被更新的一次启动顶掉了，不处理
             process = null;
             stdin = null;
+            generation++;   // 写线程看见换代即自停（旧管道已随进程消失）
+            writerBroken = true;
+            resetWriterStateLocked();
             latest = ExternalSnapshot.NONE;
             // 镜像与发布共用这条命：两个愿望都撤了才让它安静地走。
             if (!desired && !publishDesired) return;
@@ -281,16 +335,137 @@ public final class ExternalMediaService {
         return current != null && current.isAlive();
     }
 
+    /**
+     * 把一条命令交给写线程。任何线程可调，含渲染线程——<b>这里绝不碰管道</b>。
+     *
+     * <p>队列满时的策略是「按前缀丢旧」：新来的 {@code pub tl}（或 {@code vol} 等）
+     * 会先顶掉队里最旧的同前缀命令，SMTC 展示信息的语义本来就是「最新即正确」；
+     * 整个队列都换不出空间（极端：满队全是命令回执类）才丢新命令本身。管道已断
+     * （{@link #writerBroken}）时直接丢弃——助手换代前的命令对着死管道写没有意义。</p>
+     */
     private static void sendLine(String line) {
+        if (writerBroken) return;
         synchronized (STDIN_LOCK) {
-            BufferedWriter writer = stdin;
-            if (writer == null) return;
+            if (writerBroken || stdin == null) return;
+            if (OUTBOX.size() >= OUTBOX_CAPACITY) dropOldestFor(line);
+            OUTBOX.addLast(line);
+            STDIN_LOCK.notifyAll();
+        }
+    }
+
+    /** 唤醒可能还在等旧管道的写线程并清空遗留命令。不要求调用方持任何锁。 */
+    private static void resetWriterStateLocked() {
+        synchronized (STDIN_LOCK) {
+            OUTBOX.clear();
+            STDIN_LOCK.notifyAll();
+        }
+    }
+
+    /** 队列满时腾一格：丢最旧的同前缀命令；没有同前缀才丢队首（poll 心跳是最可丢的）。 */
+    private static void dropOldestFor(String incoming) {
+        for (int i = 0; i < MERGE_PREFIXES.length; i++) {
+            if (!startsWith(incoming, MERGE_PREFIXES[i])) continue;
+            java.util.Iterator<String> it = OUTBOX.iterator();
+            while (it.hasNext()) {
+                if (startsWith(it.next(), MERGE_PREFIXES[i])) {
+                    it.remove();
+                    return;
+                }
+            }
+            return;   // 同前缀一条都没有：只丢队首
+        }
+        OUTBOX.pollFirst();
+    }
+
+    private static boolean startsWith(String value, String prefix) {
+        return value.length() >= prefix.length()
+                && value.regionMatches(0, prefix, 0, prefix.length());
+    }
+
+    /**
+     * 写线程主体：唯一允许做管道 IO 的地方。从 OUTBOX 取命令写自己那一代的流。
+     *
+     * <p>醒来的顺序是「先排空队列、再查世代」：stop() 会把 exit 插进队列后才换代，
+     * 若先查世代，exit 就永远发不出去（stop 只能靠 destroyForcibly 强杀收尾）。
+     * 换代后队列里理论上只剩 exit（spawn 前也会清队列）；极端竞争下混进新世代的
+     * 命令也只是写进一条已死的流——write 抛异常，退休，无副作用。</p>
+     *
+     * <p>native write 卡住由看门狗（{@code watchdogLoop}）处理：这里只管写，
+     * 卡死的表现是 {@link #writerBusySinceMs} 长时间非零，看门狗杀进程后
+     * 管道断裂让本线程的 write 抛异常走退休路径。</p>
+     */
+    private static void writeLoop(Process own, BufferedWriter ownStream, int ownGeneration) {
+        while (true) {
+            String line;
+            synchronized (STDIN_LOCK) {
+                while (OUTBOX.isEmpty() && generation == ownGeneration) {
+                    try {
+                        STDIN_LOCK.wait();
+                    } catch (InterruptedException interrupted) {
+                        closeQuietly(ownStream);
+                        return;
+                    }
+                }
+                if (OUTBOX.isEmpty()) {   // 换代且无遗留：退休
+                    closeQuietly(ownStream);
+                    return;
+                }
+                line = OUTBOX.pollFirst();
+            }
             try {
-                writer.write(line);
-                writer.newLine();
-                writer.flush();
-            } catch (Throwable ignored) {
-                // 进程正在退出时写失败是常态；退出由 readerLoop 负责收尾。
+                writerBusySinceMs = System.currentTimeMillis();
+                // 锁外写：write/flush 卡死时绝不能占着 STDIN_LOCK——入队侧还在用它。
+                // ownStream 只属于本线程（换代才换流），没有并发写者。
+                ownStream.write(line);
+                ownStream.newLine();
+                ownStream.flush();
+            } catch (Throwable failure) {
+                writerBroken = true;
+                synchronized (STDIN_LOCK) {
+                    STDIN_LOCK.notifyAll();
+                }
+                // 管道断多半是进程在退：交给 readLoop/onProcessEnded 收尾，不重复刷日志；
+                // 只有进程还活着却写不进（不该发生）才留一条现场。
+                if (own.isAlive()) {
+                    System.err.println("[Music/SMTC] 写助手管道失败: " + failure);
+                }
+                closeQuietly(ownStream);
+                return;
+            } finally {
+                writerBusySinceMs = 0L;
+            }
+            if (generation != ownGeneration) {   // 写完这批（含 stop 的 exit）就退休
+                closeQuietly(ownStream);
+                return;
+            }
+        }
+    }
+
+    /**
+     * 看门狗：写线程一次 write 超过 {@link #WRITER_STALL_MS} 没回来，判管道已死，
+     * 杀掉助手进程。杀掉后 readLoop 的 readLine 抛/返回 null，走既有
+     * {@link #onProcessEnded} 重启治理（上限 3 次、超限降级），这条链早已存在，
+     * 这里只是给它补一个「进程卡死」的触发器。
+     */
+    private static void watchdogLoop() {
+        while (true) {
+            sleep(1_000L);
+            long busySince = writerBusySinceMs;
+            if (busySince != 0L && System.currentTimeMillis() - busySince > WRITER_STALL_MS) {
+                System.err.println("[Music/SMTC] 助手管道写入超时（"
+                        + WRITER_STALL_MS + "ms），判定助手卡死，强制结束并重启");
+                writerBroken = true;
+                synchronized (STDIN_LOCK) {
+                    STDIN_LOCK.notifyAll();
+                }
+                Process stuck = process;
+                if (stuck != null) {
+                    try {
+                        stuck.destroyForcibly();
+                    } catch (Throwable ignored) {
+                        // 杀不掉也没关系：readLoop 迟早会因进程退出收尾。
+                    }
+                }
             }
         }
     }
@@ -342,9 +517,17 @@ public final class ExternalMediaService {
 
     // ── 发布通道（把本模组自己的播放写进系统媒体会话）─────────────────────────
     //
-    // 与镜像命令同一套 stdin 串行化；助手侧由专用 STA 线程持有 WinRT 对象，
-    // stdin 主线程只更新状态仓并 PostMessage 叫醒它，所以这里发得再密也只是
-    // 一行文本的往返，不会把助手卡住。
+    // 与镜像命令共用同一条写线程管道；助手侧 stdin 读线程只收行入队，处理在
+    // 工作线程上做（见 SmtcWatcher.cs 的 ProcessLoop），发布命令与 poll 之间
+    // 不会再互相拖住。
+
+    /**
+     * 当前助手世代号。发布器拿它检测「助手换代」（崩溃重启/看门狗强杀）：
+     * 换代后整套重推身份+元数据，不依赖增量推送的连续性。
+     */
+    public static int helperGeneration() {
+        return generation;
+    }
 
     /** 助手协议版本。1 = 老助手（发布与多会话挑选都不可用）。 */
     public static int helperProtocolVersion() {
@@ -502,31 +685,29 @@ public final class ExternalMediaService {
      *
      * <p>发布还要求着助手时（{@code publishDesired}）进程不收：镜像关了，
      * 媒体键还能控内部播放。两个愿望都撤了才真的退出。</p>
+     *
+     * <p>不再在调用线程上碰管道（2.5.2 事故的关屏变体）：exit 命令入队后由写线程
+     * 发送。见 {@link #stop()} 的说明。</p>
      */
     public static void stop() {
         Process target;
-        BufferedWriter writer;
         synchronized (LOCK) {
             desired = false;
             if (publishDesired) return;   // 愿望还在，进程留着
             target = process;
-            writer = stdin;
+            if (target == null) return;
             process = null;
             stdin = null;
             latest = ExternalSnapshot.NONE;
         }
-        if (writer != null) {
-            synchronized (STDIN_LOCK) {
-                try {
-                    writer.write("exit");
-                    writer.newLine();
-                    writer.flush();
-                } catch (Throwable ignored) {
-                }
-                closeQuietly(writer);
-            }
+        synchronized (STDIN_LOCK) {
+            OUTBOX.clear();
+            // exit 插在最前：写线程下一次醒来先发 exit 再看见换代，然后退休关流。
+            OUTBOX.addFirst("exit");
+            STDIN_LOCK.notifyAll();
+            generation++;   // 换代：写线程写完 exit 即退休，新命令不再被入队
+            writerBroken = true;
         }
-        if (target == null) return;
         try {
             if (!target.waitFor(EXIT_WAIT_MS, TimeUnit.MILLISECONDS)) {
                 target.destroy();

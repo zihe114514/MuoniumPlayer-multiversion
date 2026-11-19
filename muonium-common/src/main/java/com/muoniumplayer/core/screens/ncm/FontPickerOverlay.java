@@ -1,475 +1,473 @@
 package com.muoniumplayer.core.screens.ncm;
 
+import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.management.UiFont;
 import com.muoniumplayer.core.management.UiFontLibrary;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
-import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.TextFieldWidget;
 import com.muoniumplayer.party.ui.PartyIcons;
+import com.muoniumplayer.render.skija.SkijaGfx;
+import io.github.humbleui.skija.Canvas;
+import io.github.humbleui.types.RRect;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.function.BooleanSupplier;
-import java.util.function.IntSupplier;
-import java.util.function.Supplier;
+import java.util.function.DoubleSupplier;
 
-/**
- * 界面字体选择浮层。
- *
- * <p>三组候选：内置字体、{@code config/muonium/fonts/} 里的字体文件、系统装着的字体族。
- * 点一行立刻生效 —— 换字体是纯视觉的事，「先预览再确认」这一步反而让人看不到真实效果，
- * 而整个界面（包括这个浮层自己）当帧就换成新字体，本身就是最准的预览。</p>
- *
- * <p><b>搜索不重建页面。</b>系统字体动辄上百款，行是一次性建好的；筛选靠在滚动区的
- * {@code beforeRenderCallback} 里逐行 {@code setHidden}，而 {@link ScrollPanel} 的排版与
- * 滚动范围都会跳过隐藏的子组件，于是被筛掉的行自然收起来、滚动条也跟着变短。
- * 隐藏必须从<b>父组件</b>那里驱动：{@code renderWidget} 对隐藏的组件直接 return，
- * 行自己的回调一旦隐藏就再也不会跑，那样搜索词删掉之后行就永远回不来了。</p>
- */
+/** Expressive 字体工作台：真实全局预览、来源筛选与字体列表，仍然点选即生效。 */
 public final class FontPickerOverlay extends NcmSheet {
+    private static final String[] SECTIONS = {"全部", "系统字体", "我的文件", "内置"};
+    private final NcmExpressiveLayout layout = new NcmExpressiveLayout();
+    private final FontPickerMotion filterMotion = new FontPickerMotion();
+    private final NcmPromptMotion tabMotion = new NcmPromptMotion(0);
+    private final List<FontRow> rows = new ArrayList<>();
+    private final int[] counts = new int[4];
+    private final double[] scrollMemory = new double[4];
+    private NcmPromptMotion previewMotion = new NcmPromptMotion(1);
 
-    private static final double HEADER_H = 64.0;
-    /** 搜索条：贴在页眉下面，不参与滚动 —— 上百行的列表里，搜索框必须一直在手边。 */
-    private static final double SEARCH_H = 46.0;
-    private static final double CARD_H = 56.0;
-    private static final double ROW_H = CARD_H + 7.0;
-    private static final double LABEL_ROW = 24.0;
-    private static final double LABEL_ROW_2 = 28.0;
-    /** 页脚：一条分隔线 + 示例文本 + 三颗按钮 + 状态行，全部贴底不滚。 */
-    private static final double FOOTER_H = 106.0;
-    /** 字体标记盘的边长。 */
-    private static final double DISC = 36.0;
-    private static final double TEXT_LEFT = 12.0 + DISC + 11.0;
-    /** 文字块右侧给状态胶囊预留的宽度。 */
-    private static final double BADGE_RESERVE = 74.0;
-
-    private static final int GROUP_BUILTIN = 0;
-    private static final int GROUP_EXTERNAL = 1;
-    private static final int GROUP_SYSTEM = 2;
-    private static final int GROUPS = 3;
-
-    private static final int EXTERNAL_COLOR = 0xFF6EDAA0;
-    private static final int SYSTEM_COLOR = 0xFF73B9FF;
-
+    private FontPickerGeometry geometry = new FontPickerGeometry(980, 740);
+    private Panel dialog, tabs, preview, listStage, empty, widePreview, compactPreview;
+    private ScrollPanel viewport;
     private TextFieldWidget searchField;
-    private final List<Entry> entries = new ArrayList<Entry>();
-    /** 建这一页时用的目录快照。目录是后台扫出来的，换了就要重建一次列表。 */
-    private List<UiFont> builtFrom;
-    private UiFontLibrary.State builtState;
-    /** 搜索词自己存一份：重建页面会把输入框连带清掉，重建完要填回去。 */
-    private String query = "";
-
-    /** 列表里的一行。字体行、分组小标题和提示行都算一行，筛选时统一在这里控制显示。 */
-    private static final class Entry {
-        private final Panel strip;
-        private final UiFont font;
-        private final int group;
-        /** 只在没有搜索词时出现（提示行：搜索时它们只会挡着结果）。 */
-        private final boolean emptyQueryOnly;
-
-        private Entry(Panel strip, UiFont font, int group, boolean emptyQueryOnly) {
-            this.strip = strip;
-            this.font = font;
-            this.group = group;
-            this.emptyQueryOnly = emptyQueryOnly;
-        }
-    }
+    private List<UiFont> catalog;
+    private UiFontLibrary.State catalogState;
+    private UiFont previewFont;
+    private double slide, previewReveal = 1;
+    private long listArrived;
+    private int matches;
+    private boolean filterDirty = true;
 
     @Override
     public void onInit() {
         UiFontLibrary.ensureScanned();
-        rebuild();
+        beginPage();
+        dialog = NcmExpressive.shell(this, FontPickerGeometry.WIDTH,
+                () -> FontPickerGeometry.HEIGHT, () -> presentation, this::dispose);
+        dialog.setBeforeRenderCallback(this::measure);
+        buildHeader();
+        buildSearch();
+        buildTabs();
+        buildPreview();
+        buildList();
+        buildFooter();
     }
 
-    public void handleEscape() {
-        dispose();
+    public void handleEscape() { dispose(); }
+
+    @Override
+    public void renderWidget(double mouseX, double mouseY, int dWheel) {
+        layout.render(this, mouseX, mouseY, dWheel, (x, y, wheel) -> {
+            super.renderWidget(x, y, 0);
+            // 控件树不重复消费滚轮；筛选收场期间也不把它喂给旧列表。
+            if (!closing && filterMotion.acceptsInput() && wheel != 0) viewport.forwardWheel(wheel);
+        });
     }
 
     @Override
-    public void onRender(double mouseX, double mouseY) {
-        // 目录扫完要把列表补上。放在这里是安全的：renderWidget 先调 onRender，
-        // 之后才遍历子组件，此时清空子组件列表不会撞上遍历。
-        if (builtFrom != UiFontLibrary.getCatalog() || builtState != UiFontLibrary.getState()) {
-            rebuild();
-        }
-        super.onRender(mouseX, mouseY);
+    public void onMouseClickReceived(double mouseX, double mouseY, int button) {
+        layout.dispatch(this, mouseX, mouseY, button, (x, y, input) -> super.onMouseClickReceived(x, y, input));
     }
-    // ════════════════════════════ 页面 ════════════════════════════
 
-    private void rebuild() {
-        if (searchField != null) {
-            query = searchField.getText() == null ? "" : searchField.getText();
+    @Override
+    public void onDWheelReceived(double mouseX, double mouseY, int dWheel) {
+        if (!closing && filterMotion.acceptsInput()) viewport.forwardWheel(dWheel);
+    }
+
+    /** 在子控件遍历及 ScrollPanel 排版之前提交几何、目录快照与隐藏状态。 */
+    private void measure() {
+        long now = System.nanoTime();
+        double width = Math.max(1, Math.min(FontPickerGeometry.WIDTH, getWidth() - 32));
+        double height = Math.max(1, Math.min(FontPickerGeometry.HEIGHT, getHeight() - 32));
+        if (width != geometry.width || height != geometry.height) geometry = new FontPickerGeometry(width, height);
+        dialog.setBounds(width, height);
+        dialog.center();
+        dialog.setPosition(dialog.getRelativeX(), dialog.getRelativeY() + (1 - presentation) * 18);
+        dialog.setAlpha((float) presentation);
+        tabs.setBounds(geometry.contentWidth, 48);
+        tabs.setPosition(geometry.inset, geometry.tabsY);
+        preview.setHidden(geometry.previewHeight <= 0);
+        preview.setBounds(geometry.previewWidth, geometry.previewHeight);
+        preview.setPosition(geometry.previewX, geometry.previewY + (1 - previewReveal) * 4);
+        widePreview.setHidden(!geometry.columns || geometry.previewHeight < 340);
+        compactPreview.setHidden(geometry.columns || geometry.shortWindow);
+        widePreview.setBounds(preview.getWidth(), preview.getHeight());
+        compactPreview.setBounds(preview.getWidth(), preview.getHeight());
+        listStage.setBounds(geometry.listWidth, geometry.listHeight);
+        listStage.setPosition(geometry.inset, geometry.listY + filterMotion.offset());
+        listStage.setAlpha((float) (cardGate(0) * filterMotion.alpha()));
+        viewport.setBounds(geometry.listWidth, geometry.listHeight);
+        viewport.setPosition(0, 0);
+
+        List<UiFont> current = UiFontLibrary.getCatalog();
+        if (!closing && catalog != current) {
+            catalog = current;
+            rebuildRows();
         }
-        builtFrom = UiFontLibrary.getCatalog();
-        builtState = UiFontLibrary.getState();
-        entries.clear();
-        searchField = null;
-        beginPage();
+        if (catalogState != UiFontLibrary.getState()) {
+            catalogState = UiFontLibrary.getState();
+            filterDirty = true;
+        }
+        if (!closing) filterMotion.request(normalize(searchField.getText()), filterMotion.targetSection());
+        int previousSection = filterMotion.section();
+        String previousQuery = filterMotion.query();
+        if (!closing && filterMotion.tick(now, SheetClock.speed())) {
+            scrollMemory[previousSection] = viewport.targetScrollOffset;
+            boolean sectionChanged = previousSection != filterMotion.section();
+            double offset = sectionChanged && previousQuery.equals(filterMotion.query())
+                    ? scrollMemory[filterMotion.section()] : 0;
+            viewport.actualScrollOffset = viewport.targetScrollOffset = offset;
+            listArrived = now;
+            filterDirty = true;
+        }
+        slide = tabMotion.update(filterMotion.targetSection(), 48 / SheetClock.speed(), now);
+        if (filterDirty) applyFilter();
+        for (FontRow row : rows) row.setBounds(geometry.listWidth, FontPickerGeometry.ROW_HEIGHT + FontPickerGeometry.ROW_GAP);
+        empty.setBounds(geometry.listWidth, Math.max(160, geometry.listHeight));
+        empty.setHidden(matches != 0);
 
-        final List<UiFont> external = filterByOrigin(builtFrom, UiFont.Origin.EXTERNAL);
-        final List<UiFont> system = filterByOrigin(builtFrom, UiFont.Origin.SYSTEM);
+        UiFont active = UiFontLibrary.getActive();
+        if (active != previewFont) {
+            if (previewFont != null) previewMotion = new NcmPromptMotion(0);
+            previewFont = active;
+        }
+        previewReveal = previewMotion.update(1, 55 / SheetClock.speed(), now);
+    }
 
-        final Panel dialog = sheet(504, () -> HEADER_H + SEARCH_H + 372.0 + FOOTER_H);
-        header(dialog, PartyIcons.TEXT_FORMAT, "界面字体",
-                () -> "点一行立刻生效；这款字体缺的字仍由内置字体补上",
-                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-        searchBar(dialog);
-
-        final Panel body = body(dialog, () -> HEADER_H + SEARCH_H, () -> FOOTER_H);
-        final ScrollPanel feed = feed(body);
-        // 筛选从滚动区这一层驱动，理由见类注释。
-        feed.setBeforeRenderCallback(() -> {
-            feed.setBounds(Math.max(1, body.getWidth()), Math.max(1, body.getHeight()));
-            feed.setPosition(0, 0);
-            applyFilter();
+    private Panel stage(DoubleSupplier gate) {
+        Panel layer = veil(dialog, gate);
+        layer.setBeforeRenderCallback(() -> {
+            layer.setBounds(dialog.getWidth(), dialog.getHeight());
+            layer.setPosition(0, (1 - gate.getAsDouble()) * 8);
+            layer.setAlpha((float) gate.getAsDouble());
         });
-
-        int slot = 0;
-        label(feed, "随 mod 打包", LABEL_ROW, GROUP_BUILTIN,
-                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-        fontRow(feed, UiFont.BUILTIN, GROUP_BUILTIN, slot++);
-
-        label(feed, external.isEmpty() ? "我的字体文件" : "我的字体文件（" + external.size() + "）",
-                LABEL_ROW_2, GROUP_EXTERNAL, () -> EXTERNAL_COLOR);
-        if (external.isEmpty()) {
-            note(feed, GROUP_EXTERNAL, () -> PartyIcons.FOLDER_OPEN,
-                    () -> "还没有自备字体。点下面「选择字体文件」，或把 ttf/otf 丢进 "
-                            + UiFontLibrary.getExternalDir().getPath());
-        }
-        for (UiFont font : external) {
-            fontRow(feed, font, GROUP_EXTERNAL, slot++);
-        }
-
-        label(feed, systemLabel(system), LABEL_ROW_2, GROUP_SYSTEM, () -> SYSTEM_COLOR);
-        if (system.isEmpty()) {
-            note(feed, GROUP_SYSTEM,
-                    () -> builtState == UiFontLibrary.State.SCANNING
-                            ? PartyIcons.HOURGLASS : PartyIcons.WARNING,
-                    () -> builtState == UiFontLibrary.State.SCANNING
-                            ? "正在读取系统里装了哪些字体…"
-                            : "没读到系统字体。可以用上面的字体文件方式自备字体。");
-        }
-        for (UiFont font : system) {
-            fontRow(feed, font, GROUP_SYSTEM, slot++);
-        }
-
-        footer(dialog);
-
-        if (!query.isEmpty() && searchField != null) {
-            searchField.setText(query);
-        }
+        return layer;
     }
 
-    private String systemLabel(List<UiFont> system) {
-        if (builtState == UiFontLibrary.State.SCANNING) {
-            return "系统字体（正在读取…）";
-        }
-        return system.isEmpty() ? "系统字体" : "系统字体（" + system.size() + "）";
+    private void buildHeader() {
+        Panel header = stage(this::headerGate);
+        NcmExpressive.label(header, () -> "个性化 / TYPOGRAPHY", () -> FontManager.pf20,
+                () -> geometry.inset, () -> geometry.shortWindow ? 21 : 25,
+                () -> geometry.contentWidth - 64, () -> palette().muted());
+        NcmExpressive.label(header, () -> "让文字，也合你心意", () -> geometry.shortWindow ? FontManager.pf34bold : FontManager.pf40bold,
+                () -> geometry.inset, () -> geometry.shortWindow ? 49 : 61,
+                () -> geometry.contentWidth - 60, () -> palette().text());
+        RoundedRectWidget close = NcmExpressive.hitSurface(header,
+                () -> dialog.getWidth() - geometry.inset - 42, () -> 20,
+                () -> 42, () -> 42, 21, () -> palette().container(), this::dispose);
+        close.setTooltip("关闭字体选择（Esc）");
+        NcmExpressive.icon(close, PartyIcons.CLOSE, ICON_M, () -> 21, () -> 21, () -> palette().muted());
     }
 
-    private static List<UiFont> filterByOrigin(List<UiFont> all, UiFont.Origin origin) {
-        List<UiFont> out = new ArrayList<UiFont>();
-        if (all != null) {
-            for (UiFont font : all) {
-                if (font.getOrigin() == origin) {
-                    out.add(font);
-                }
+    private void buildSearch() {
+        Panel search = stage(() -> cardGate(0));
+        RoundedRectWidget field = NcmExpressive.surface(search, () -> geometry.inset, () -> geometry.searchY,
+                () -> geometry.contentWidth - 58, () -> 48, 24, () -> palette().input());
+        NcmExpressive.icon(field, PartyIcons.SEARCH, ICON_M, () -> 24, () -> 24, () -> palette().primary());
+        searchField = new TextFieldWidget(FontManager.pf25);
+        search.addChild(searchField);
+        searchField.setEnabled(true).setFocused(true).drawUnderline(false);
+        searchField.setPlaceholder("搜索字体名称或英文族名");
+        searchField.setBeforeRenderCallback(() -> {
+            searchField.setBounds(Math.max(1, field.getWidth() - 82), 30);
+            searchField.setPosition(geometry.inset + 46, geometry.searchY + 9);
+            searchField.setColor(palette().text());
+            searchField.setDisabledTextColor(palette().muted());
+        });
+        stroke(field, 24, () -> palette().primary(), () -> searchField.isFocused() ? .42 : 0);
+        RoundedRectWidget clear = NcmExpressive.hitSurface(search,
+                () -> geometry.inset + geometry.contentWidth - 92, () -> geometry.searchY + 8,
+                () -> 32, () -> 32, 16, () -> palette().input(), () -> searchField.setText(""));
+        clear.setBeforeRenderCallback(() -> {
+            clear.setBounds(32, 32);
+            clear.setPosition(geometry.inset + geometry.contentWidth - 92, geometry.searchY + 8);
+            clear.setHidden(searchField.getText().isEmpty());
+        });
+        // 隐藏与恢复从父级驱动，不能放在 clear 自己的回调（隐藏后回调不会再执行）。
+        search.setBeforeRenderCallback(() -> {
+            search.setBounds(dialog.getWidth(), dialog.getHeight());
+            search.setPosition(0, (1 - cardGate(0)) * 8);
+            search.setAlpha((float) cardGate(0));
+            clear.setHidden(searchField.getText().isEmpty());
+        });
+        clear.setTooltip("清空搜索");
+        NcmExpressive.icon(clear, PartyIcons.CLOSE, ICON_S, () -> 16, () -> 16, () -> palette().muted());
+        RoundedRectWidget refresh = NcmExpressive.hitSurface(search,
+                () -> dialog.getWidth() - geometry.inset - 48, () -> geometry.searchY,
+                () -> 48, () -> 48, 18, () -> palette().primaryContainer(), UiFontLibrary::refresh);
+        refresh.setTooltip("重新扫描系统字体与字体目录");
+        NcmExpressive.icon(refresh, () -> UiFontLibrary.getState() == UiFontLibrary.State.SCANNING
+                        ? PartyIcons.HOURGLASS : PartyIcons.SYNC, ICON_M,
+                () -> 24, () -> 24, () -> palette().primary());
+    }
+
+    private void buildTabs() {
+        Panel layer = stage(() -> cardGate(1));
+        tabs = new Panel();
+        layer.addChild(tabs);
+        tabs.setClickable(false);
+        NcmExpressive.surface(tabs, 0, 0, tabs::getWidth, tabs::getHeight, 24, () -> palette().container());
+        NcmExpressive.surface(tabs, () -> 4 + slide * tabWidth(), () -> 4,
+                this::tabWidth, () -> 40, 20, () -> palette().primary());
+        for (int i = 0; i < SECTIONS.length; i++) {
+            final int section = i;
+            Panel tab = new Panel();
+            tabs.addChild(tab);
+            tab.setShouldOverrideMouseCursor(true).setBeforeRenderCallback(() -> {
+                tab.setBounds(tabWidth(), 40);
+                tab.setPosition(4 + section * tabWidth(), 4);
+            });
+            tab.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                filterMotion.request(normalize(searchField.getText()), section);
+                return true;
+            });
+            NcmExpressive.centered(tab, () -> SECTIONS[section], () -> FontManager.pf24bold,
+                    () -> tab.getWidth() * .5, () -> 20, () -> tab.getWidth() - 12,
+                    () -> NcmExpressivePalette.readableColor(section == filterMotion.targetSection()
+                            ? palette().onPrimary() : palette().muted(),
+                            NcmExpressivePalette.mix(palette().container(), palette().primary(), Math.max(0, 1 - Math.abs(slide - section)))));
+        }
+        NcmExpressive.label(layer, this::resultText, () -> FontManager.pf20,
+                () -> geometry.inset, () -> geometry.summaryY,
+                () -> geometry.contentWidth, () -> palette().muted());
+    }
+
+    private double tabWidth() { return Math.max(1, (tabs.getWidth() - 8) / 4); }
+
+    private void buildPreview() {
+        Panel layer = stage(() -> cardGate(2));
+        preview = new Panel();
+        layer.addChild(preview);
+        preview.setClickable(false);
+        RoundedRectWidget plate = NcmExpressive.surface(preview, 0, 0, preview::getWidth, preview::getHeight,
+                28, () -> palette().primaryContainer());
+        plate.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1));
+        plate.setGlassRim(GlassLook.Surface.PLAYER);
+        NcmExpressive.label(preview, () -> "当前字体 · 实时预览", () -> FontManager.pf20,
+                () -> 20, () -> 24, () -> preview.getWidth() - 40, () -> palette().primary());
+        NcmExpressive.label(preview, () -> activeFont().getDisplayName(), () -> FontManager.pf28bold,
+                () -> 20, () -> geometry.columns ? 59 : 52,
+                () -> preview.getWidth() - (geometry.columns ? 40 : 130), () -> palette().text());
+        Panel specimen = new Panel();
+        preview.addChild(specimen);
+        specimen.setClickable(false).setBeforeRenderCallback(() -> {
+            specimen.setBounds(preview.getWidth(), preview.getHeight());
+            specimen.setPosition(0, (1 - previewReveal) * 5);
+            specimen.setAlpha((float) previewReveal);
+        });
+        NcmExpressive.label(specimen, () -> "Aa", () -> FontManager.pf65bold,
+                () -> geometry.columns ? 22 : preview.getWidth() - 96,
+                () -> geometry.columns ? 131 : geometry.shortWindow ? 48 : 61,
+                () -> geometry.columns ? preview.getWidth() - 44 : 76, () -> palette().primary());
+        Panel wide = new Panel();
+        widePreview = wide;
+        specimen.addChild(wide);
+        wide.setClickable(false);
+        NcmExpressive.label(wide, () -> "好音乐，", () -> FontManager.pf40bold,
+                () -> 20, () -> 197, () -> preview.getWidth() - 40, () -> palette().text());
+        NcmExpressive.label(wide, () -> "也要好字形。", () -> FontManager.pf40bold,
+                () -> 20, () -> 230, () -> preview.getWidth() - 40, () -> palette().text());
+        NcmExpressive.label(wide, () -> "Aa Bb Gg  0123456789", () -> FontManager.pf25,
+                () -> 20, () -> 274, () -> preview.getWidth() - 40, () -> palette().muted());
+        NcmExpressive.rule(wide, () -> 20, () -> 302, () -> preview.getWidth() - 40, () -> palette().outline());
+        NcmExpressive.label(wide, () -> activeFont().hasCjk() ? "中文与拉丁字形，随你选择。" : "这款字体缺少中文，已用内置补齐。",
+                () -> FontManager.pf20, () -> 20, () -> 329, () -> preview.getWidth() - 40, () -> palette().muted());
+        NcmExpressive.label(wide, () -> "点选即应用 · 无需重启", () -> FontManager.pf20,
+                () -> 20, () -> 355, () -> preview.getWidth() - 40, () -> palette().primary());
+        Panel compact = new Panel();
+        compactPreview = compact;
+        specimen.addChild(compact);
+        compact.setClickable(false);
+        NcmExpressive.label(compact, () -> "好音乐，也要好字形。  Aa 0123", () -> FontManager.pf20,
+                () -> 20, () -> 91, () -> preview.getWidth() - 40, () -> palette().muted());
+        NcmExpressive.medallion(wide, PartyIcons.TEXT_FORMAT, () -> preview.getWidth() - 63,
+                () -> 126, () -> 64, () -> palette().primary(), () -> palette().onPrimary());
+    }
+
+    private void buildList() {
+        listStage = new Panel();
+        dialog.addChild(listStage);
+        listStage.setClickable(false);
+        viewport = new ScrollPanel() {
+            @Override protected boolean acceptsTouchInput() { return !closing && filterMotion.acceptsInput(); }
+            @Override protected boolean shouldClickChildren(double x, double y) {
+                return !closing && filterMotion.acceptsInput() && testHovered(x, y);
             }
-        }
-        return out;
+        };
+        empty = new Panel();
+        listStage.addChild(viewport);
+        listStage.addChild(empty);
+        viewport.setSpacing(0).setScrollStrength(54).setIndicatorInsideViewport();
+        empty.setClickable(false);
+        empty.setBeforeRenderCallback(() -> {
+            empty.setBounds(geometry.listWidth, geometry.listHeight);
+            empty.setPosition(0, 0);
+            empty.setHidden(matches != 0);
+        });
+        NcmExpressive.medallion(empty, PartyIcons.SEARCH, () -> empty.getWidth() * .5,
+                () -> 45, () -> 50, () -> palette().primaryContainer(), () -> palette().primary());
+        NcmExpressive.centered(empty, this::emptyTitle, () -> FontManager.pf28bold,
+                () -> empty.getWidth() * .5, () -> 99, () -> empty.getWidth() - 32, () -> palette().text());
+        NcmExpressive.centered(empty, this::emptyHint, () -> FontManager.pf20,
+                () -> empty.getWidth() * .5, () -> 132, () -> empty.getWidth() - 32, () -> palette().muted());
     }
 
-    // ════════════════════════════ 搜索条 ════════════════════════════
-
-    private void searchBar(final Panel dialog) {
-        final double height = 32.0;
-        final double refreshBox = 32.0;
-
-        final RoundedRectWidget field = new RoundedRectWidget();
-        dialog.addChild(field);
-        field.setClickable(false);
-        field.setRadius(9);
-        field.setBeforeRenderCallback(() -> {
-            field.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2 - refreshBox - 8),
-                    height);
-            field.setPosition(PAD + CARD_INSET, HEADER_H + (SEARCH_H - height) * .5);
-            field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-        });
-        icon(field, PartyIcons.SEARCH, ICON_S, () -> 10.0 + ICON_S * .5, () -> height * .5,
-                () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-
-        final TextFieldWidget input = new TextFieldWidget(FontManager.pf12);
-        dialog.addChild(input);
-        // 打开就聚焦：上百款字体，进来第一件事十有八九是打字筛选。
-        // ESC 由 NCMScreen 抢在控件树之前处理，所以聚焦不会把这一层关不掉。
-        input.setEnabled(true).setFocused(true);
-        input.setPlaceholder("搜索字体名，比如 雅黑 / Consolas");
-        input.drawUnderline(false);
-        input.setBeforeRenderCallback(() -> {
-            double left = 10.0 + ICON_S + 6.0;
-            input.setBounds(Math.max(1, field.getWidth() - left - 10.0), Math.max(1, height - 10.0));
-            input.setPosition(field.getRelativeX() + left, field.getRelativeY() + 5);
-            input.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            input.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-        });
-        stroke(field, 9.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
-                () -> input.isFocused() ? .62 : 0.0);
-        searchField = input;
-
-        // 重新扫描：用户刚往字体目录里丢了文件、或者刚在系统里装了字体，不该为此重开界面。
-        final RoundedButtonWidget refresh = new RoundedButtonWidget("", FontManager.pf12bold);
-        dialog.addChild(refresh);
-        refresh.setRadius(9);
-        refresh.setGlassRim(GlassLook.Surface.PLAYER);
-        refresh.setShouldOverrideMouseCursor(true);
-        refresh.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            UiFontLibrary.refresh();
-            return true;
-        });
-        refresh.setBeforeRenderCallback(() -> {
-            refresh.setBounds(refreshBox, height);
-            refresh.setPosition(field.getRelativeX() + field.getWidth() + 8, field.getRelativeY());
-            refresh.setColor(refresh.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-            refresh.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            refresh.setTextColor(0x00FFFFFF);
-        });
-        icon(refresh, PartyIcons.SYNC, ICON_M, () -> refreshBox * .5, () -> height * .5,
-                () -> UiFontLibrary.getState() == UiFontLibrary.State.SCANNING
-                        ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
-                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-    }
-    // ════════════════════════════ 列表行 ════════════════════════════
-
-    /**
-     * 列表里的一行，高度当场就填好。
-     *
-     * <p>{@link ScrollPanel} 是在自己的 {@code onRender} 里读 {@code getHeight()} 排版的，
-     * 而行自己的回调要等排完版才跑。行高不预置的话，一行从隐藏变回显示的那一帧高度还是 0，
-     * 下面所有行会往上跳一帧 —— 清空搜索词时看得很清楚。</p>
-     */
-    private Panel row(final ScrollPanel feed, final double height) {
-        final Panel strip = strip(feed, height);
-        strip.setBounds(1.0, height);
-        return strip;
+    private void rebuildRows() {
+        viewport.getChildren().clear();
+        rows.clear();
+        rows.add(new FontRow(UiFont.BUILTIN));
+        for (UiFont font : catalog) rows.add(new FontRow(font));
+        for (FontRow row : rows) viewport.addChild(row);
+        counts[0] = rows.size();
+        counts[1] = counts[2] = 0;
+        counts[3] = 1;
+        for (UiFont font : catalog) counts[sectionOf(font)]++;
+        listArrived = System.nanoTime();
+        filterDirty = true;
     }
 
-    private void label(final ScrollPanel feed, final String text, final double height,
-                       final int group, final IntSupplier accent) {
-        final Panel strip = row(feed, height);
-        entries.add(new Entry(strip, null, group, false));
-        // 小标题贴着这一行的底：多出来的高度留在上面，两组之间才有呼吸。
-        sectionLabel(strip, text, () -> height - 19.0, accent);
-    }
-
-    private void note(final ScrollPanel feed, final int group,
-                      final Supplier<String> glyph, final Supplier<String> text) {
-        final Panel strip = row(feed, 38.0);
-        entries.add(new Entry(strip, null, group, true));
-        tip(strip, glyph, text, () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                () -> 8.0);
-    }
-
-    private void fontRow(final ScrollPanel feed, final UiFont font, final int group, final int slot) {
-        final Panel strip = row(feed, ROW_H);
-        entries.add(new Entry(strip, font, group, false));
-
-        final int tint = originColor(font);
-        final BooleanSupplier picked = () -> UiFontLibrary.isActive(font);
-        final BooleanSupplier busy = () -> UiFontLibrary.isPending(font);
-
-        final Card[] self = new Card[1];
-        // 入场是按 slot 依次开闸的，而这个列表可能有上百行：闸门到第 15 行就再也不会打开，
-        // 所以序号夹住 —— 前十行还是一条条落下来，后面的跟着最后一档一起出现。
-        final int gate = Math.min(slot, 9);
-        final Card card = card(strip, gate, () -> 0.0, () -> CARD_H, () -> picked.getAsBoolean()
-                ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND), tint, .30)
-                : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
-                NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover));
-        self[0] = card;
-        card.setShouldOverrideMouseCursor(true);
-        card.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            UiFontLibrary.select(font);
-            return true;
-        });
-        stroke(card, 12.0, () -> tint, () -> picked.getAsBoolean() ? .58 : 0.0);
-
-        final RoundedRectWidget disc = new RoundedRectWidget();
-        card.addChild(disc);
-        disc.setClickable(false);
-        disc.setBeforeRenderCallback(() -> {
-            disc.setRadius(11);
-            disc.setBounds(DISC, DISC);
-            disc.setPosition(12.0, (CARD_H - DISC) * .5);
-            disc.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND), tint,
-                    picked.getAsBoolean() ? .44 : .26));
-        });
-        icon(disc, originGlyph(font), ICON_M, () -> DISC * .5, () -> DISC * .5, () -> tint);
-
-        final LabelWidget title = label(card, font::getDisplayName, FontManager.pf14bold);
-        title.setBeforeRenderCallback(() -> {
-            title.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            title.setMaxWidth(Math.max(1, card.getWidth() - TEXT_LEFT - BADGE_RESERVE));
-            title.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            title.setPosition(TEXT_LEFT, inkTop(title, CARD_H * .5 - 9.0));
-        });
-
-        final LabelWidget caption = label(card, font::describe, FontManager.pf12);
-        caption.setBeforeRenderCallback(() -> {
-            caption.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            caption.setMaxWidth(Math.max(1, card.getWidth() - TEXT_LEFT - BADGE_RESERVE));
-            caption.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            caption.setPosition(TEXT_LEFT, inkTop(caption, CARD_H * .5 + 9.0));
-        });
-
-        // 胶囊整组控透明度：不能让它自己按状态改颜色，那样"没在用"的行上会留一枚透明的空胶囊。
-        final Panel badge = veil(card,
-                () -> picked.getAsBoolean() || busy.getAsBoolean() ? 1.0 : 0.0);
-        pill(badge, () -> busy.getAsBoolean() ? PartyIcons.HOURGLASS : PartyIcons.CHECK,
-                () -> busy.getAsBoolean() ? "载入中" : "使用中",
-                () -> busy.getAsBoolean() ? WARN_COLOR : tint,
-                () -> card.getWidth() - 12.0, () -> CARD_H * .5);
-    }
-
-    private static int originColor(UiFont font) {
-        switch (font.getOrigin()) {
-            case EXTERNAL:
-                return EXTERNAL_COLOR;
-            case SYSTEM:
-                return SYSTEM_COLOR;
-            default:
-                return NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
-        }
-    }
-
-    private static String originGlyph(UiFont font) {
-        return font.getOrigin() == UiFont.Origin.EXTERNAL
-                ? PartyIcons.FOLDER_OPEN : PartyIcons.TEXT_FORMAT;
-    }
-
-    // ════════════════════════════ 筛选 ════════════════════════════
-
+    /** 隐藏由父级驱动；目录刷新不重建搜索框、窗口和进出时钟。 */
     private void applyFilter() {
-        final String needle = normalize(searchField == null ? "" : searchField.getText());
-        final int[] hits = new int[GROUPS];
-        for (Entry entry : entries) {
-            if (entry.font == null) {
-                continue;
-            }
-            boolean hit = matches(entry.font, needle);
-            entry.strip.setHidden(!hit);
-            if (hit) {
-                hits[entry.group]++;
-            }
+        matches = 0;
+        for (FontRow row : rows) {
+            boolean visible = matches(row.font, filterMotion.query())
+                    && (filterMotion.section() == 0 || sectionOf(row.font) == filterMotion.section());
+            row.setHidden(!visible);
+            if (visible) row.slot = matches++;
         }
-        for (Entry entry : entries) {
-            if (entry.font != null) {
-                continue;
-            }
-            entry.strip.setHidden(entry.emptyQueryOnly
-                    ? !needle.isEmpty()
-                    : !needle.isEmpty() && hits[entry.group] == 0);
-        }
+        filterDirty = false;
     }
 
-    private static boolean matches(UiFont font, String needle) {
-        if (needle.isEmpty()) {
-            return true;
-        }
-        if (font.getDisplayName().toLowerCase(Locale.ROOT).contains(needle)) {
-            return true;
-        }
-        // 族名也要搜：中文用户看到的是「微软雅黑」，但很多人习惯敲 yahei。
+    static boolean matches(UiFont font, String needle) {
+        if (needle.isEmpty()) return true;
+        if (font.getDisplayName().toLowerCase(Locale.ROOT).contains(needle)) return true;
         String family = font.getFamily();
         return family != null && family.toLowerCase(Locale.ROOT).contains(needle);
     }
 
-    private static String normalize(String text) {
-        return text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
-    }
-    // ════════════════════════════ 页脚 ════════════════════════════
+    static String normalize(String text) { return text == null ? "" : text.trim().toLowerCase(Locale.ROOT); }
 
-    private void footer(final Panel dialog) {
-        divider(dialog, () -> dialog.getHeight() - 100.0);
-
-        // 示例行用的是界面自己的字体，所以它天然就是当前选择的实时预览。
-        icon(dialog, PartyIcons.TEXT_FORMAT, ICON_S, () -> PAD + CARD_INSET + ICON_S * .5,
-                () -> dialog.getHeight() - 84.0,
-                () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-        final LabelWidget sample = label(dialog, UiFontLibrary::sampleText, FontManager.pf20bold);
-        sample.setBeforeRenderCallback(() -> {
-            sample.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            sample.setMaxWidth(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2 - ICON_S - 7.0));
-            sample.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            sample.setPosition(PAD + CARD_INSET + ICON_S + 7.0,
-                    inkTop(sample, dialog.getHeight() - 84.0));
-        });
-
-        footerButton(dialog, 0, () -> PartyIcons.ADD, () -> "选择字体文件",
-                () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
-                UiFontLibrary::browseForFile);
-        footerButton(dialog, 1, () -> PartyIcons.FOLDER_OPEN, () -> "字体目录",
-                () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
-                UiFontLibrary::openExternalDir);
-        footerButton(dialog, 2, () -> PartyIcons.SYNC, () -> "恢复内置",
-                () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
-                UiFontLibrary::restoreBuiltin);
-
-        tip(dialog, this::statusGlyph, this::statusText, this::statusColor,
-                () -> dialog.getHeight() - 28.0);
+    private static int sectionOf(UiFont font) {
+        return font.isBuiltin() ? 3 : font.getOrigin() == UiFont.Origin.SYSTEM ? 1 : 2;
     }
 
-    private void footerButton(final Panel dialog, final int index, final Supplier<String> glyph,
-                              final Supplier<String> text, final IntSupplier ink,
-                              final Runnable onClick) {
-        final RoundedButtonWidget button = action(dialog, glyph, text, FontManager.pf12bold, ink, onClick);
-        button.setBeforeRenderCallback(() -> {
-            double span = Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2);
-            double width = Math.max(1, (span - 16.0) / 3.0);
-            button.setBounds(width, 30);
-            button.setPosition(PAD + CARD_INSET + (width + 8.0) * index, dialog.getHeight() - 66.0);
-            button.setColor(button.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-        });
+    private String resultText() {
+        if (UiFontLibrary.getState() == UiFontLibrary.State.SCANNING) return "正在扫描字体目录…  现有字体仍可选用";
+        return filterMotion.query().isEmpty() ? "可选字体 " + counts[filterMotion.section()] + " 款 · 点选即应用"
+                : "找到 " + matches + " 款字体 · 中文名与英文族名均可搜索";
     }
 
-    private String statusGlyph() {
-        if (UiFontLibrary.isBusy()) {
-            return PartyIcons.HOURGLASS;
+    private String emptyTitle() {
+        if (!filterMotion.query().isEmpty()) return "没有找到这款字体";
+        if (UiFontLibrary.getState() == UiFontLibrary.State.SCANNING) return "字体正在路上";
+        return filterMotion.section() == 2 ? "带上你喜欢的字体" : "暂时没有可选字体";
+    }
+
+    private String emptyHint() {
+        if (!filterMotion.query().isEmpty()) return "试试更短的名称，或切换到「全部」。";
+        return filterMotion.section() == 2 ? "选择字体文件导入，或打开字体目录。" : "扫描完成后自动更新，也可导入字体文件。";
+    }
+
+    private void buildFooter() {
+        Panel footer = stage(this::footerGate);
+        String[] captions = {"选择字体文件", "字体目录", "恢复内置"};
+        String[] glyphs = {PartyIcons.ADD, PartyIcons.FOLDER_OPEN, PartyIcons.SYNC};
+        Runnable[] actions = {UiFontLibrary::browseForFile, UiFontLibrary::openExternalDir, UiFontLibrary::restoreBuiltin};
+        for (int i = 0; i < actions.length; i++) {
+            final int index = i;
+            RoundedButtonWidget action = NcmExpressive.action(footer, glyphs[i], () -> captions[index],
+                    i == 0 ? NcmExpressive.ActionStyle.PRIMARY : i == 1 ? NcmExpressive.ActionStyle.TONAL : NcmExpressive.ActionStyle.NEUTRAL,
+                    () -> geometry.actionX(index), () -> geometry.footerY,
+                    () -> geometry.actionWidth(index), () -> geometry.actionHeight, actions[i]);
+            action.setTooltip(() -> captions[index]);
         }
-        if (UiFontLibrary.isStatusBad()) {
-            return PartyIcons.WARNING;
-        }
-        return has(UiFontLibrary.getStatus()) ? PartyIcons.CHECK : PartyIcons.INFO;
+        NcmExpressive.icon(footer, this::statusGlyph, ICON_S, () -> geometry.inset + 6,
+                () -> geometry.footerY - 20, this::statusColor);
+        NcmExpressive.label(footer, this::statusText, () -> FontManager.pf20,
+                () -> geometry.inset + 20, () -> geometry.footerY - 20,
+                () -> geometry.contentWidth - 20, this::statusColor).setTooltip(this::statusText);
     }
 
-    private int statusColor() {
-        if (UiFontLibrary.isBusy()) {
-            return WARN_COLOR;
-        }
-        if (UiFontLibrary.isStatusBad()) {
-            return BAD_COLOR;
-        }
-        return has(UiFontLibrary.getStatus())
-                ? OK_COLOR
-                : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
-    }
-
+    private String statusGlyph() { return UiFontLibrary.isBusy() ? PartyIcons.HOURGLASS : UiFontLibrary.isStatusBad() ? PartyIcons.WARNING : PartyIcons.CHECK; }
     private String statusText() {
-        String status = UiFontLibrary.getStatus();
-        if (has(status)) {
-            return status;
+        if (has(UiFontLibrary.getStatus())) return UiFontLibrary.getStatus();
+        return "当前使用：" + activeFont().getDisplayName();
+    }
+    private int statusColor() { return UiFontLibrary.isBusy() ? palette().warning() : UiFontLibrary.isStatusBad() ? palette().error() : palette().success(); }
+    private static UiFont activeFont() { return UiFontLibrary.getActive(); }
+    private static NcmExpressivePalette palette() { return NcmExpressivePalette.live(); }
+
+    /** 固定命中边界，形状/选中底色与勾线在内部过渡；不逐行加载候选字体做假预览。 */
+    private final class FontRow extends Panel {
+        final UiFont font;
+        final NcmPromptMotion selected, hover = new NcmPromptMotion(0), press = new NcmPromptMotion(0);
+        int slot;
+        double selectedAmount;
+        final RoundedRectWidget plate;
+
+        FontRow(UiFont font) {
+            this.font = font;
+            selected = new NcmPromptMotion(UiFontLibrary.isActive(font) ? 1 : 0);
+            setBounds(geometry.listWidth, FontPickerGeometry.ROW_HEIGHT + FontPickerGeometry.ROW_GAP);
+            setClickable(true);
+            setShouldOverrideMouseCursor(true);
+            setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                if (!closing && filterMotion.acceptsInput()) UiFontLibrary.select(font);
+                return true;
+            });
+            plate = NcmExpressive.surface(this, () -> 0, () -> 0, this::getWidth,
+                    () -> FontPickerGeometry.ROW_HEIGHT, 20, () -> palette().container());
+            plate.setGlassRim(GlassLook.Surface.PLAYER);
+            RoundedRectWidget monogram = NcmExpressive.surface(this, () -> 12, () -> 12,
+                    () -> 52, () -> 52, 17, () -> selectedAmount > .5 ? palette().primary() : palette().primaryContainer());
+            NcmExpressive.centered(monogram, () -> "Aa", () -> FontManager.pf28bold,
+                    () -> 26, () -> 26, () -> 44, () -> selectedAmount > .5 ? palette().onPrimary() : palette().primary());
+            NcmExpressive.label(this, font::getDisplayName, () -> FontManager.pf28bold,
+                    () -> 78, () -> 27, () -> getWidth() - 132, () -> palette().text());
+            NcmExpressive.label(this, this::caption, () -> FontManager.pf20,
+                    () -> 78, () -> 53, () -> getWidth() - 132, () -> palette().muted());
+            Panel badge = veil(this, () -> selectedAmount);
+            NcmExpressive.successMark(badge, () -> getWidth() - 28, () -> 38, () -> 28,
+                    () -> selectedAmount, () -> palette().primary());
+            Panel pending = veil(this, () -> UiFontLibrary.isPending(font) ? 1 : 0);
+            NcmExpressive.loading(pending, () -> getWidth() - 28, () -> 38, () -> 24, () -> palette().primary());
+            setTooltip(() -> font.getDisplayName() + " · " + font.describe());
         }
-        return "当前使用：" + UiFontLibrary.getActive().getDisplayName();
+
+        private String caption() {
+            return font.isBuiltin() ? "SF Pro + 苹方 · 随 mod 打包"
+                    : (font.getOrigin() == UiFont.Origin.EXTERNAL ? "字体文件" : "系统字体")
+                    + " · " + (font.hasCjk() ? "含中文" : "中文由内置补齐") + (font.hasBold() ? " · 有粗体" : " · 模拟粗体");
+        }
+
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            long now = System.nanoTime();
+            selectedAmount = selected.update(UiFontLibrary.isActive(font) ? 1 : 0, 48 / SheetClock.speed(), now);
+            double hovering = hover.update(testHovered(mouseX, mouseY) && filterMotion.acceptsInput() ? 1 : 0, 45 / SheetClock.speed(), now);
+            double pressed = press.update(testHovered(mouseX, mouseY) && Mouse.isButtonDown(0) ? 1 : 0, 28 / SheetClock.speed(), now);
+            plate.setBeforeRenderCallback(() -> {
+                plate.setBounds(getWidth(), FontPickerGeometry.ROW_HEIGHT);
+                plate.setPosition(0, 0);
+                plate.setRadius(20 - selectedAmount * 8 - pressed * 2);
+                plate.setColor(NcmExpressivePalette.mix(palette().container(), palette().primaryContainer(), Math.min(1, selectedAmount + hovering * .6)));
+                plate.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1));
+            });
+            double arrive = NcmPromptMotion.reveal(listArrived, now, (430 + Math.min(slot, 5) * 34) / SheetClock.speed());
+            setAlpha((float) (cardGate(Math.min(slot + 2, 7)) * arrive));
+            Canvas canvas = SkijaGfx.canvas();
+            if (canvas != null && selectedAmount > .001) {
+                canvas.drawRRect(RRect.makeXYWH((float) (getX() + 1), (float) (getY() + 1),
+                        (float) Math.max(0, getWidth() - 2), (float) (FontPickerGeometry.ROW_HEIGHT - 2), (float) (20 - selectedAmount * 8)),
+                        SkijaGfx.stroke(NcmExpressive.withAlpha(palette().primary(), getAlpha() * selectedAmount * .6), 1.5f));
+            }
+        }
     }
 }

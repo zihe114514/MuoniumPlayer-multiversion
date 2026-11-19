@@ -10,7 +10,7 @@ import java.nio.file.Files;
 import java.util.Arrays;
 
 /**
- * 一首曲目的<b>整曲</b>时间包络，进阶模式（{@link AutomixSettings#isAdvancedModeEnabled()}）的原料。
+ * 一首曲目的<b>整曲</b>时间包络，普通 Folia 配对搜索与进阶模式的队列排列共用。
  *
  * <p>它存在的唯一理由：{@link AutomixAutoCue} 要在<b>任意</b>两个位置之间找接缝——「从 A 的哪一帧开始退、
  * 从 B 的哪一帧开始进」。而 {@link FoliaTrackProfile} 只量了 A 的尾 30 秒和 B 的头 30 秒，

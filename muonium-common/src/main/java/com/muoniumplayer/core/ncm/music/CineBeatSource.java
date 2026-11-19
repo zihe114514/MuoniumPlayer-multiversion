@@ -98,7 +98,33 @@ public final class CineBeatSource {
 
         /** 无节拍信号（第三级兜底）：调度器应退化为能量慢切。 */
         public boolean isMetered() {
-            return beatPeriodNanos > 0d && confidence > 0f;
+            return Float.isFinite(bpm) && bpm >= 30f && bpm <= 300f
+                    && Double.isFinite(beatPeriodNanos) && beatPeriodNanos >= 200_000_000d
+                    && beatPeriodNanos <= 2_000_000_000d
+                    && Double.isFinite(beatAnchorNanos) && Double.isFinite(barAnchorNanos)
+                    && beatsPerBar > 0 && beatsPerBar <= 16
+                    && Float.isFinite(confidence) && confidence >= 0.5f;
+        }
+
+        /** 最近一个不晚于当前时刻的绝对拍点；供单消费者按拍去重，不把渲染帧当事件。 */
+        public long beatAtOrBefore(long nowNanos) {
+            if (!isMetered()) return Long.MIN_VALUE;
+            double beats = Math.floor((nowNanos - beatAnchorNanos) / beatPeriodNanos);
+            double stamp = beatAnchorNanos + beats * beatPeriodNanos;
+            if (!Double.isFinite(stamp) || stamp < Long.MIN_VALUE || stamp > Long.MAX_VALUE) {
+                return Long.MIN_VALUE;
+            }
+            return Math.round(stamp);
+        }
+
+        /** 把绝对期限向后对齐到小节第一拍；不依赖会随估算重锚的全局拍序。 */
+        public long nextBarAtOrAfter(long earliestNanos) {
+            if (!isMetered()) return earliestNanos;
+            double period = beatPeriodNanos * beatsPerBar;
+            double elapsed = earliestNanos - barAnchorNanos;
+            double remainder = elapsed - Math.floor(elapsed / period) * period;
+            double wait = remainder < 1d || period - remainder < 1d ? 0d : period - remainder;
+            return earliestNanos + (long) Math.ceil(wait);
         }
 
         /** 当前拍内相位 0..1（nowNanos 相对最近拍点）。 */

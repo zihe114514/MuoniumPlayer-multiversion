@@ -62,7 +62,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.5.2";
+    public static final String MOD_VERSION = "2.6.0";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -306,9 +306,9 @@ public final class MuoniumPlayerClient {
         com.muoniumplayer.core.ncm.music.FocusVolumeDucker.onClientTick(mc.isWindowActive());
 
         // ---- 场景声学 ----
-        // 每 tick 问一次环境采样器;内部自带 200ms 节流与全 Throwable 闸,主菜单
-        // (采不到听者)会把目标量送回静息。真正的方块遍历只发生在节流窗口到期
-        // 的那一 tick,其余时候是一次布尔判断。
+        // 声源状态先更新;打开 GUI、切换维度时也不能沿用旧的 ACTIVE。
+        com.muoniumplayer.compat.mc.SpeakerManager.tick();
+        // 探针后台采样,移动/转头150ms、站定500ms;主菜单使旧结果失效。
         com.muoniumplayer.core.ncm.music.acoustics.AcousticsRuntime.onClientTick(
                 com.muoniumplayer.compat.mc.ListenerProbe.of(mc));
         // 听者位姿每 tick 投递(50ms):HRTF/直射声像的更新粒度。
@@ -320,7 +320,9 @@ public final class MuoniumPlayerClient {
                     (float) (-Math.sin(lpYaw) * Math.cos(lpPitch)),
                     (float) (-Math.sin(lpPitch)),
                     (float) (Math.cos(lpYaw) * Math.cos(lpPitch)),
-                    0f, 1f, 0f);
+                    (float) (-Math.sin(lpYaw) * Math.sin(lpPitch)),
+                    (float) Math.cos(lpPitch),
+                    (float) (Math.cos(lpYaw) * Math.sin(lpPitch)));
         }
         // ---- 环境选曲 ----
         // 每 tick 送一帧环境快照;控制器自带稳定期/冷却与全 Throwable 闸,开关关着
@@ -387,12 +389,11 @@ public final class MuoniumPlayerClient {
             // 环境选曲手动切换：默认不占键位，绑了才触发；动作与灵动岛反馈都在 MusicHotkeys 里。
             if (keyAmbientNow.consumeClick()) {
                 MusicHotkeys.triggerAmbientNow();
+            }
 
-            // 世界声源放置/移除:单键智能切换(瞄准空处=放置,瞄准声源=移除)。
+            // 世界声源按键独立于环境选曲按键。
             if (keySpeakerPlace.consumeClick()) {
                 com.muoniumplayer.compat.mc.SpeakerManager.toggle();
-            }
-            com.muoniumplayer.compat.mc.SpeakerManager.tick();
             }
         } else {
             // 打开 GUI 时把这一 tick 积累的边沿消费掉，避免关掉界面的瞬间一次性全部触发。
@@ -409,21 +410,10 @@ public final class MuoniumPlayerClient {
             keySpeakerPlace.consumeClick();
         }
 
-        // ---- 卡点运镜（MuoniumCine）----
-        // 每 tick 送一帧场景快照;状态机在共享层,开关关着/音乐停着时是一次布尔判断。
-        // isActive 翻转沿上做树侧执行器(切第三人称/隐藏 HUD 及其恢复)——共享层
-        // 不碰 MC 符号,翻转检测只能在树桥。
-        boolean cineWasActive = com.muoniumplayer.core.cine.CineDirector.isActive();
+        // ---- 卡点运镜：tick 独占调度，宿主每 tick 对账并恢复相机/HUD ----
         com.muoniumplayer.core.cine.CineDirector.onClientTick(
                 com.muoniumplayer.compat.mc.CineProbe.of(mc));
-        boolean cineIsActive = com.muoniumplayer.core.cine.CineDirector.isActive();
-        if (cineIsActive != cineWasActive) {
-            if (cineIsActive) {
-                com.muoniumplayer.compat.mc.CineProbe.entered();
-            } else {
-                com.muoniumplayer.compat.mc.CineProbe.left();
-            }
-        }
+        com.muoniumplayer.compat.mc.CineProbe.sync();
     }
 
     /**
@@ -590,7 +580,8 @@ public final class MuoniumPlayerClient {
         // 宁可编辑器里没预览，也不能让 HUD 叠到背包/聊天上挡住操作。
         if (open != null && !(open instanceof NCMScreen)
                 && !isHudEditorScreen(open)
-                && !DownloadDynamicIsland.isDownloadActive()) {
+                && !DownloadDynamicIsland.isDownloadActive()
+                && !DownloadDynamicIsland.needsTrackNoticeOverlay()) {
             return;
         }
         api.getGLStateManager().pushAttrib();
@@ -759,12 +750,15 @@ public final class MuoniumPlayerClient {
      * 都使用同一套全局坐标和尺寸。HUD 编辑器已经绘制专用实时预览，避免重复叠加。
      */
     public void onScreenRendered(Screen screen) {
+        DownloadDynamicIsland.maintainMusicCardContext();
         if (screenRenderDisabled || this.api == null) {
             return;
         }
         boolean editorOrOtherUi = screen instanceof GuiHudEditorPro
                 || (screen != null && !(screen instanceof NCMScreen));
-        if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()) return;
+        if (editorOrOtherUi && !DownloadDynamicIsland.isDownloadActive()
+                && !DownloadDynamicIsland.needsChatOverlay()
+                && !DownloadDynamicIsland.needsTrackNoticeOverlay()) return;
         try {
             if (screen instanceof NCMScreen && !DownloadDynamicIsland.needsScreenOverlay()
                     && !AutomixTransitionAnimation.hasStandaloneOverlay()) return;
@@ -786,7 +780,10 @@ public final class MuoniumPlayerClient {
         // 背包/原版设置等其它界面也不叠常驻岛与切换动画（全屏播放器自管）。
         boolean editorOrOtherUi = screen instanceof GuiHudEditorPro
                 || (screen != null && !(screen instanceof NCMScreen));
-        if (DownloadDynamicIsland.isDownloadActive() || !editorOrOtherUi) {
+            if (DownloadDynamicIsland.isDownloadActive() || !editorOrOtherUi
+                    || DownloadDynamicIsland.needsChatOverlay()
+                    || DownloadDynamicIsland.needsTrackNoticeOverlay()) {
+
             DownloadDynamicIsland.render();
         }
         if (!editorOrOtherUi) {

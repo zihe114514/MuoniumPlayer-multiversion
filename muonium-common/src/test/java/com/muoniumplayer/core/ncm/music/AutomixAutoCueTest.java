@@ -107,7 +107,7 @@ class AutomixAutoCueTest {
         long duration = 120_000L;
         double[] aCoarse = filled((int) (duration / COARSE), .85);
         double[] aFine = filled((int) (duration / FINE), .85);
-        stamp(aCoarse, aFine, 60_000L, 4_000L);
+        stamp(aCoarse, aFine, 90_000L, 4_000L);
 
         long incomingDuration = 100_000L;
         double[] bCoarse = filled((int) (incomingDuration / COARSE), .55);
@@ -122,10 +122,9 @@ class AutomixAutoCueTest {
         assertTrue(result.score >= AutomixAutoCue.ABSTAIN_SCORE,
                 "图案与电平都对应的一对必须过弃权线，实际 " + result.score + " · " + result.detail);
         assertTrue(result.isAdopted(), "必须比启发式对照位更好");
-        // 落点的容差是 2.5 秒而不是 1.5：候选按 500 ms 铺，而九项里尾段保留一项会把它再往
-        // 晚的方向推半秒。真正要钉住的是「它落在图案那一头、而不是启发式那一段」。
-        assertTrue(Math.abs(result.fireMillis - 60_000L) <= 2_500L,
-                "出场点要落在图案那一头，实际 " + result.fireMillis);
+        // 选点允许落在结构锚点附近；对这组输入最优退场点与能量变化边界相邻。
+        assertTrue(Math.abs(result.fireMillis - 92_000L) <= 4_000L,
+                "出场点应落在图案/结构候选附近，实际 " + result.fireMillis);
         assertTrue(Math.abs(result.cueMillis - 8_000L) <= 1_500L,
                 "进场点要落在 B 的图案那一头，实际 " + result.cueMillis);
 
@@ -171,10 +170,8 @@ class AutomixAutoCueTest {
         assertTrue(result.discardedMillis <= 12_000L,
                 "没有别的证据时不该为了「接得更早」把这首砍掉一截：退场 " + result.fireMillis
                         + " / " + duration + "，被跳过 " + (result.discardedMillis / 1000L) + " 秒");
-        // 这一项是政策先验，不该算进「量到了多少证据」：证据计数的上限永远是八项那 7.15。
-        assertTrue(result.measuredWeight <= AutomixAutoCue.WEIGHT_SUM
-                        - AutomixAutoCue.WEIGHTS[AutomixAutoCue.TAIL_TERM] + 1e-9,
-                "证据计数把尾段那 1.00 算进去了，实际 " + result.measuredWeight);
+        assertTrue(result.measuredWeight <= AutomixAutoCue.EVIDENCE_WEIGHT_SUM + 1e-9,
+                "尾段先验错误地计入了音频证据权重: " + result.measuredWeight);
         assertTrue(result.detail.matches("(?s).*尾段=(0\\.9[0-9]|1\\.00).*"),
                 "贴着曲尾退场时这一项该接近满分，诊断：" + result.detail);
     }
@@ -185,8 +182,7 @@ class AutomixAutoCueTest {
         long duration = 120_000L;
         // 粗包络两边都摆平：电平、涟漪、弧都拿得到分，谁也别想靠它们占便宜。
         // 真正分得开的是细包络——一边每 20 帧交替、一边每 7 帧交替，相关算得出来却接近 0，
-        // 而形状项是八项里权重最大的那一个（1.6）。频段两边故意做成一样：它们会打架，
-        // 「互补」那一项因此恒为 0，这一对没有任何一项可以翻身。
+        // 形状项权重最高，频带相同还会带来低频冲突，两项都不利于错接的组合。
         AutomixEnvelope a = envelope(duration, filled(coarseFrames(duration), .8), oscillate(duration, 20));
         AutomixEnvelope b = envelope(duration, filled(coarseFrames(duration), .8), oscillate(duration, 7));
         AutomixAutoCue.Request request = request(a, b);
@@ -319,7 +315,7 @@ class AutomixAutoCueTest {
         long duration = 120_000L;
         double[] aCoarse = filled(coarseFrames(duration), .85);
         double[] aFine = filled(fineFrames(duration), .85);
-        stamp(aCoarse, aFine, 60_000L, 4_000L);
+        stamp(aCoarse, aFine, 90_000L, 4_000L);
         long incomingDuration = 100_000L;
         double[] bCoarse = filled(coarseFrames(incomingDuration), .55);
         double[] bFine = filled(fineFrames(incomingDuration), .55);
@@ -327,7 +323,7 @@ class AutomixAutoCueTest {
 
         AutomixAutoCue.Request request = request(
                 envelope(duration, aCoarse, aFine), envelope(incomingDuration, bCoarse, bFine));
-        // 播放头已经走到 70 秒：图案在 60 秒，再好也不能回头。
+        // 播放头已经走到 70 秒：更早位置再好也不能回头。
         request.minimumFireMillis = 70_000L;
         AutomixAutoCue.Result result = AutomixAutoCue.plan(request);
 
@@ -337,16 +333,115 @@ class AutomixAutoCueTest {
     }
 
     @Test
-    @DisplayName("九项权重之和与数组一致：漏一项会让所有分数悄悄偏高")
+    @DisplayName("两侧小节候选都锚定各自节拍窗口相位，而不是搜索区间端点")
+    void beatCandidatesUseMeasuredBarOrigins() {
+        long duration = 120_000L;
+        AutomixEnvelope a = envelope(duration, filled(coarseFrames(duration), .5),
+                filled(fineFrames(duration), .5));
+        AutomixAutoCue.Request request = request(a, a);
+        request.beatAlignEnabled = true;
+        request.outgoingGrid = new AutomixAnalyzer.BeatGrid(120f, 0f, 500f, .9f);
+        request.incomingGrid = new AutomixAnalyzer.BeatGrid(120f, 0f, 500f, .9f);
+        request.outgoingGridOriginMillis = 7_000L;
+        request.incomingGridOriginMillis = 250L;
+
+        long[] cuts = AutomixAutoCue.cutCandidates(request, 90_000L, 110_000L, 4_000L);
+        long[] entries = AutomixAutoCue.entryCandidates(request, 2_000L, 20_000L);
+
+        assertTrue(contains(cuts, 91_500L), "outro downbeat must include its measured origin and phase");
+        assertTrue(!contains(cuts, 92_000L), "range endpoint stepping is not a measured downbeat");
+        assertTrue(contains(entries, 2_750L), "intro grid must use its own measured origin and phase");
+        assertTrue(!contains(entries, 4_000L), "intro candidates must not restart the grid at intro end");
+    }
+
+    @Test
+    @DisplayName("5/7 播放头之后不足最短交叠时应拒绝基线")
+    void refusesBaselineWhenNoMinimumOverlapFitsAfterPlayhead() {
+        long duration = 60_000L;
+        AutomixEnvelope a = envelope(duration, filled(coarseFrames(duration), .5),
+                filled(fineFrames(duration), .5));
+        AutomixAutoCue.Request request = request(a, a);
+        request.minimumFireMillis = 57_000L;
+        assertNull(AutomixAutoCue.plan(request));
+    }
+
+    private static boolean contains(long[] values, long expected) {
+        for (long value : values) if (value == expected) return true;
+        return false;
+    }
+
+    @Test
+    @DisplayName("结构候选同时保留八小节骨架与包络动态跳变")
+    void structuralCandidatesUsePhraseAndEnergyAnchors() {
+        long duration = 120_000L;
+        double[] coarse = filled(coarseFrames(duration), .25);
+        double[] fine = filled(fineFrames(duration), .25);
+        int jump = (int) (92_000L / COARSE);
+        java.util.Arrays.fill(coarse, jump, coarse.length, .8);
+        java.util.Arrays.fill(fine, (int) (92_000L / FINE), fine.length, .8);
+        AutomixEnvelope outgoing = envelope(duration, coarse, fine);
+        AutomixAutoCue.Request request = request(outgoing, outgoing);
+        request.beatAlignEnabled = true;
+        request.outgoingGrid = new AutomixAnalyzer.BeatGrid(120f, 0f, 0f, .9f);
+        request.outgoingGridOriginMillis = 0L;
+        request.outgoingSectionMillis = new long[]{72_000L};
+
+        long[] candidates = AutomixAutoCue.structuralCandidates(request, true, 70_000L, 115_000L);
+
+        assertTrue(java.util.Arrays.stream(candidates).anyMatch(value -> {
+            double bars = value / 4_000.0;
+            return Math.abs(bars / 8.0 - Math.rint(bars / 8.0)) < .001;
+        }), "八小节间隔的结构拍点必须落在搜索范围内");
+        assertTrue(contains(candidates, 72_000L), "profile section anchor is retained");
+        assertTrue(java.util.Arrays.stream(candidates).anyMatch(value -> Math.abs(value - 92_000L) <= 1_000L),
+                "level jump creates a structural candidate close to the measured change");
+    }
+
+    @Test
+    @DisplayName("密集无拍点候选在进入粗排前被限制到固定上限")
+    void denseFallbackCandidatesAreBounded() {
+        long duration = 1_200_000L;
+        AutomixEnvelope flat = envelope(duration, filled(coarseFrames(duration), .4),
+                filled(fineFrames(duration), .4));
+        AutomixAutoCue.Request request = request(flat, flat);
+        request.heuristicFireMillis = 150_000L;
+        request.heuristicCueMillis = 18_000L;
+        request.beatAlignEnabled = false;
+
+        long[] cuts = AutomixAutoCue.cutCandidates(request, 100_000L, 1_100_000L, 4_000L);
+        long[] entries = AutomixAutoCue.entryCandidates(request, 0L, 25_000L);
+
+        assertTrue(cuts.length <= AutomixAutoCue.MAX_SEARCH_CANDIDATES);
+        assertTrue(cuts.length > AutomixAutoCue.SHORTLIST,
+                "测试输入必须进入候选裁剪分支");
+        assertTrue(entries.length <= AutomixAutoCue.MAX_SEARCH_CANDIDATES);
+        assertTrue(contains(cuts, request.heuristicFireMillis), "基线退场点必须保留");
+        assertTrue(contains(entries, request.heuristicCueMillis), "基线进场点必须保留");
+    }
+
+    @Test
+    @DisplayName("十项权重之和与数组一致：尾段先验不计入音频证据")
     void weightsSumIsPinned() {
         double sum = 0.0;
         for (double weight : AutomixAutoCue.WEIGHTS) sum += weight;
         assertEquals(AutomixAutoCue.WEIGHT_SUM, sum, 1e-9);
-        assertEquals(9, AutomixAutoCue.WEIGHTS.length);
-        // 尾段保留必须是最后一项：它是「政策先验」那一项，证据计数按 TAIL_TERM 排除它。
-        // 以后再加一项时如果加在它后面，排除的是错的项，平坦包络会悄悄越过「没量够」那道闸。
+        assertEquals(10, AutomixAutoCue.WEIGHTS.length);
         assertEquals(AutomixAutoCue.WEIGHTS.length - 1, AutomixAutoCue.TAIL_TERM);
-        assertEquals(7.15, sum - AutomixAutoCue.WEIGHTS[AutomixAutoCue.TAIL_TERM], 1e-9,
-                "证据那八项的合计变了：MIN_MEASURED_WEIGHT 的口径要一起重新想");
+        assertEquals(AutomixAutoCue.EVIDENCE_WEIGHT_SUM, sum - AutomixAutoCue.WEIGHTS[AutomixAutoCue.TAIL_TERM], 1e-9);
+    }
+
+    @Test
+    @DisplayName("低频与高频互补的粗排评分方向正确")
+    void separatesHighComplementFromLowConflict() {
+        long duration = 12_000L;
+        AutomixEnvelope a = envelope(duration, filled(coarseFrames(duration), .6), filled(fineFrames(duration), .6));
+        AutomixEnvelope b = envelope(duration, filled(coarseFrames(duration), .6), filled(fineFrames(duration), .6));
+        AutomixAutoCue.Request request = request(a, b);
+
+        double highComplement = AutomixAutoCue.highComplement(request, 0L, 0L, 4_000L);
+        double lowCompatibility = AutomixAutoCue.lowEndCompatibility(request, 0L, 0L, 4_000L);
+
+        assertTrue(highComplement <= .05, "相同高频能量应得到低互补分");
+        assertTrue(lowCompatibility <= .05, "相同低频能量应得到低相容度");
     }
 }

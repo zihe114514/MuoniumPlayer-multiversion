@@ -99,6 +99,22 @@ public final class ZstdNativeDownload {
         return state;
     }
 
+    public static String catalogPhase() {
+        return state.phase().name();
+    }
+
+    public static int catalogProgress() {
+        return state.percent();
+    }
+
+    public static boolean isDownloading() {
+        return state.phase() == Phase.DOWNLOADING;
+    }
+
+    public static String catalogFailure() {
+        return state.phase() == Phase.FAILED ? state.detail() : null;
+    }
+
     /** 组件缓存目录，与转译器 jar 同一层（config/muonium/libs/）。 */
     public static File libCacheDir() {
         return new File(new File("config", "muonium"), "libs");

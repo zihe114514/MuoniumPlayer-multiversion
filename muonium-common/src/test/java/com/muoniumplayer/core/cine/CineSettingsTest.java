@@ -27,6 +27,7 @@ class CineSettingsTest {
         assertEquals(300, CineSettings.idleSeconds(), "对齐 Ambient Camera 的 idleSeconds 默认 300");
         assertEquals(4, CineSettings.shotBeats());
         assertEquals(0.7f, CineSettings.speedMultiplier(), 1.0e-6f, "对齐 Ambient Camera 的 cameraSpeed 默认 0.7");
+        assertEquals(50, CineSettings.environmentShotPercent());
         assertEquals(8f, CineSettings.fovPunchDegrees(), 1.0e-6f);
         assertTrue(CineSettings.hideHud());
         assertFalse(CineSettings.showCinematicBars(), "黑边默认关（口味问题）");
@@ -70,6 +71,16 @@ class CineSettingsTest {
     }
 
     @Test
+    void 环境镜头比例钳制() {
+        CineSettings.setEnvironmentShotPercent(-10);
+        assertEquals(CineSettings.ENVIRONMENT_SHOT_PERCENT_MIN, CineSettings.environmentShotPercent());
+        CineSettings.setEnvironmentShotPercent(140);
+        assertEquals(CineSettings.ENVIRONMENT_SHOT_PERCENT_MAX, CineSettings.environmentShotPercent());
+        CineSettings.setEnvironmentShotPercent(75);
+        assertEquals(75, CineSettings.environmentShotPercent());
+    }
+
+    @Test
     void fovPunch与手持感钳制() {
         CineSettings.setFovPunchDegrees(-5f);
         assertEquals(0f, CineSettings.fovPunchDegrees(), 1.0e-6f, "0 = 关闭 punch 是合法值");
@@ -108,7 +119,7 @@ class CineSettingsTest {
         // JSON 投影含全部键（save 布局锚点：新增字段漏写这里立刻红）
         var root = CineSettings.snapshotForTest();
         for (String key : new String[]{"enabled", "idleSeconds", "shotBeats", "speedMultiplier",
-                "fovPunchDegrees", "handheldIntensity", "hideHud", "showCinematicBars",
+                "environmentShotPercent", "fovPunchDegrees", "handheldIntensity", "hideHud", "showCinematicBars",
                 "cinematicBarPercent", "transitionMask", "transitionSeconds",
                 "enableMobFocus", "mobFocusRange", "excludeHostileMobs", "excludeBats",
                 "trackingSoftness", "showStatusMessages"}) {

@@ -363,7 +363,8 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
                         progressBarOffsetY, span, 5, 1, 1f, 1f, 1f, alpha * .85f);
                 FontManager.pf14bold.drawString("准备中 · 原曲继续播放", imgX + imgSize + imgSpacing,
                         progressBarOffsetY + 9, RGBA.color(255, 255, 255, (int) (alpha * 180)));
-            } else if (CloudMusic.hasPlaybackClock()) {
+            } else {
+                // 未起播的记忆也有冻结进度；展示不要求音频时钟。
                 double totalTimeMillis = CloudMusic.durationMsNow();
                 double positionMillis = CloudMusic.positionMsNow();
                 double playbackFillWidth = 0.0;

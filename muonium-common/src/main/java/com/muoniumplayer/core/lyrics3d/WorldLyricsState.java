@@ -2685,24 +2685,31 @@ public final class WorldLyricsState {
     /** 拆句开关生效后的行列表，按歌词版本缓存。 */
     private List<LyricLine> cachedSplitLines;
     private long cachedSplitRevision = -1;
+    private List<LyricLine> cachedSplitSource;
 
     static List<LyricLine> effectiveLines(boolean splitLines) {
         List<LyricLine> raw = CloudMusic.lyrics;
         if (raw == null || raw.isEmpty()) return raw;
-        if (!splitLines) return filteredLines(raw);
+        // 每个拆分开关共用同一个已过滤底表；先过滤再拆句，缓存命中也不会绕过行规则。
+        List<LyricLine> filtered = filteredLines(raw);
+        if (!splitLines) return filtered;
         WorldLyricsState s = INSTANCE;
         long revision = CloudMusic.lyricsRevision;
-        if (s.cachedSplitLines != null && s.cachedSplitRevision == revision) {
+        // Filter is evaluated every frame but is version-cached; do not reuse a split view
+        // derived from an older filter result at the same lyric revision.
+        if (s.cachedSplitLines != null && s.cachedSplitRevision == revision
+                && s.cachedSplitSource == filtered) {
             return s.cachedSplitLines;
         }
-        List<LyricLine> out = new ArrayList<>(raw.size());
-        for (LyricLine l : raw) {
+        List<LyricLine> out = new ArrayList<>(filtered.size());
+        for (LyricLine l : filtered) {
             if (l == null) continue;
             out.addAll(SplitLines.split(l, true));
         }
         s.cachedSplitLines = out;
         s.cachedSplitRevision = revision;
-        return filteredLines(out);
+        s.cachedSplitSource = filtered;
+        return out;
     }
 
     // ==================== 商业元数据行过滤（歌曲开头的制作人员表等） ====================
@@ -2724,6 +2731,15 @@ public final class WorldLyricsState {
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
                     | Pattern.UNICODE_CHARACTER_CLASS);
 
+    /** 歌曲开头三秒内常见的歌手署名标签；要求字段锚定，避免误伤歌词正文。 */
+    private static final Pattern OPENING_PERFORMER_LINE = Pattern.compile(
+            "^\\s*(歌手|歌者|演唱者|演唱|艺人|藝人|主唱|原唱|Singer|Artists?|Vocalist|Vocals?|Performer)"
+                    + "\\s*[:：]\\s*\\S.*$",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
+                    | Pattern.UNICODE_CHARACTER_CLASS);
+    private static final long OPENING_METADATA_WINDOW_MS = 3000L;
+    private static final int OPENING_PERFORMER_MAX_CHARS = 48;
+
     /**
      * 判定一行是不是「冒号锚定的制作人员表」（如「作词：某某」）。
      * 纯函数：只看行文本本身，与挂载时长无关 —— 供 filteredLines 第一层与测试用。
@@ -2731,6 +2747,15 @@ public final class WorldLyricsState {
     static boolean isCreditLine(String text) {
         if (text == null || text.isEmpty()) return false;
         return CREDIT_LINE.matcher(text).find();
+    }
+
+    /** 仅在前 3 秒过滤短小、字段锚定的歌手署名，不按时间戳隐藏真实歌词。 */
+    static boolean isOpeningPerformerLine(LyricLine line) {
+        if (line == null || line.timestamp < 0L || line.timestamp >= OPENING_METADATA_WINDOW_MS
+                || line.lyric == null || line.lyric.length() > OPENING_PERFORMER_MAX_CHARS) {
+            return false;
+        }
+        return OPENING_PERFORMER_LINE.matcher(line.lyric).matches();
     }
 
     /**
@@ -2800,11 +2825,10 @@ public final class WorldLyricsState {
     }
 
     /**
-     * 过滤后的行表（带 revision 缓存 —— 与 split 缓存同惯例）。两级过滤：
-     * 第一层 {@link #isCreditLine}/{@link #isPlaceholderLine} 只看行文本、
-     * 无条件剔除（制作人员表的冒号锚定行 / 纯音乐恒在占位行）；第二层
-     * {@link #isFlashMetaLine} 带时长条件（开头快闪的无冒号商业声明行）。
-     * 过滤只发生在「开头一串快闪商业行 / 纯音乐占位」的场景，正常歌曲零改动。
+     * 过滤后的行表（带 revision 缓存 —— 与拆句缓存同一失效边界）。两级商业过滤为
+     * 制作人员字段和纯音乐占位词，另外仅在歌词时间轴开头 3 秒过滤短小、字段锚定的
+     * 歌手署名。无冒号商业声明仍需关键词、行长和时长条件；真实的零秒开场歌词保留。
+     * 过滤只改变 3D 消费视图，不修改共享时间线。
      */
     static List<LyricLine> filteredLines(List<LyricLine> raw) {
         WorldLyricsState s = INSTANCE;
@@ -2816,7 +2840,7 @@ public final class WorldLyricsState {
         for (int i = 0; i < raw.size(); i++) {
             LyricLine l = raw.get(i);
             if (l == null) continue;
-            if (isCreditLine(l.lyric) || isPlaceholderLine(l.lyric)) {
+            if (isCreditLine(l.lyric) || isPlaceholderLine(l.lyric) || isOpeningPerformerLine(l)) {
                 if (out == null) {
                     out = new ArrayList<>(raw.size());
                     for (int j = 0; j < i; j++) out.add(raw.get(j));
@@ -2878,6 +2902,7 @@ public final class WorldLyricsState {
         followEyeX = Double.NaN;
         cachedSplitLines = null;
         cachedSplitRevision = -1;
+        cachedSplitSource = null;
         cachedFilteredLines = null;
         cachedFilteredRevision = -1;
     }

@@ -108,6 +108,7 @@ public final class HudSettingsModel {
         public final boolean inlineButton;
         /** CHOICE 每个选项各自的一句话说明，与 {@link #choices} 同序；没有时为空数组。 */
         private final String[] choiceHints;
+        private Boolean defaultToggleState;
 
         private Entry(Kind kind, Supplier<String> label, String description, HudSetting setting,
                       BooleanSupplier state, Runnable action, Supplier<String> value,
@@ -192,6 +193,15 @@ public final class HudSettingsModel {
             } catch (RuntimeException ignored) {
                 return false;
             }
+        }
+
+        public Entry withToggleDefault(boolean defaultState) {
+            this.defaultToggleState = defaultState;
+            return this;
+        }
+
+        public boolean getToggleDefaultState() {
+            return defaultToggleState != null ? defaultToggleState : isOn();
         }
 
         /** CHOICE 右侧显示的当前取值；其它类型返回空串。 */
@@ -739,6 +749,25 @@ public final class HudSettingsModel {
     }
 
     // ==================== 声明 ====================
+
+    private static final String[] ISLAND_EXPAND_TRIGGER_CHOICES = {
+            "打开聊天栏自动展开", "聊天栏点击灵动岛展开"
+    };
+
+    private static String islandExpandTriggerName() {
+        return ISLAND_EXPAND_TRIGGER_CHOICES[HudConfig.clampInt(HudConfig.islandExpandTrigger,
+                0, HudConfig.ISLAND_EXPAND_TRIGGER_MAX)];
+    }
+
+    /** String CHOICE 直写只改内存；各 UI 宿主在 setChoice 后统一保存，循环动作自行保存。 */
+    private static void setIslandExpandTrigger(String selected) {
+        for (int i = 0; i < ISLAND_EXPAND_TRIGGER_CHOICES.length; i++) {
+            if (ISLAND_EXPAND_TRIGGER_CHOICES[i].equals(selected)) {
+                HudConfig.islandExpandTrigger = i;
+                return;
+            }
+        }
+    }
 
     private static Category[] cache;
 
@@ -1351,6 +1380,8 @@ public final class HudSettingsModel {
                                         () -> HudConfig.dynamicIslandEnabled),
                                 slider(HudSetting.DYNAMIC_ISLAND_MAX_WIDTH, "胶囊平时多宽，内容长了自己撑开。",
                                         () -> HudConfig.dynamicIslandEnabled),
+                                slider(HudSetting.ISLAND_MUSIC_CAPSULE_MAX_WIDTH, "短歌词按内容自然伸展，长歌词到最大长度后滚动。",
+                                        () -> HudConfig.dynamicIslandEnabled && HudConfig.dynamicIslandStyle == 8),
                                 slider(HudSetting.DYNAMIC_ISLAND_PROGRESS_HEIGHT, "下载进度条的粗细。",
                                         () -> HudConfig.dynamicIslandEnabled),
                                 toggle("岛内搜索", "游戏里按 Ctrl+F 直接搜歌，按键可以在键位设置里改。",
@@ -1364,11 +1395,9 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }, () -> HudConfig.dynamicIslandEnabled),
-                                slider(HudSetting.ISLAND_MINI_CARD_SCALE, "音乐胶囊迷你卡的整体大小。",
-                                        () -> HudConfig.dynamicIslandEnabled
-                                                && DownloadDynamicIsland.getStyle()
-                                                == DownloadDynamicIsland.DynamicIslandStyle.MUSIC_CAPSULE),
-                                toggle("音乐胶囊 · 显示歌词", "收起行与迷你卡主文本显示当前歌词行；关掉恒显歌名 - 歌手。",
+                                slider(HudSetting.ISLAND_MINI_CARD_SCALE, "五款灵动岛展开音乐卡的整体大小。",
+                                        () -> HudConfig.dynamicIslandEnabled),
+                                toggle("音乐卡 · 显示歌词", "灵动岛歌曲行与音乐卡主文本显示当前歌词；关闭后显示歌名 - 歌手。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.islandMusicShowsLyric;
@@ -1378,10 +1407,8 @@ public final class HudSettingsModel {
                                                 HudConfig.islandMusicShowsLyric = !HudConfig.islandMusicShowsLyric;
                                                 saveNow();
                                             }
-                                        }, () -> HudConfig.dynamicIslandEnabled
-                                                && DownloadDynamicIsland.getStyle()
-                                                == DownloadDynamicIsland.DynamicIslandStyle.MUSIC_CAPSULE),
-                                toggle("音乐胶囊 · 悬停展开", "鼠标在胶囊上停半秒展开迷你卡；移开自动收起。",
+                                        }, () -> HudConfig.dynamicIslandEnabled),
+                                toggle("可交互展开", "打开聊天栏时可展开音乐卡，操作播放与收藏；关闭后保持收起。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.islandHoverExpand;
@@ -1391,9 +1418,21 @@ public final class HudSettingsModel {
                                                 HudConfig.islandHoverExpand = !HudConfig.islandHoverExpand;
                                                 saveNow();
                                             }
-                                        }, () -> HudConfig.dynamicIslandEnabled
-                                                && DownloadDynamicIsland.getStyle()
-                                                == DownloadDynamicIsland.DynamicIslandStyle.MUSIC_CAPSULE)),
+                                        }, () -> HudConfig.dynamicIslandEnabled),
+                                choice("展开方式", "选择聊天栏中音乐卡的展开方式。",
+                                        HudSettingsModel::islandExpandTriggerName,
+                                        () -> {
+                                            HudConfig.islandExpandTrigger = HudConfig.islandExpandTrigger == 0 ? 1 : 0;
+                                            saveNow();
+                                        }, ISLAND_EXPAND_TRIGGER_CHOICES, HudSettingsModel::setIslandExpandTrigger,
+                                        () -> HudConfig.dynamicIslandEnabled && HudConfig.islandHoverExpand)),
+                        new Group("通知", HudSettingsIcons.NOTE,
+                                toggle("辅助通知", "显示听歌上报、自动状态等辅助通知；下载进度等主要通知不受影响。",
+                                        () -> HudConfig.islandAuxiliaryNotices,
+                                        () -> {
+                                            HudConfig.islandAuxiliaryNotices = !HudConfig.islandAuxiliaryNotices;
+                                            saveNow();
+                                        }, () -> HudConfig.dynamicIslandEnabled).withToggleDefault(false)),
                         new Group("常驻内容", HudSettingsIcons.TIMER,
                                 toggle("常驻灵动岛", "没下载也没通知时胶囊也一直挂着。下面几项要先开它。",
                                         new BooleanSupplier() {
@@ -1554,13 +1593,19 @@ public final class HudSettingsModel {
                                             public void run() { AutomixSettings.cycleEngine(); }
                                         }, engineChoices(), HudSettingsModel::setEngineChoice,
                                         new String[] {"保留现有等功率淡化与低架处理。",
-                                                "分析后挑切拍与交接方式；配合下面的「进阶模式」可达最深分析。"}),
-                                toggle("进阶模式", "把交接点从曲尾这几秒放开到整首歌：扫完整曲包络后，在「从哪退、从哪进」的所有候选里按八项打分挑一对，分不够就不挑；同时打开队列的「排列」按钮与双侧人声处理。代价是每首初播要在后台多解一遍整曲。它是独立的分析深度开关——处理方案选原版或 Folia 都能开，模型/包络不可用时自动回落普通切歌。",
+                                                "普通 Folia 会联合搜索整曲接缝；Beat This 与分轨证据可进一步改善节拍和交接。"}),
+                                toggle("进阶模式", "开启队列「排列」和额外的出场侧人声让路。普通 Folia 的整曲配对选点默认启用，不受此开关影响；额外人声处理需要可用的整曲证据。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() { return AutomixSettings.isAdvancedModeEnabled(); }
                                         }, new Runnable() {
                                             public void run() { AutomixSettings.setAdvancedModeEnabled(!AutomixSettings.isAdvancedModeEnabled()); }
                                         }),
+                                toggle("智能动态均衡", "使用 qplayer-next 风格的模型，根据两首歌交叠窗口的低、中、高频冲突动态压低进场曲；只在 Folia 有整曲证据时生效，结束后自动恢复。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() { return AutomixSettings.isLearnedEqEnabled(); }
+                                        }, new Runnable() {
+                                            public void run() { AutomixSettings.setLearnedEqEnabled(!AutomixSettings.isLearnedEqEnabled()); }
+                                        }, AutomixSettings::isFoliaEngine),
                                 toggle("过渡动画", "圆环保留中央交接提示；EQ 曲线在半透明灵动岛内滚动，衔接时小幅展开、结束后收回。曲线样式需要开启灵动岛；关闭动画不影响音频处理。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() { return AutomixSettings.isTransitionAnimationEnabled(); }
@@ -1734,7 +1779,7 @@ public final class HudSettingsModel {
                                         MusicSpin::setHeadPacketByLabel,
                                         () -> MusicSpin.isEnabled() && MusicSpin.isHeadShakeEnabled())),
                         new Group("卡点运镜", HudSettingsIcons.SPEED,
-                                toggle("卡点运镜", "电影化自动运镜：播放中挂机一阵后，镜头按音乐节拍在「环绕玩家 / 风景 / 移动生物」之间切换，切点压在拍点上；任何输入立即恢复你的视角。开关与全部参数存在 cine.json。",
+                                toggle("卡点运镜", "电影化自动运镜：播放中挂机一阵后，镜头按音乐节拍在「环绕玩家 / 风景 / 移动生物」之间切换，切点压在拍点上；任何输入后镜头平滑归还你的视角。开关与全部参数存在 cine.json。",
                                         CineSettings::isEnabled,
                                         () -> CineSettings.setEnabled(!CineSettings.isEnabled())),
                                 choice("挂机多久启动", "播放中持续无输入多少秒后进入运镜。越长越接近屏保，越短越容易在你操作间隙突然接管。",
@@ -1785,6 +1830,19 @@ public final class HudSettingsModel {
                                         v -> CineSettings.setSpeedMultiplier(
                                                 Float.parseFloat(v.replace("×", "").trim())),
                                         CineSettings::isEnabled),
+                                choice("环境镜头比例", "自动切镜时分配给风景、天空、洞穴与昼夜构图的比例；不适合当前维度/群系的镜头会跳过，默认 50%。",
+                                        () -> CineSettings.environmentShotPercent() + "%",
+                                        () -> CineSettings.setEnvironmentShotPercent(
+                                                switch (CineSettings.environmentShotPercent()) {
+                                                    case 0 -> 25;
+                                                    case 25 -> 50;
+                                                    case 50 -> 75;
+                                                    case 75 -> 100;
+                                                    default -> 0;
+                                                }),
+                                        new String[]{"0%", "25%", "50%", "75%", "100%"},
+                                        v -> CineSettings.setEnvironmentShotPercent(Integer.parseInt(v.replace("%", ""))),
+                                        CineSettings::isEnabled),
                                 toggle("隐藏 HUD", "运镜时隐藏全部 HUD（退出时恢复原状）。注意：隐藏时转场遮罩与黑边仍会显示。",
                                         CineSettings::hideHud,
                                         () -> CineSettings.setHideHud(!CineSettings.hideHud()),
@@ -1796,11 +1854,6 @@ public final class HudSettingsModel {
                                 toggle("追踪生物", "允许镜头专门切给附近正在移动的生物；敌对生物与蝙蝠默认排除。",
                                         CineSettings::enableMobFocus,
                                         () -> CineSettings.setEnableMobFocus(!CineSettings.enableMobFocus()),
-                                        CineSettings::isEnabled),
-                                toggle("鼓点变焦", "鼓点上 FOV 瞬间冲出再回落（呼吸冲击感）。0% 等于关闭。",
-                                        () -> CineSettings.fovPunchDegrees() > 0f,
-                                        () -> CineSettings.setFovPunchDegrees(
-                                                CineSettings.fovPunchDegrees() > 0f ? 0f : 8f),
                                         CineSettings::isEnabled),
                                 choice("转场效果", "切镜瞬间的全屏遮罩样式：黑淡 / 白淡 / 横擦 / 竖擦 / 光圈。循环选择；要混用多种去改 cine.json 的 transitionMask 位掩码。",
                                         () -> {
@@ -2274,8 +2327,8 @@ public final class HudSettingsModel {
             if (style.getDisplayName().equals(value)) {
                 // 手机档：直设「液态玻璃」款一律拒绝（下拉里已不出现，这里挡 OneConfig 一类直写口）。
                 if (!DownloadDynamicIsland.isStyleSelectable(style)) return;
-                if (HudConfig.dynamicIslandStyle == style.ordinal()) return;
-                HudConfig.dynamicIslandStyle = style.ordinal();
+                if (HudConfig.dynamicIslandStyle == style.getId()) return;
+                HudConfig.dynamicIslandStyle = style.getId();
                 saveNow();
                 return;
             }
@@ -2623,6 +2676,7 @@ public final class HudSettingsModel {
             case BLOSSOM_BORDER:
                 return Math.round(value * 100.0f) + "%";
             case DYNAMIC_ISLAND_MAX_WIDTH:
+            case ISLAND_MUSIC_CAPSULE_MAX_WIDTH:
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT:
             case DYNAMIC_ISLAND_Y:
                 return String.format("%.1f px", value);

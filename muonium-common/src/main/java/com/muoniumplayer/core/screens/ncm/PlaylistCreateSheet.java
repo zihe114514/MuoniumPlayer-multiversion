@@ -1,15 +1,13 @@
 package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
-import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.LocalMusicLibrary;
 import com.muoniumplayer.core.ncm.music.LocalPlaylistStore;
-import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
-import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
+import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.TextFieldWidget;
 import com.muoniumplayer.core.screens.ncm.panels.PlaylistPanel;
@@ -31,22 +29,17 @@ import com.muoniumplayer.party.ui.PartyIcons;
  */
 public final class PlaylistCreateSheet extends NcmSheet {
 
-    private static final double HEADER_H = 64.0;
-    private static final double FIELD_H = 38.0;
-    private static final double FOOTER_H = 46.0;
-    private static final double BUTTON_H = 32.0;
-    private static final double BUTTON_GAP = 8.0;
-    private static final double CANCEL_W = 88.0;
-    private static final double IMPORT_W = 124.0;
+    private static final double INSET = 24.0;
+    private static final double FIELD_H = 64.0;
+    private static final double FOOTER_H = 94.0;
+    private static final double BUTTON_GAP = 12.0;
     /** 歌单名上限。40 个汉字足够表达任何一张单子，再长侧栏那一行也放不下。 */
     private static final int NAME_LIMIT = 40;
 
-    private static final String IDLE_TEXT = "只存在本机 · 可以收进任意音源的歌曲 · 不上传到任何平台";
-    private static final String IDLE_TEXT_RENAME = "只改本机这一张的名字 · 里面的曲目与所属音源都不动";
+    private static final String IDLE_TEXT = "只存在本机 · 不上传到任何平台";
+    private static final String IDLE_TEXT_RENAME = "只改名字 · 曲目与所属音源都不动";
 
-    /** 「导入本地文件夹」按钮的宽度。三个按钮一排，比链接导入那颗窄不了多少。 */
-    private static final double LOCAL_IMPORT_W = 128.0;
-
+    private final NcmExpressiveLayout layout = new NcmExpressiveLayout();
     private TextFieldWidget input;
     /** 非空即「重命名这一张」模式；为 null 时是新建。 */
     private final PlayList renaming;
@@ -65,31 +58,80 @@ public final class PlaylistCreateSheet extends NcmSheet {
     }
 
     @Override
+    public void renderWidget(double mouseX, double mouseY, int dWheel) {
+        layout.render(this, mouseX, mouseY, dWheel, (x, y, wheel) -> {
+            super.renderWidget(x, y, 0);
+            if (wheel != 0 && !isDismissing()) super.onDWheelReceived(x, y, wheel);
+        });
+    }
+
+    @Override
+    public void onMouseClickReceived(double mouseX, double mouseY, int button) {
+        layout.dispatch(this, mouseX, mouseY, button, (x, y, input) -> super.onMouseClickReceived(x, y, input));
+    }
+
+    @Override
+    public void onDWheelReceived(double mouseX, double mouseY, int dWheel) {
+        layout.dispatch(this, mouseX, mouseY, dWheel, (x, y, input) -> super.onDWheelReceived(x, y, input));
+    }
+
+    @Override
     public void onInit() {
         beginPage();
 
-        final Panel dialog = sheet(452, () -> HEADER_H + FIELD_H + 8 + 26 + FOOTER_H + 16);
-        header(dialog, renaming == null ? PartyIcons.ALBUM : PartyIcons.TEXT_FORMAT,
-                renaming == null ? "新建本地歌单" : "重命名本地歌单",
-                () -> renaming == null ? "起个名字就建好 · 之后从任意音源把歌加进来"
-                        : "换一个新名字 · 曲目一首都不动",
-                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        final Panel dialog = NcmExpressive.shell(this, 660, () -> renaming == null ? 686 : 472,
+                () -> presentation, this::dismiss);
+        NcmExpressive.header(dialog, renaming == null ? PartyIcons.ALBUM : PartyIcons.TEXT_FORMAT,
+                () -> "Mu 本地歌单", () -> renaming == null ? "新建本地歌单" : "重命名本地歌单",
+                this::dismiss);
+        final Panel content = body(dialog, () -> NcmExpressive.headerHeight(dialog) + 14,
+                () -> footerHeight(dialog));
+        final ScrollPanel list = feed(content);
+        nameForm = strip(list, () -> (renaming == null ? 438 : 224) + errorDetailsHeight());
+        buildNameForm(nameForm);
+        if (renaming == null) buildImportEntries(nameForm);
 
-        final RoundedRectWidget field = new RoundedRectWidget();
-        dialog.addChild(field);
-        field.setClickable(false);
-        field.setRadius(9);
-        field.setBeforeRenderCallback(() -> {
-            field.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), FIELD_H);
-            field.setPosition(PAD + CARD_INSET, HEADER_H + 4);
-            field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        final Panel footer = new Panel();
+        dialog.addChild(footer);
+        footer.setBeforeRenderCallback(() -> {
+            footer.setBounds(dialog.getWidth(), footerHeight(dialog));
+            footer.setPosition(0, Math.max(0, dialog.getHeight() - footer.getHeight()));
         });
+        NcmExpressive.action(footer, "", () -> "取消", NcmExpressive.ActionStyle.TONAL,
+                () -> INSET, () -> 20,
+                () -> cancelWidth(footer),
+                () -> NcmExpressive.BUTTON_HEIGHT, this::dismiss);
+        NcmExpressive.action(footer, PartyIcons.CHECK, () -> renaming == null ? "新建" : "保存",
+                NcmExpressive.ActionStyle.PRIMARY,
+                () -> footer.getWidth() - INSET - confirmWidth(footer),
+                () -> footer.getWidth() < 360 ? 82 : 20,
+                () -> confirmWidth(footer), () -> NcmExpressive.BUTTON_HEIGHT, this::submit);
+    }
 
-        // 回车即建单：TextFieldWidget 聚焦后吞掉所有按键，默认没人处理回车。
-        final CFontRenderer font = FontManager.pf12;
+    private void buildNameForm(Panel host) {
+        NcmExpressive.label(host, () -> renaming == null ? "给歌单起个名字" : "输入新的歌单名",
+                NcmExpressive.labelFont(), () -> INSET, () -> 24,
+                () -> host.getWidth() - INSET * 2, () -> NcmExpressivePalette.live().text());
+        final RoundedRectWidget field = NcmExpressive.surface(host, INSET, 54,
+                () -> host.getWidth() - INSET * 2, () -> FIELD_H, 17,
+                () -> NcmExpressivePalette.live().input());
+        stroke(field, 17, () -> NcmExpressivePalette.live().outline(), () -> .7);
+        stroke(field, 17, () -> failed ? NcmExpressivePalette.live().error()
+                        : NcmExpressivePalette.live().primary(),
+                () -> failed || input.isFocused() ? 1 : 0);
+        NcmExpressive.icon(field, renaming == null ? PartyIcons.ALBUM : PartyIcons.TEXT_FORMAT,
+                ICON_L, () -> 27, () -> FIELD_H * .5,
+                () -> failed ? NcmExpressivePalette.live().error() : NcmExpressivePalette.live().muted());
+
+        // 同一张表单保留建单与改名的输入、回车和原生剪贴板路径。
+        final CFontRenderer font = NcmExpressive.bodyFont();
         input = new TextFieldWidget(font) {
             @Override
             public boolean onKeyTyped(char character, int keyCode) {
+                if (keyCode == Keyboard.KEY_TAB) {
+                    setFocused(true);
+                    return true;
+                }
                 if (isFocused() && (keyCode == Keyboard.KEY_RETURN
                         || keyCode == Keyboard.KEY_NUMPADENTER)) {
                     submit();
@@ -98,85 +140,136 @@ public final class PlaylistCreateSheet extends NcmSheet {
                 return super.onKeyTyped(character, keyCode);
             }
         };
-        dialog.addChild(input);
+        field.addChild(input);
         input.getTextField().setMaxStringLength(NAME_LIMIT);
         input.setEnabled(true).setFocused(true);
-        // 重命名模式不预填旧名字：TextField 只在「聚焦或悬停」时才画已有文字，而这一层刚打开时
-        // 焦点会被那次点开的点击丢掉（见 TextField#updateStyles 里那句 setFocused(false)），
-        // 预填就会表现成一个「看着是空的、点进去字才冒出来」的输入框。旧名字改放在占位文案里说。
-        input.setPlaceholder(renaming == null
-                ? "歌单名，比如「跑步」「睡前」「待听」"
+        // 保留空输入的新名字语义；旧名字只在占位说明中显示，不触碰既有歌单对象。
+        input.setPlaceholder(renaming == null ? "比如「跑步」「睡前」「待听」"
                 : "当前「" + (renaming.getName() == null ? "" : renaming.getName()) + "」· 输入新名字");
         input.drawUnderline(false);
         input.setBeforeRenderCallback(() -> {
-            input.setBounds(Math.max(1, field.getWidth() - 20), Math.max(1, field.getHeight() - 10));
-            input.setPosition(field.getRelativeX() + 10, field.getRelativeY() + 5);
-            input.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            input.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            input.setBounds(Math.max(1, field.getWidth() - 70), FIELD_H - 16);
+            input.setPosition(52, 8);
+            NcmExpressivePalette palette = NcmExpressivePalette.live();
+            input.setColor(palette.text());
+            input.setDisabledTextColor(palette.muted());
         });
-        stroke(field, 9.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
-                () -> input.isFocused() ? .7 : 0.0);
-
-        tip(dialog, () -> failed ? PartyIcons.CLOSE : PartyIcons.INFO,
-                () -> statusText,
-                () -> failed ? BAD_COLOR : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                () -> HEADER_H + FIELD_H + 14);
-
-        final RoundedButtonWidget cancel = action(dialog, () -> PartyIcons.CLOSE, () -> "取消",
-                FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
-                this::dismiss);
-        cancel.setBeforeRenderCallback(() -> {
-            cancel.setBounds(CANCEL_W, BUTTON_H);
-            cancel.setPosition(PAD + CARD_INSET, dialog.getHeight() - BUTTON_H - 10);
-            cancel.setColor(cancel.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        NcmExpressive.label(host,
+                () -> renaming == null ? "建好后，可从任意音源把喜欢的歌加进来。" : "这里只换名字，不会移除或重新下载曲目。",
+                NcmExpressive.bodyFont(), () -> INSET, () -> 146,
+                () -> host.getWidth() - INSET * 2, () -> NcmExpressivePalette.live().muted());
+        NcmExpressive.status(host, () -> failed ? PartyIcons.CLOSE : PartyIcons.INFO, () -> statusText,
+                () -> INSET, () -> 176, () -> host.getWidth() - INSET * 2,
+                () -> failed ? NcmExpressivePalette.live().error() : NcmExpressivePalette.live().primary());
+        final Panel details = new Panel();
+        host.addChild(details);
+        final long[] renderedRevision = {-1};
+        details.setClickable(false).setBeforeRenderCallback(() -> {
+            details.setBounds(host.getWidth(), errorDetailsHeight());
+            details.setPosition(0, 224);
+            if (renderedRevision[0] == errorLayoutRevision) return;
+            renderedRevision[0] = errorLayoutRevision;
+            details.getChildren().clear();
+            CFontRenderer caption = NcmExpressive.captionFont();
+            double centerY = errorLineHeight() * .5;
+            for (String line : errorLines) {
+                final String text = line;
+                final double y = centerY;
+                NcmExpressive.label(details, () -> text, caption, () -> INSET, () -> y,
+                        () -> host.getWidth() - INSET * 2, () -> NcmExpressivePalette.live().error());
+                centerY += errorLineHeight();
+            }
         });
+    }
 
-        // 导入是另一条路，但它和「新建」回答的是同一个问题，所以放在同一排而不是藏进二级菜单。
-        // 重命名模式下这张页跟「往里放歌」无关，那颗按钮就没有存在的理由 —— 连同它占的那一段排位
-        // 一起让给「保存」，不然右边会空出一格。
-        final RoundedButtonWidget importFromLink = action(dialog, () -> PartyIcons.LINK,
-                () -> "从链接导入", FontManager.pf12bold,
-                () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), this::openImport);
-        importFromLink.setBeforeRenderCallback(() -> {
-            importFromLink.setBounds(IMPORT_W, BUTTON_H);
-            importFromLink.setPosition(cancel.getRelativeX() + CANCEL_W + BUTTON_GAP,
-                    dialog.getHeight() - BUTTON_H - 10);
-            importFromLink.setColor(importFromLink.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            importFromLink.setHidden(renaming != null);
+    private void buildImportEntries(Panel host) {
+        final Panel entries = new Panel();
+        host.addChild(entries);
+        entries.setBeforeRenderCallback(() -> {
+            entries.setBounds(host.getWidth(), 214);
+            entries.setPosition(0, 224 + errorDetailsHeight());
         });
+        NcmExpressive.label(entries, () -> "已有收藏？也可以直接导入", NcmExpressive.labelFont(),
+                () -> INSET, () -> 22, () -> entries.getWidth() - INSET * 2,
+                () -> NcmExpressivePalette.live().text());
+        buildImportEntry(entries, 50, PartyIcons.LINK, "从链接导入", "保存歌单引用，不下载全部歌曲", this::openImport);
+        buildImportEntry(entries, 136, PartyIcons.FOLDER_OPEN, "导入本地文件夹", "系统选择器 · 只扫描这一层，不递归", this::openLocalFolderImport);
+    }
 
-        // 本地文件夹是第三条路：扫磁盘上的音频文件灌成一张单。与「从链接导入」并列——
-        // 两条路互不依赖，用户有本地音乐就该有一个直达入口，而不是先建一张空单再想办法。
-        // 同样只在新建模式显示；重命名模式那颗「保存」按 importFromLink 隐藏后的位置排。
-        final RoundedButtonWidget importFromDisk = action(dialog, () -> PartyIcons.ALBUM,
-                () -> "导入本地文件夹", FontManager.pf12bold,
-                () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), this::openLocalFolderImport);
-        importFromDisk.setBeforeRenderCallback(() -> {
-            importFromDisk.setBounds(LOCAL_IMPORT_W, BUTTON_H);
-            importFromDisk.setPosition(importFromLink.getRelativeX() + IMPORT_W + BUTTON_GAP,
-                    dialog.getHeight() - BUTTON_H - 10);
-            importFromDisk.setColor(importFromDisk.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            importFromDisk.setHidden(renaming != null);
-        });
+    private void buildImportEntry(Panel host, double top, String glyph, String title,
+                                  String detail, Runnable onClick) {
+        final RoundedRectWidget entry = NcmExpressive.hitSurface(host, () -> INSET, () -> top,
+                () -> host.getWidth() - INSET * 2, () -> 76, NcmExpressive.CARD_RADIUS,
+                () -> NcmExpressivePalette.live().container(), onClick);
+        NcmExpressive.icon(entry, glyph, ICON_XL, () -> 32, () -> 38,
+                () -> NcmExpressivePalette.live().primary());
+        NcmExpressive.label(entry, () -> title, NcmExpressive.labelFont(), () -> 62, () -> 25,
+                () -> entry.getWidth() - 90, () -> NcmExpressivePalette.live().text());
+        NcmExpressive.label(entry, () -> detail, NcmExpressive.captionFont(), () -> 62, () -> 52,
+                () -> entry.getWidth() - 90, () -> NcmExpressivePalette.live().muted());
+        NcmExpressive.icon(entry, PartyIcons.CHEVRON_RIGHT, ICON_M,
+                () -> entry.getWidth() - 20, () -> 38, () -> NcmExpressivePalette.live().muted());
+    }
 
-        final RoundedButtonWidget confirm = action(dialog, () -> PartyIcons.CHECK,
-                () -> renaming == null ? "新建" : "保存", FontManager.pf12bold,
-                () -> 0xFFFFFF, this::submit);
-        confirm.setBeforeRenderCallback(() -> {
-            double left = renaming == null
-                    ? importFromDisk.getRelativeX() + LOCAL_IMPORT_W + BUTTON_GAP
-                    : cancel.getRelativeX() + CANCEL_W + BUTTON_GAP;
-            confirm.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) - left), BUTTON_H);
-            confirm.setPosition(left, dialog.getHeight() - BUTTON_H - 10);
-            int accent = NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
-            confirm.setColor(mix(accent, 0xFFFFFF, confirm.isHovering() ? .16 : 0.0));
-        });
+    private Panel nameForm;
+    private String[] errorLines = new String[0];
+    private String wrappedError = "";
+    private double wrappedErrorWidth = -1;
+    private CFontRenderer wrappedErrorFont;
+    private long wrappedErrorMetrics = -1;
+    private long errorLayoutRevision;
+
+    private double errorDetailsHeight() {
+        String reason = failed && statusText != null ? statusText : "";
+        double width = Math.max(1, nameForm.getWidth() - INSET * 2);
+        CFontRenderer caption = NcmExpressive.captionFont();
+        long metrics = caption == null ? -1 : caption.metricsRevision();
+        if (!reason.equals(wrappedError) || Math.abs(width - wrappedErrorWidth) >= .5
+                || caption != wrappedErrorFont || metrics != wrappedErrorMetrics) {
+            wrappedError = reason;
+            wrappedErrorWidth = width;
+            wrappedErrorFont = caption;
+            wrappedErrorMetrics = metrics;
+            java.util.List<String> lines = new java.util.ArrayList<>();
+            if (!reason.isEmpty() && caption != null
+                    && (reason.indexOf('\n') >= 0 || reason.indexOf('\r') >= 0
+                    || caption.getStringWidthD(reason) > width - 44)) {
+                for (String paragraph : reason.split("\\R", -1)) {
+                    java.util.Collections.addAll(lines, NcmExpressive.wrap(caption, paragraph, width));
+                }
+            }
+            errorLines = lines.toArray(new String[0]);
+            errorLayoutRevision++;
+        }
+        return errorLines.length == 0 ? 0 : errorLines.length * errorLineHeight() + 8;
+    }
+
+    private static double errorLineHeight() {
+        CFontRenderer caption = NcmExpressive.captionFont();
+        return (caption == null ? 12.5 : caption.getFontHeight()) + 8;
+    }
+
+    private static double footerHeight(Panel dialog) {
+        return dialog.getWidth() < 360 ? FOOTER_H + 62 : FOOTER_H;
+    }
+
+    private static double cancelWidth(Panel footer) {
+        if (footer.getWidth() < 360) return Math.max(1, footer.getWidth() - INSET * 2);
+        return Math.min(154, Math.max(1, (footer.getWidth() - INSET * 2 - BUTTON_GAP) * .38));
+    }
+
+    private static double confirmWidth(Panel footer) {
+        if (footer.getWidth() < 360) return Math.max(1, footer.getWidth() - INSET * 2);
+        return Math.min(214, Math.max(1, (footer.getWidth() - INSET * 2 - BUTTON_GAP) * .50));
+    }
+
+    @Override
+    public boolean onKeyTyped(char character, int keyCode) {
+        if (keyCode == Keyboard.KEY_TAB && !closing) {
+            input.setFocused(true);
+            return true;
+        }
+        return super.onKeyTyped(character, keyCode);
     }
 
     public void handleEscape() {
@@ -196,14 +289,18 @@ public final class PlaylistCreateSheet extends NcmSheet {
     /**
      * 「导入本地文件夹」：系统目录选择器挑一个磁盘目录，扫描其中的音频文件灌成一张新歌单。
      *
-     * <p>先关掉自己再弹选择器：JFileChooser 是模态的系统对话框（{@code FoliaModelManager} 已有
-     * 同款先例），底下压着一张浮层会让关掉选择器后的画面多一帧残影。扫描在后台线程上跑
-     * （一个几百首的目录逐个读标签要几秒），完成后回主线程建单、灌曲、进详情页——
-     * {@code LocalPlaylistStore} 的落盘在主线程做与现有写入路径同一约定。</p>
+     * <p>选择器仍沿用既有主线程模态调用，有效选择后关闭浮层，再在后台线程上扫描。
+     * 目录逐个读标签可能耗时数秒，完成后回主线程建单、灌曲、进详情页；
+     * {@code LocalPlaylistStore} 的落盘保持现有主线程写入约定。</p>
      *
      * <p>防重入：选择器开着时按钮还能被点到（系统对话框吞不到我们的鼠标事件），加一扇闸。</p>
      */
     private void openLocalFolderImport() {
+        openLocalFolderImport(this::dispose);
+    }
+
+    /** 链接/文件夹导入页复用同一条选择与扫描路径；有效选择后才关闭调用方浮层。 */
+    void openLocalFolderImport(Runnable onAccepted) {
         if (folderImportInFlight) return;
         folderImportInFlight = true;
         try {
@@ -227,7 +324,7 @@ public final class PlaylistCreateSheet extends NcmSheet {
                 return;
             }
             final String directory = picked.getAbsolutePath();
-            dispose();
+            onAccepted.run();
             com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil.runAsync(() -> {
                 try {
                     LocalMusicLibrary.addDirectory(directory);

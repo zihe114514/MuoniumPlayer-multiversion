@@ -85,6 +85,10 @@ final class FfmpegSupport {
         return nextProbeAtMillis > 0L ? -1 : 0;
     }
 
+    public static int catalogCachedState() {
+        return cachedState();
+    }
+
     /** 只在整个会话里提示一次,免得每首歌都刷一行。 */
     static void warnMissingOnce() {
         synchronized (LOCK) {

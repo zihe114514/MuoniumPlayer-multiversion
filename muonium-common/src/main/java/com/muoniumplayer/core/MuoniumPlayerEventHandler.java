@@ -40,6 +40,7 @@ public class MuoniumPlayerEventHandler implements EventHandler {
 
     @Override
     public void onLoop() {
+        DownloadDynamicIsland.maintainMusicCardContext();
         long startedAt = System.nanoTime();
         for (int count = 0; count < MAX_MAIN_TASKS_PER_LOOP; count++) {
             FutureTask<?> task;
@@ -100,8 +101,7 @@ public class MuoniumPlayerEventHandler implements EventHandler {
 
         MusicSpectrumRenderer.renderHud();
         Runnable islandOverlay = () -> {
-            DownloadDynamicIsland.render();
-            AutomixTransitionAnimation.render();
+            DownloadDynamicIsland.renderHudOverlay();
             // 卡点运镜的转场遮罩/黑边不在常规 HUD 路:26.3 的 Hud.extractRenderState
             // 在 isHidden 时跳过 HUD 元素列表,而运镜开着 hideHud —— 遮罩入口被
             // 自己关掉。改走 CineHudMixin(extractRenderState TAIL,闸门之外)。

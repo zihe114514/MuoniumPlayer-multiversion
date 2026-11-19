@@ -56,6 +56,17 @@ class WorldLyricsLineFilterTest {
         @Override public int translationMode() { return WorldLyricsState.TRANSLATION_KARAOKE; }
     };
 
+    private static final WorldLyricsState.Params SPLIT_PARAMS = new WorldLyricsState.Params() {
+        @Override public double distance() { return 6.5; }
+        @Override public boolean splitLines() { return true; }
+        @Override public double spreadDeg() { return 0; }
+        @Override public double scale() { return 1; }
+        @Override public boolean facePlayer() { return true; }
+        @Override public boolean keepAway() { return false; }
+        @Override public boolean wordPop() { return true; }
+        @Override public int translationMode() { return WorldLyricsState.TRANSLATION_KARAOKE; }
+    };
+
     private WorldLyricsState state;
 
     @BeforeEach
@@ -63,6 +74,7 @@ class WorldLyricsLineFilterTest {
         state = WorldLyricsState.get();
         state.resetForTest();
         CloudMusic.lyrics.clear();
+        CloudMusic.lyricsRevision++;
         CloudMusic.currentlyPlaying = music();
         CloudMusic.lyricsTrackKey = CloudMusic.currentlyPlaying.getStableKey();
     }
@@ -70,6 +82,7 @@ class WorldLyricsLineFilterTest {
     @AfterEach
     void tearDown() {
         CloudMusic.lyrics.clear();
+        CloudMusic.lyricsRevision++;
         CloudMusic.lyricsTrackKey = null;
         CloudMusic.currentlyPlaying = null;
         state.resetForTest();
@@ -205,6 +218,105 @@ class WorldLyricsLineFilterTest {
         WorldLyricsState.SpawnedLine cur = activeOf(f2);
         assertNotNull(cur, "过滤后应正常进入真实歌词行");
         assertTrue(cur.lines.get(0).contains("真实"), "当前句应是真实歌词，实际 " + cur.lines.get(0));
+    }
+
+    @Test
+    @DisplayName("三秒内字段锚定的歌手署名不 spawn，真实零秒歌词不受影响")
+    void openingPerformerCreditsAreSuppressedBeforeSpawn() {
+        CloudMusic.lyrics.add(line(0L, "歌手：某某"));
+        CloudMusic.lyrics.add(line(800L, "演唱者:某某、某某"));
+        CloudMusic.lyrics.add(line(1600L, "Artist: Someone"));
+        CloudMusic.lyrics.add(line(2200L, "真实的歌词第一句"));
+        CloudMusic.lyrics.add(line(6000L, "真实的歌词第二句"));
+
+        List<LyricLine> rawBefore = List.copyOf(CloudMusic.lyrics);
+        WorldLyricsState.Frame beforeFirstLyric = state.update(
+                CAMERA, PARAMS, 1_000_000_000L, true, 1000L);
+        assertTrue(beforeFirstLyric.rows.isEmpty(), "歌手署名不应进入 active/spawn 或逐字渲染");
+        assertEquals("", WorldLyricsState.activeLineDebugPos(),
+                "署名行不应 spawn 活动句");
+
+        WorldLyricsState.Frame lyricFrame = state.update(
+                CAMERA, PARAMS, 1_100_000_000L, true, 2400L);
+        assertTrue(activeOf(lyricFrame).lines.get(0).contains("真实的歌词"),
+                "窗口内真实歌词仍必须正常显示");
+        assertEquals(rawBefore, CloudMusic.lyrics,
+                "过滤只作用于 3D 消费视图，不得改写共享歌词或其他歌词界面");
+
+        state.resetForTest();
+        WorldLyricsState.Frame splitFrame = state.update(
+                CAMERA, SPLIT_PARAMS, 1_200_000_000L, true, 2400L);
+        assertTrue(activeOf(splitFrame).lines.get(0).contains("真实的歌词"),
+                "拆句模式下，过滤后的首个真实歌词仍应显示");
+    }
+
+    @Test
+    @DisplayName("三秒过滤窗口是半开区间，窗口外署名行保留")
+    void openingPerformerWindowBoundary() {
+        assertTrue(WorldLyricsState.isOpeningPerformerLine(line(2999L, "歌手：某某")));
+        assertFalse(WorldLyricsState.isOpeningPerformerLine(line(3000L, "歌手：某某")));
+        assertFalse(WorldLyricsState.isOpeningPerformerLine(line(-1L, "歌手：某某")));
+        assertFalse(WorldLyricsState.isOpeningPerformerLine(line(1200L, "歌手的眼睛望向远方")),
+                "字段名必须在行首并有冒号，不能误伤真实歌词");
+        assertFalse(WorldLyricsState.isOpeningPerformerLine(line(1200L, "Artist sings beneath the sky")));
+        assertFalse(WorldLyricsState.isOpeningPerformerLine(line(1200L,
+                "演唱者：这是一句特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别长的开场歌词内容应该保留")));
+
+        CloudMusic.lyrics.add(line(0L, "真实歌词开场"));
+        CloudMusic.lyrics.add(line(1500L, "真实的第二句也从零开始唱"));
+        CloudMusic.lyrics.add(line(2999L, "Artist: Someone"));
+        CloudMusic.lyrics.add(line(3000L, "Artist: Someone"));
+        CloudMusic.lyrics.add(line(6000L, "下一句真实歌词"));
+        List<LyricLine> effective = WorldLyricsState.effectiveLines(false);
+        assertEquals(List.of("真实歌词开场", "真实的第二句也从零开始唱",
+                        "Artist: Someone", "下一句真实歌词"),
+                effective.stream().map(l -> l.lyric).toList());
+    }
+
+    @Test
+    @DisplayName("拆句缓存路径也先过滤，重复查询不重新带回曲首署名")
+    void splitLinesCacheKeepsOpeningCreditsFiltered() {
+        CloudMusic.lyrics.add(line(0L, "歌手：某某"));
+        CloudMusic.lyrics.add(line(300L, "第一句 / 第二句"));
+        CloudMusic.lyrics.add(line(6000L, "下一句"));
+
+        List<LyricLine> first = WorldLyricsState.effectiveLines(true);
+        List<LyricLine> cached = WorldLyricsState.effectiveLines(true);
+        assertEquals(first, cached);
+        assertEquals(List.of("第一句", "第二句", "下一句"),
+                cached.stream().map(l -> l.lyric).toList());
+        assertTrue(cached.stream().noneMatch(l -> l.lyric.startsWith("歌手：")));
+        assertTrue(WorldLyricsState.get().update(CAMERA, SPLIT_PARAMS,
+                1_000_000_000L, true, 100L).rows.isEmpty(),
+                "拆句开关开启时，首行署名也不能触发 spawn");
+
+        CloudMusic.lyrics.get(0).lyric = "这是真正的开场歌词";
+        CloudMusic.lyricsRevision++;
+        List<LyricLine> refreshed = WorldLyricsState.effectiveLines(true);
+        assertEquals(List.of("这是真正的开场歌词", "第一句", "第二句", "下一句"),
+                refreshed.stream().map(l -> l.lyric).toList(),
+                "歌词版本更新后不得复用旧拆句/过滤快照");
+
+        WorldLyricsState.Frame refreshedFrame = WorldLyricsState.get().update(
+                CAMERA, SPLIT_PARAMS, 1_100_000_000L, true, 100L);
+        assertEquals("这是真正的开场歌词", activeOf(refreshedFrame).lines.get(0),
+                "真实开场词应成为有效活动句");
+    }
+
+    @Test
+    @DisplayName("字幕署名过滤不改写逐字轴或翻译副行源数据")
+    void openingCreditFilterLeavesRawLyricPayloadUntouched() {
+        LyricLine credit = line(500L, "演唱：某某");
+        credit.translationText = "Vocal: Someone";
+        credit.words.add(new LyricLine.Word("演唱：某某", 500L, 900L));
+        CloudMusic.lyrics.add(credit);
+        CloudMusic.lyrics.add(line(5000L, "真实歌词"));
+
+        assertTrue(WorldLyricsState.effectiveLines(false).stream().noneMatch(l -> l == credit));
+        assertEquals("演唱：某某", credit.lyric);
+        assertEquals("Vocal: Someone", credit.translationText);
+        assertEquals(1, credit.words.size());
+        assertEquals(500L, credit.timestamp);
     }
 
     // ==================== 同句内 seek 重同步 ====================

@@ -1,15 +1,39 @@
 package com.muoniumplayer.core.update;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 /**
- * 一条公告（清单里 {@code announcements} 数组的一项）。
- *
- * <p>不可变值对象：清单是在守护线程上拉的，拉完之后界面每帧都要读它，所以这里没有任何可变状态，
- * 发布一份引用之后就不需要再加锁。</p>
- *
- * <p><b>{@link #id()} 是已读记账的唯一依据</b>：客户端按 id 记「读过没有」，所以清单作者改了正文
- * 却不换 id 时，老用户永远看不到改后的内容 —— 这一条写在清单仓库的 README 里。</p>
+ * Immutable remote content card. Only announcement ids participate in read tracking;
+ * sponsorships and communities use the same data shape with their own id scopes.
  */
 public final class Announcement {
+
+    public static final int MAX_ID_CHARS = 256;
+    public static final int MAX_TITLE_CHARS = 256;
+    public static final int MAX_BODY_CHARS = 16384;
+    public static final int MAX_URL_CHARS = 2048;
+    public static final int MAX_ACTIONS = 3;
+
+    /** A descriptive HTTPS action; trust is checked by the shared page policy before use. */
+    public static final class Action {
+        private final String text;
+        private final String url;
+
+        public Action(String text, String url) {
+            this.text = bounded(text, MAX_TITLE_CHARS);
+            this.url = boundedUrl(url);
+        }
+
+        public String text() {
+            return this.text;
+        }
+
+        public String url() {
+            return this.url;
+        }
+    }
 
     private final String id;
     private final String date;
@@ -18,34 +42,58 @@ public final class Announcement {
     private final String body;
     private final String link;
     private final String linkText;
+    private final String image;
+    private final String imageAlt;
+    private final String imageFit;
+    private final String badge;
+    private final List<Action> actions;
 
+    /** Legacy source/binary contract: existing callers need not know about rich cards. */
     public Announcement(String id, String date, String kind, String title,
                         String body, String link, String linkText) {
-        this.id = trim(id);
-        this.date = trim(date);
-        this.kind = trim(kind);
-        this.title = trim(title);
-        this.body = trim(body);
-        this.link = trim(link);
-        this.linkText = trim(linkText);
+        this(id, date, kind, title, body, link, linkText, "", "", "contain", "",
+                Collections.<Action>emptyList());
     }
 
-    /** 记账用的稳定标识。作者必须为「内容变了的那一条」换一个新 id。 */
+    public Announcement(String id, String date, String kind, String title,
+                        String body, String link, String linkText, String image,
+                        String imageAlt, String imageFit, String badge, List<Action> actions) {
+        this.id = trim(id);
+        this.date = bounded(date, 64);
+        this.kind = bounded(kind, 64);
+        this.title = bounded(title, MAX_TITLE_CHARS);
+        this.body = bounded(body, MAX_BODY_CHARS);
+        this.link = boundedUrl(link);
+        this.linkText = bounded(linkText, MAX_TITLE_CHARS);
+        this.image = boundedUrl(image);
+        this.imageAlt = bounded(imageAlt, MAX_TITLE_CHARS);
+        // Unknown/missing modes must not crop QR codes or other informational images.
+        this.imageFit = "cover".equalsIgnoreCase(trim(imageFit)) ? "cover" : "contain";
+        this.badge = bounded(badge, 64);
+        List<Action> copy = new ArrayList<Action>();
+        if (actions != null) {
+            for (Action action : actions) {
+                if (action != null && !action.url().isEmpty()) {
+                    copy.add(action);
+                    if (copy.size() == MAX_ACTIONS) {
+                        break;
+                    }
+                }
+            }
+        }
+        this.actions = Collections.unmodifiableList(copy);
+    }
+
+    /** Stable read-tracking key. Change it when an announcement should be unread again. */
     public String id() {
         return this.id;
     }
 
-    /** 展示用日期，原样显示（清单里写 {@code 2026-09-21} 就显示这个）。可为空。 */
     public String date() {
         return this.date;
     }
 
-    /**
-     * 语气：{@code feature} / {@code fix} / {@code event} / {@code warning}，其它值按 info 表现。
-     *
-     * <p>故意不做成枚举：清单是远端文本，以后加一个新语气不该让老客户端把整条公告丢掉。
-     * 不认识的值只是退回默认配色，图标与文字照样在。</p>
-     */
+    /** Unknown kinds remain displayable; they do not change click or popup behavior. */
     public String kind() {
         return this.kind;
     }
@@ -54,19 +102,58 @@ public final class Announcement {
         return this.title;
     }
 
-    /** 正文。{@code \n} 是段落分隔，段内折行由界面按当前宽度算。 */
+    /** Newlines remain paragraph separators. */
     public String body() {
         return this.body;
     }
 
-    /** 附带的链接，可为空；是否可用由 {@code UpdateChecker.isAllowedPage} 判。 */
+    /** Legacy primary link, independent of the additional action list. */
     public String link() {
         return this.link;
     }
 
-    /** 链接文字，为空时界面用自己的默认文案。 */
     public String linkText() {
         return this.linkText;
+    }
+
+    public String image() {
+        return this.image;
+    }
+
+    public String imageAlt() {
+        return this.imageAlt;
+    }
+
+    /** Either contain (default, no cropping) or cover (explicit opt-in). */
+    public String imageFit() {
+        return this.imageFit;
+    }
+
+    public String badge() {
+        return this.badge;
+    }
+
+    /** Immutable, never null, at most MAX_ACTIONS additional actions. */
+    public List<Action> actions() {
+        return this.actions;
+    }
+
+    private static String boundedUrl(String value) {
+        String trimmed = trim(value);
+        // Truncating a URL could change its target; discard it instead.
+        return trimmed.length() > MAX_URL_CHARS ? "" : trimmed;
+    }
+
+    private static String bounded(String value, int limit) {
+        String trimmed = trim(value);
+        if (trimmed.length() <= limit) {
+            return trimmed;
+        }
+        int end = limit;
+        if (Character.isHighSurrogate(trimmed.charAt(end - 1))) {
+            end--;
+        }
+        return trimmed.substring(0, end);
     }
 
     private static String trim(String value) {

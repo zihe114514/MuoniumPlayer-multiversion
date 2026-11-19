@@ -250,6 +250,24 @@ public class FontManager extends AbstractManager {
         return readFont(builtinMainPath(bold));
     }
 
+    /** 字体选择页与 MuoniumConfig 设置页共用的 CJK fallback。 */
+    public static byte[] builtinUiFallbackBytes() {
+        try {
+            return readFontBytes(builtinFallbackPath(false));
+        } catch (java.io.IOException e) {
+            return null;
+        }
+    }
+
+    /** Current selected UI font bytes, or null when the selected system font is not extractable. */
+    public static byte[] uiFontBytesForBridge(boolean wantBold) {
+        UiFont active = UiFontLibrary.getActive();
+        if (active != null && active.getOrigin() == UiFont.Origin.SYSTEM) {
+            return null;
+        }
+        return fontBytesForUi(active, wantBold);
+    }
+
     /**
      * 给别的 UI（MuoniumConfig 的设置界面）取当前生效字体的原始字节。
      *
@@ -260,23 +278,20 @@ public class FontManager extends AbstractManager {
      * @param wantBold 要粗体那一档；返回 null 表示没有独立的粗体字节，调用方应退回常规档
      */
     public static byte[] fontBytesForUi(UiFont font, boolean wantBold) {
+        UiFont active = font == null ? UiFont.BUILTIN : font;
         Font handle = wantBold ? UiFontLibrary.getWiredBoldAwt() : UiFontLibrary.getWiredRegularAwt();
         if (handle != null) {
             byte[] bytes = com.muoniumplayer.render.skija.SkijaText.sourceBytesFor(handle);
-            if (bytes != null) {
-                return bytes;
+            if (bytes != null) return bytes;
+        }
+        if (active.isBuiltin()) {
+            try {
+                return readFontBytes(builtinMainPath(wantBold));
+            } catch (java.io.IOException failure) {
+                return null;
             }
         }
-        if (wantBold && UiFontLibrary.getWiredBoldAwt() == null
-                && UiFontLibrary.getWiredRegularAwt() != null) {
-            // 换过字体但没有独立粗体：让调用方用合成粗体，别再叠一份内置字体
-            return null;
-        }
-        try {
-            return readFontBytes(builtinMainPath(wantBold));
-        } catch (java.io.IOException e) {
-            return null;
-        }
+        return null;
     }
 
     /** 从字体字节建 AWT Font 并登记给 Skia；完整字体包在下载线程上先行解析时用。 */

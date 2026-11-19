@@ -1290,6 +1290,11 @@ internal static class SmtcWatcher
         private Mutex publisherMutex;
         private bool publisherMutexHeld;
         private bool alreadyRunningReported;
+        /** 建窗失败（no_window）在一个发布实例的存活期内只上报一次：退出时序下
+         *  发布线程崩掉后 Java 侧每 500ms 的 pub 会触发重启循环，每次重启都报同一条
+         *  错误就成了每秒一条的日志噪音。健康判定走 Java 侧的 pub-apply-ok 探针，
+         *  不依赖这条错误文案的重复上报。 */
+        private bool noWindowReported;
 
         public void Accept(string line)
         {
@@ -1410,7 +1415,15 @@ internal static class SmtcWatcher
                 hwnd = CreateMessageWindow();
                 if (hwnd == IntPtr.Zero)
                 {
-                    Emit("{\"event\":\"pub\",\"ok\":false,\"error\":\"no_window\"}");
+                    // 退出时序下发布线程崩掉后会重启循环，每次建窗失败同报一条 no_window，
+                    // 每秒一条刷屏。与 alreadyRunningReported 同语义：本发布实例的存活期
+                    // 内只报一次。发布端健康与否的判定走 Java 侧的 pub-apply-ok 探针
+                    // （响应停即判定失联），不依赖这条错误文案的重复上报。
+                    if (!noWindowReported)
+                    {
+                        noWindowReported = true;
+                        Emit("{\"event\":\"pub\",\"ok\":false,\"error\":\"no_window\"}");
+                    }
                     return;
                 }
                 // 窗口就位后立刻应用一次当前状态仓：第一批 pub 命令里的 Wake 在窗口
@@ -1438,7 +1451,16 @@ internal static class SmtcWatcher
             }
             catch (Exception e)
             {
-                Emit("{\"event\":\"pub\",\"ok\":false,\"error\":\"pump_" + Esc(e.GetType().Name) + "\"}");
+                // 发布线程在进程/窗口关闭时序里崩掉是预期形态：此时线程模型与 WinRT
+                // 对象已在拆装，NullReferenceException 是撕裂的必然症状，上报只会制造
+                // 「先 pump_NullReferenceException、再每秒 no_window」的误导性噪音。
+                // 发布端真实健康与否由 Java 侧的 pub-apply-ok 探针与状态机超时判定，
+                // 不依赖这条错误文案。其余异常类型保留 pump_<类型> 诊断，真实故障信号不丢。
+                if (!(e is NullReferenceException))
+                {
+                    Emit("{\"event\":\"pub\",\"ok\":false,\"error\":\"pump_"
+                        + Esc(e.GetType().Name) + "\"}");
+                }
             }
         }
 
@@ -2066,77 +2088,193 @@ internal static class SmtcWatcher
         Stream input = Console.OpenStandardInput();
         using (StreamReader reader = new StreamReader(input, new UTF8Encoding(false), false))
         {
-            while (true)
-            {
-                string line = reader.ReadLine();
-                if (line == null) break;
-                line = line.Trim();
-                if (line.Length == 0) continue;
-                if (line == "poll") { Emit(State()); continue; }
-                if (line == "info")
-                {
-                    bool hasSession = false;
-                    try
-                    {
-                        GlobalSystemMediaTransportControlsSessionManager mgr = Manager();
-                        lock (SessionLock)
-                        {
-                            if (stateDirty) ReselectLocked();
-                            hasSession = mgr != null && selected != null;
-                        }
-                    }
-                    catch (Exception) { lock (SessionLock) { manager = null; selected = null; } }
-                    Emit("{\"event\":\"info\",\"version\":" + ProtocolVersion.ToString(CultureInfo.InvariantCulture)
-                        + ",\"session\":" + Bool(hasSession) + "}");
-                    continue;
-                }
-                if (line == "exit") break;
-                if (line == "list")
-                {
-                    string fragment;
-                    lock (SessionLock)
-                    {
-                        if (stateDirty) ReselectLocked();
-                        fragment = SessionsFragment();
-                    }
-                    Emit("{\"event\":\"list\",\"sessions\":" + fragment + "}");
-                    continue;
-                }
-                if (line.StartsWith("use ", StringComparison.Ordinal))
-                {
-                    string value = line.Substring(4).Trim();
-                    lock (SessionLock)
-                    {
-                        pinnedAumid = value.Length == 0 || value == "-" ? null : value;
-                        stateDirty = true;
-                        ReselectLocked();
-                    }
-                    Emit("{\"event\":\"use\",\"ok\":true}");
-                    continue;
-                }
-                if (line.StartsWith("pub", StringComparison.Ordinal))
-                {
-                    Publish(line);
-                    continue;
-                }
-                if (line.StartsWith("cmd ", StringComparison.Ordinal))
-                {
-                    Command(line.Substring(4).Trim(), "");
-                    continue;
-                }
-                if (line.StartsWith("seek ", StringComparison.Ordinal))
-                {
-                    Command("seek", line.Substring(5).Trim());
-                    continue;
-                }
-                if (line.StartsWith("vol ", StringComparison.Ordinal))
-                {
-                    Volume(line.Substring(4).Trim());
-                    continue;
-                }
-                Emit("{\"event\":\"error\",\"error\":\"unknown_command\"}");
-            }
+            ReadLoop(reader);
         }
         return 0;
+    }
+
+    // ==========================================================================
+    // stdin 读/处理解耦。
+    //
+    // 2.5.2 的事故形态：读循环串行处理每条命令，处理里的 WinRT 往返
+    // （TryGetMediaPropertiesAsync、TryPlayAsync、Core Audio 枚举）最坏秒级，
+    // 期间不消费 stdin —— Java 侧写满管道后渲染线程跟着卡死。这里把两条职责
+    // 拆开：读线程只 ReadLine + 入队（纯内存操作，微秒级），工作线程串行处理
+    // （会话选择那把锁还在，处理顺序保持原语义）。队列有界：处理不过来时丢
+    // 最旧的同前缀命令（poll 心跳与 pub 系展示信息，最新即正确）。
+    //
+    // exit 例外：它必须第一时间生效，读线程见到 exit 就直接结束进程，不排队
+    // （排在积压命令后面会拖慢 Java 侧 stop() 的 waitFor 路径）。
+    // ==========================================================================
+
+    /** 读线程 → 工作线程的命令队列上限。 */
+    private const int InboundCapacity = 256;
+
+    private static readonly Queue<string> Inbound = new Queue<string>(InboundCapacity);
+    private static readonly object InboundLock = new object();
+    /** 入队侧丢弃计数（诊断用，不参与逻辑）。 */
+    private static long inboundDropped;
+
+    /** 可合并丢弃的命令前缀：队列满时新命令顶掉最旧的同前缀命令。 */
+    private static readonly string[] Mergeable = new string[]
+    {
+        "poll", "pub meta ", "pub state ", "pub tl ", "pub art ", "vol "
+    };
+
+    private static void ReadLoop(StreamReader reader)
+    {
+        Thread worker = new Thread(ProcessLoop);
+        worker.IsBackground = true;
+        worker.Name = "smtc-worker";
+        worker.Start();
+        while (true)
+        {
+            string line = reader.ReadLine();
+            if (line == null) break;
+            line = line.Trim();
+            if (line.Length == 0) continue;
+            if (line == "exit") Environment.Exit(0);   // 收尾命令不排队，见块注释
+            Enqueue(line);
+        }
+        // stdin 关了（Java 侧进程退出）：叫醒工作线程让它随进程一起收尾。
+        lock (InboundLock) { Monitor.PulseAll(InboundLock); }
+    }
+
+    private static void Enqueue(string line)
+    {
+        lock (InboundLock)
+        {
+            if (Inbound.Count >= InboundCapacity) DropOldestFor(line);
+            Inbound.Enqueue(line);
+            Monitor.Pulse(InboundLock);
+        }
+    }
+
+    /** 队列满时腾一格：丢最旧的同前缀命令；命令类没有同前缀时丢队首。 */
+    private static void DropOldestFor(string incoming)
+    {
+        for (int i = 0; i < Mergeable.Length; i++)
+        {
+            if (!StartsWithPrefix(incoming, Mergeable[i])) continue;
+            // Queue<T> 不支持中途移除：把同前缀的最旧一条绕出来丢掉，其余原序回填。
+            int count = Inbound.Count;
+            bool dropped = false;
+            for (int j = 0; j < count; j++)
+            {
+                string candidate = Inbound.Dequeue();
+                if (!dropped && StartsWithPrefix(candidate, Mergeable[i]))
+                {
+                    dropped = true;   // 丢掉这一条
+                }
+                else
+                {
+                    Inbound.Enqueue(candidate);
+                }
+            }
+            inboundDropped++;
+            return;
+        }
+        // 命令类（cmd/seek/use/list）：丢队首那条最旧的。exit 不会被丢——它进来时
+        // 队列若满，队首多半是可丢的心跳或展示信息，上面的循环没有同前缀可顶时
+        // 才落到这里，而 exit 自身不属 Mergeable，丢的是队首不是它。
+        Inbound.Dequeue();
+        inboundDropped++;
+    }
+
+    private static bool StartsWithPrefix(string value, string prefix)
+    {
+        if (value == null || value.Length < prefix.Length) return false;
+        return string.CompareOrdinal(value, 0, prefix, 0, prefix.Length) == 0;
+    }
+
+    private static void ProcessLoop()
+    {
+        while (true)
+        {
+            string line;
+            lock (InboundLock)
+            {
+                while (Inbound.Count == 0)
+                {
+                    try { Monitor.Wait(InboundLock); }
+                    catch (SynchronizationLockException) { }
+                }
+                line = Inbound.Dequeue();
+            }
+            Handle(line);
+        }
+    }
+
+    /** 原读循环的命令处理主体，逐条在工作线程上执行（串行，保持原有顺序语义）。 */
+    private static void Handle(string line)
+    {
+        if (line == "poll") { Emit(State()); return; }
+        if (line == "info")
+        {
+            bool hasSession = false;
+            try
+            {
+                GlobalSystemMediaTransportControlsSessionManager mgr = Manager();
+                lock (SessionLock)
+                {
+                    if (stateDirty) ReselectLocked();
+                    hasSession = mgr != null && selected != null;
+                }
+            }
+            catch (Exception) { lock (SessionLock) { manager = null; selected = null; } }
+            Emit("{\"event\":\"info\",\"version\":" + ProtocolVersion.ToString(CultureInfo.InvariantCulture)
+                + ",\"session\":" + Bool(hasSession) + "}");
+            return;
+        }
+        if (line == "exit")
+        {
+            // 防御性兜底：读线程已经直接处理 exit 不排队，正常到不了这里
+            // （队列积压期间 Java 侧 stop() 又发了一条的极端情形除外）。
+            Environment.Exit(0);
+        }
+        if (line == "list")
+        {
+            string fragment;
+            lock (SessionLock)
+            {
+                if (stateDirty) ReselectLocked();
+                fragment = SessionsFragment();
+            }
+            Emit("{\"event\":\"list\",\"sessions\":" + fragment + "}");
+            return;
+        }
+        if (StartsWithPrefix(line, "use "))
+        {
+            string value = line.Substring(4).Trim();
+            lock (SessionLock)
+            {
+                pinnedAumid = value.Length == 0 || value == "-" ? null : value;
+                stateDirty = true;
+                ReselectLocked();
+            }
+            Emit("{\"event\":\"use\",\"ok\":true}");
+            return;
+        }
+        if (StartsWithPrefix(line, "pub"))
+        {
+            Publish(line);
+            return;
+        }
+        if (StartsWithPrefix(line, "cmd "))
+        {
+            Command(line.Substring(4).Trim(), "");
+            return;
+        }
+        if (StartsWithPrefix(line, "seek "))
+        {
+            Command("seek", line.Substring(5).Trim());
+            return;
+        }
+        if (StartsWithPrefix(line, "vol "))
+        {
+            Volume(line.Substring(4).Trim());
+            return;
+        }
+        Emit("{\"event\":\"error\",\"error\":\"unknown_command\"}");
     }
 }

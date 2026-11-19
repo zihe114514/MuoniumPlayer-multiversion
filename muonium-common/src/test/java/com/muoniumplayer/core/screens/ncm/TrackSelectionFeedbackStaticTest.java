@@ -21,7 +21,13 @@ class TrackSelectionFeedbackStaticTest {
         int loading = bar.lastIndexOf("if (presentation.preparing)", seek);
         assertTrue(loading > 0 && bar.substring(loading, seek).contains("return;"));
         assertTrue(bar.contains("if (presentation.preparing) return"));
-        assertTrue(bar.contains("presentation.preparing || !CloudMusic.hasPlaybackClock()"));
+        int fillStart = bar.indexOf("RoundedRectWidget progressBar =");
+        int fillEnd = bar.indexOf("LabelWidget lblCurTime", fillStart);
+        assertTrue(fillStart >= 0 && fillEnd > fillStart);
+        String fill = bar.substring(fillStart, fillEnd);
+        assertTrue(fill.contains("if (presentation.preparing)"));
+        assertTrue(fill.contains("progressBar.setWidth(0).setRadius(0)"));
+        assertFalse(fill.contains("!CloudMusic.hasPlaybackClock()"), "恢复态要展示冻结进度，不要求音频时钟");
         assertTrue(bar.contains("selectionMotion.offset()"));
         assertTrue(bar.contains("selectionMotion.contentAlpha()"));
     }
@@ -42,7 +48,11 @@ class TrackSelectionFeedbackStaticTest {
         String hud = read("core/widget/impl/MusicInfoWidget.java");
         assertTrue(hud.contains("Music playingMusic = presentation.displayTrack"));
         assertTrue(hud.contains("!presentation.preparing && this.turnComposerIntoLyric.getValue()"));
-        assertTrue(hud.contains("else if (CloudMusic.hasPlaybackClock())"));
+        int preparing = hud.indexOf("if (presentation.preparing) {");
+        int progress = hud.indexOf("double totalTimeMillis = CloudMusic.durationMsNow();", preparing);
+        assertTrue(preparing >= 0 && progress > preparing);
+        assertFalse(hud.substring(preparing, progress).contains("CloudMusic.hasPlaybackClock()"),
+                "准备态仍独立展示，非准备态的冻结进度不能被音频时钟清零");
         assertTrue(hud.contains("准备中 · 原曲继续播放"));
     }
 

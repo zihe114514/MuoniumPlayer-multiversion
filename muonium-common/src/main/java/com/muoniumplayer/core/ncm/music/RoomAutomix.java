@@ -366,7 +366,7 @@ public final class RoomAutomix {
      *         {@code null} —— 后两种都由调用方决定「不交叠」，而不是在这里编一条假曲线出来
      */
     static AutomixPlan planWith(AudioPlayer outgoing, AudioPlayer incoming, Music next,
-                                long lastVocalEndMillis) {
+                                long lastVocalEndMillis, boolean pairSearchEvidence) {
         if (!handles(next)) return null;
         if (outgoing == null || !outgoing.isUsable()) return null;
         if (incoming == null || !incoming.isUsable()) return null;
@@ -398,8 +398,10 @@ public final class RoomAutomix {
                 JsonObject encoded = encode(planned);
                 sharedPlan = planned;
                 sharedPlanKey = keyOf(planned);
-                // 落盘：这一对曲目下次再交接（列表循环、别的房间也放这两首）就直接命中。
-                AutomixPlanCache.store(outgoing, incoming, lastVocalEndMillis, planned);
+                // 无完整包络证据的 Folia 基线仍可作为本次权威交接，但不能缓存成 AutoCue 已完成结果。
+                if (pairSearchEvidence || !AutomixSettings.isFoliaEngine()) {
+                    AutomixPlanCache.store(outgoing, incoming, lastVocalEndMillis, planned);
+                }
                 System.out.println("[Automix] 房间交接计划（本机被指派分析）· " + planned.summary);
                 publish(armedEntryId, encoded);
                 return planned;
@@ -479,6 +481,12 @@ public final class RoomAutomix {
         // 旧版本解不到这两个键会取默认 0，等于「不压出场方」，是一次可听但安全的退化。
         o.addProperty("outgoingVocalDuckDepth", plan.outgoingVocalDuckDepth);
         o.addProperty("vocalReleaseAt", plan.vocalReleaseAt);
+        o.addProperty("learnedEqEnabled", plan.learnedEqEnabled);
+        if (plan.learnedEqEnabled && plan.learnedEqControls != null) {
+            com.google.gson.JsonArray controls = new com.google.gson.JsonArray();
+            for (float control : plan.learnedEqControls) controls.add(control);
+            o.add("learnedEqControls", controls);
+        }
         return o;
     }
 
@@ -509,6 +517,8 @@ public final class RoomAutomix {
             float duck = (float) decimal(o, "vocalDuckDepth", 0.0);
             if (duck < 0f || duck > 1f) duck = 0f;
 
+            float[] learnedEqControls = controls(o, "learnedEqControls");
+            if (!bool(o, "learnedEqEnabled", false)) learnedEqControls = null;
             return new AutomixPlan(fire, overlap, cue, gain,
                     bool(o, "barAligned", false), bool(o, "bassSwap", false),
                     ratio, bool(o, "pitchShift", false),
@@ -521,7 +531,7 @@ public final class RoomAutomix {
                     decimal(o, "vocalEntryAt", .45), bool(o, "stemDriven", false),
                     decimal(o, "animationPeriodMillis", 500.0),
                     (float) decimal(o, "outgoingVocalDuckDepth", 0.0),
-                    decimal(o, "vocalReleaseAt", 0.0));
+                    decimal(o, "vocalReleaseAt", 0.0), learnedEqControls);
         } catch (Throwable malformed) {
             return null;
         }
@@ -543,7 +553,21 @@ public final class RoomAutomix {
                 + "/" + plan.midTiltDb + "/" + plan.highTiltDb + "/" + plan.echoThrow
                 + "/" + plan.drumHandoverAt + "/" + plan.bassHandoverAt + "/" + plan.vocalEntryAt
                 + "/" + plan.stemDriven + "/" + plan.animationPeriodMillis
-                + "/" + plan.outgoingVocalDuckDepth + "/" + plan.vocalReleaseAt;
+                + "/" + plan.outgoingVocalDuckDepth + "/" + plan.vocalReleaseAt
+                + "/" + plan.learnedEqEnabled + "/" + java.util.Arrays.toString(plan.learnedEqControls);
+    }
+
+    private static float[] controls(JsonObject o, String key) {
+        if (o == null || !o.has(key) || !o.get(key).isJsonArray()) return null;
+        try {
+            com.google.gson.JsonArray array = o.getAsJsonArray(key);
+            if (array.size() < AutomixLearnedEq.OUT) return null;
+            float[] values = new float[AutomixLearnedEq.OUT];
+            for (int i = 0; i < values.length; i++) values[i] = array.get(i).getAsFloat();
+            return values;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     /** 按过渡族的 id 还原；未知 id 或没有该字段时返回 {@code null}（回到普通等功率曲线）。 */

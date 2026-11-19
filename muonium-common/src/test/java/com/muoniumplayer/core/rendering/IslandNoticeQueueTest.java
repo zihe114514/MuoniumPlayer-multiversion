@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.rendering;
 
+import com.muoniumplayer.core.settings.HudConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,9 +30,12 @@ class IslandNoticeQueueTest {
     private List<Object> savedQueue;
     private long savedElapsed;
     private long savedLastPresented;
+    private boolean savedAuxiliaryNotices;
 
     @BeforeEach
     void isolate() throws Exception {
+        savedAuxiliaryNotices = HudConfig.islandAuxiliaryNotices;
+        HudConfig.islandAuxiliaryNotices = true;
         // Preserve static test state; none of the public publishers used here saves user settings.
         for (Field field : ISLAND.getDeclaredFields()) {
             if (Modifier.isStatic(field.getModifiers()) && !Modifier.isFinal(field.getModifiers())
@@ -53,6 +57,7 @@ class IslandNoticeQueueTest {
 
     @AfterEach
     void restore() throws Exception {
+        HudConfig.islandAuxiliaryNotices = savedAuxiliaryNotices;
         for (Map.Entry<Field, Object> entry : saved.entrySet()) entry.getKey().set(null, entry.getValue());
         queue().clear();
         queue().addAll(savedQueue);
@@ -219,9 +224,12 @@ class IslandNoticeQueueTest {
     void queuedLoaderTimesOutOnceWithFeedbackAndNeverResurrects() throws Exception {
         publish("NETWORK_ERROR", "urgent");
         DownloadDynamicIsland.beginModelInference("A", "model");
-        invoke("advanceQueuedNotice", new Class<?>[]{long.class}, now() + 31_000L);
+        long deadline = (Long) field(queue().peekFirst(), "deadlineAt");
+        invoke("advanceQueuedNotice", new Class<?>[]{long.class}, deadline - 1L);
+        assertEquals(List.of("MODEL_INFERENCE:A"), keys());
+        invoke("advanceQueuedNotice", new Class<?>[]{long.class}, deadline + 1L);
         assertEquals(List.of("MODEL_INFERENCE_FAILURE"), queuedTypes());
-        invoke("advanceQueuedNotice", new Class<?>[]{long.class}, now() + 32_000L);
+        invoke("advanceQueuedNotice", new Class<?>[]{long.class}, deadline + 2L);
         assertEquals(List.of("MODEL_INFERENCE_FAILURE"), queuedTypes());
         finishCurrent();
         assertEquals("MODEL_INFERENCE_FAILURE", ((Enum<?>)get("noticeType")).name());
@@ -251,25 +259,34 @@ class IslandNoticeQueueTest {
     }
 
     @Test
-    void telemetryStartAndResultShareChannelsAndBurstIsBounded() throws Exception {
-        publish("NETWORK_ERROR", "urgent");
-        for (int i=0; i<100; i++) {
-            DownloadDynamicIsland.showNeteaseUploadStarted("听歌历史上报");
-            DownloadDynamicIsland.showRecentPlayUploadSuccess(1L);
-            DownloadDynamicIsland.showNeteaseUploadStarted("听歌时长上报");
-            DownloadDynamicIsland.showListeningDurationUploadSuccess(100, 1L);
-        }
-        assertEquals(List.of("RECENT_PLAY_SUCCESS", "LISTENING_DURATION_SUCCESS"), queuedTypes());
-        assertEquals(List.of("telemetry:recent", "telemetry:duration"), keys());
+    void auxiliaryPublishersRequireOptInButTheirFailuresStayVisible() throws Exception {
+        HudConfig.islandAuxiliaryNotices = false;
+        DownloadDynamicIsland.beginModelInference("quiet", "model");
+        DownloadDynamicIsland.finishModelInference("quiet", "model", 10L);
+        assertEquals("NONE", ((Enum<?>)get("noticeType")).name());
+        assertTrue(queue().isEmpty());
+
+        publish("MODEL_INFERENCE_FAILURE", "failure");
+        assertEquals("MODEL_INFERENCE_FAILURE", ((Enum<?>)get("noticeType")).name());
+        HudConfig.islandAuxiliaryNotices = true;
+        DownloadDynamicIsland.beginModelInference("opt-in", "model");
+        assertEquals(List.of("MODEL_INFERENCE:opt-in"), keys());
     }
 
     @Test
-    void visibleTelemetryResultReplacesUploadingInsteadOfReplayingStaleLoader() throws Exception {
-        DownloadDynamicIsland.showNeteaseUploadStarted("听歌历史上报");
-        DownloadDynamicIsland.showRecentPlayUploadSuccess(1L);
-        assertEquals("RECENT_PLAY_SUCCESS", ((Enum<?>)get("noticeType")).name());
+    void backgroundTelemetryResultsStaySilent() throws Exception {
+        publish("NETWORK_ERROR", "urgent");
+        for (int i = 0; i < 100; i++) {
+            DownloadDynamicIsland.showNeteaseUploadStarted("听歌历史上报");
+            DownloadDynamicIsland.showRecentPlayUploadSuccess(1L);
+            DownloadDynamicIsland.showRecentPlayUploadFailure(1L, "offline");
+            DownloadDynamicIsland.showNeteaseUploadStarted("听歌时长上报");
+            DownloadDynamicIsland.showListeningDurationUploadSuccess(100, 1L);
+            DownloadDynamicIsland.showListeningDurationUploadFailure(100, 1L, "offline");
+        }
+        assertEquals("NETWORK_ERROR", ((Enum<?>)get("noticeType")).name());
+        assertEquals("urgent", get("noticeTitle"));
         assertTrue(queue().isEmpty());
-        assertEquals(0L, clock().elapsed());
     }
 
     @Test
@@ -324,11 +341,12 @@ class IslandNoticeQueueTest {
     }
 
     @Test
-    void gdFallbackDisplayNameDoesNotLeaveItsOriginalLoaderBehind() throws Exception {
+    void gdResolvedSourceSilentlyReleasesLoaderAndLeavesVisibleQueueAlone() throws Exception {
         publish("NETWORK_ERROR", "urgent");
         DownloadDynamicIsland.showGdSourceResolving("GD音乐台 · NETEASE");
         DownloadDynamicIsland.showGdSourceResolved("已回退 酷我", "mp3");
-        assertEquals(List.of("GD_SOURCE_SUCCESS", "GD_SOURCE_HEALTHY"), queuedTypes());
+        assertEquals("NETWORK_ERROR", ((Enum<?>) get("noticeType")).name());
+        assertEquals(List.of(), queuedTypes());
     }
 
     @Test

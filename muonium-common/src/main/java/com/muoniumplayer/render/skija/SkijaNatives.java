@@ -131,6 +131,14 @@ public final class SkijaNatives {
         }
     }
 
+    public record DownloadSnapshot(String phase, int percent, String detail) {
+    }
+
+    public static DownloadSnapshot companionDownloadSnapshot() {
+        SkijaCompanionDownload.State current = SkijaCompanionDownload.state();
+        return new DownloadSnapshot(current.phase().name(), current.percent(), current.detail());
+    }
+
     /** 最近一次（或首次）加载的结果。永远不会为 null。 */
     public static Status status() {
         return status;
