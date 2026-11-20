@@ -190,6 +190,18 @@ class AutomixAudioThreadExecutionStaticTest {
         }
     }
 
+    @Test
+    @DisplayName("预卷在后台预填 cue 环形缓存，音频线程首读不做同步读盘")
+    void preparedDeckSeedsItsStreamedPlaybackWindow() throws IOException {
+        String audioPlayer = read(music("AudioPlayer.java"));
+        String prepare = body(audioPlayer, "private void primeStreamWindow(float millis)");
+
+        assertTrue(prepare.contains("preparePlaybackWindowAt((int) index)"),
+                "流式 deck 的 cue 窗口必须预填到自己的 ring，而不能只依赖 OS 页缓存");
+        assertTrue(prepare.contains("primeWindowAt((int) index)"),
+                "非 RAF 读取器仍保留原有的页缓存预热回退");
+    }
+
     /** 握手的通道侧。 */
     @Test
     @DisplayName("AudioPlayer 的音频线程帧用直写路径推四组参数与速度音高")

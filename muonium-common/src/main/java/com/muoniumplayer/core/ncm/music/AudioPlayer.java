@@ -346,11 +346,9 @@ public class AudioPlayer {
      * 把流式窗口拉到给定位置，让首次读取不发生在音频回调内部。
      * 一个采样就够了：读头会在被请求的下标周围填满一整个窗口。
      *
-     * <p>走 {@link SoundFile#primeWindowAt} 的预热旁路——读到的窗口被丢弃，
-     * 预热的是 OS 页缓存，<b>不经过</b>环形缓存：这个位置通常在几分钟后的未来，
-     * 若把它路由进实时读路径，会把 ring 的锚点拖离正在出声的播放位置，
-     * 引擎线程从此逐采样 miss、逐样本进锁同步读盘（开启智能混音即持续掉帧的
-     * 那个回归）。本方法只该在<b>未出声</b>的 deck 上调，且只调一次。</p>
+     * <p>走 {@link SoundFile#preparePlaybackWindowAt} 的预备路径：后台把 cue 周围的 PCM 发布到
+     * deck 自己的环形缓存，并为首次 WSOLA 前瞻保留约 370ms；随后从该游标继续顺序预取。
+     * 远位置读只影响尚未出声的 incoming deck，不会把正在播放 deck 的 ring 锚点拖走。</p>
      */
     private void primeStreamWindow(float millis) {
         try {
@@ -364,7 +362,9 @@ public class AudioPlayer {
             if (frame > frames - 1L) frame = frames - 1L;
             long index = frame * channels;
             if (index > Integer.MAX_VALUE - channels) return;
-            this.player.primeWindowAt((int) index);
+            if (!this.player.preparePlaybackWindowAt((int) index)) {
+                this.player.primeWindowAt((int) index);
+            }
         } catch (RuntimeException ignored) {
             // 预热只是优化；拒绝预热的解码器仍能正常播放。
         }

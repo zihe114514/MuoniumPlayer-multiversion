@@ -127,6 +127,18 @@ public class SoundFile extends AudioSample {
 				.primeWindowAt(unwrapped.index);
 	}
 
+	/** 为未出声的流式 deck 预填播放起点的环形缓存。 */
+	public boolean preparePlaybackWindowAt(int interleavedIndex) {
+		StreamedPrimeSupport.Unwrapped unwrapped =
+				StreamedPrimeSupport.unwrap(this.sample, interleavedIndex);
+		if (!(unwrapped != null
+				&& unwrapped.sample instanceof repackage.com.jsyn.util.soundfile.streamed.raf.RafFloatSample)) {
+			return false;
+		}
+		return ((repackage.com.jsyn.util.soundfile.streamed.raf.RafFloatSample) unwrapped.sample)
+				.preparePlaybackAt(unwrapped.index);
+	}
+
 	/** 时间伸缩层当前是否真的在跑（而不是直通）。 */
 	public boolean isTimeStretching() {
 		return this.sample instanceof WsolaStretchSample
