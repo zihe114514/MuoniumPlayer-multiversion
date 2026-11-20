@@ -140,8 +140,7 @@ public final class WorldLyricsBridge {
                 } else {
                     hudProjectionValid = false;
                 }
-                hudBasePose.rotationX((float) Math.toRadians(camera.getXRot()))
-                        .rotateY((float) Math.toRadians(camera.getYRot() + 180.0));
+                cameraBasePose(hudBasePose, camera.getXRot(), camera.getYRot());
                 hudCameraValid = hudProjectionValid;
                 // 连续多帧 HUD 直画都没完成（异常/回调缺失）→ 世界阶段兜底重画：
                 // 光影加工总比整句消失强。hudDrawMisses 在 hudPhaseDraw 成功画完时清零。
@@ -168,9 +167,8 @@ public final class WorldLyricsBridge {
             diagFrame++;
 
             // 1. 镜头转向自己算（相机朝向独立计算）
-            Matrix4f basePose = new Matrix4f()
-                    .rotateX((float) Math.toRadians(camera.getXRot()))
-                    .rotateY((float) Math.toRadians(camera.getYRot() + 180.0));
+            Matrix4f basePose = cameraBasePose(new Matrix4f(),
+                    camera.getXRot(), camera.getYRot());
 
             // 2. 视图矩阵换单位矩阵（1.21.1：RenderSystem.getModelViewStack 是 Matrix4fStack）
             RenderSystem.getModelViewStack().pushMatrix();
@@ -190,19 +188,13 @@ public final class WorldLyricsBridge {
             GlCompat.activeTexture(GL13.GL_TEXTURE0);
 
             try {
-                                renderInner(basePose, mc, camera);
+                renderInner(basePose, mc, camera);
             } finally {
-                // 恢复状态：视图矩阵 + 我们改过的 GL 状态（上游用 GlState 快照恢复，
-                // 这里逐项还原等价的几项，避免泄漏给本帧后续的绘制）。
+                // All lyric vertices must be submitted while the identity ModelView and
+                // camera-root pose are still active; Iris may defer endBatch(RenderType).
                 GlCompat.depthTest(true);
                 GlCompat.depthMask(true);
                 GlCompat.cull(true);
-                // blend 必须显式关掉：blend(true)/blendFunc 只在本渲染窗口内成立，
-                // 之后的原版绘制（手部/GUI）期望默认态。虽然 1.21.1 的 renderLevel
-                // 末尾自己会 disableBlend（字节码 2638），但那是「挂在 renderLevel
-                // 内部」才有的兜底 —— 挂点一旦改成 RETURN/TAIL（与 1.20.1/1.21.10/
-                // 1.21.11 对齐），这个前提立刻失效，混合态残留会让没有 transparency
-                // shard 的 RenderType 继承环境 blend。1.20.1 同位置就是这么写的。
                 GlCompat.blend(false);
                 GlCompat.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                         GL11.GL_ONE, GL11.GL_ZERO);
@@ -434,7 +426,20 @@ public final class WorldLyricsBridge {
     private static final org.joml.Matrix4f bobFreeBackup = new org.joml.Matrix4f();
 
     private static void renderInner(Matrix4f basePose, Minecraft mc, Camera camera) {
-        renderInner(basePose, mc, camera, mc.renderBuffers().bufferSource());
+        try (ByteBufferBuilder lyricStorage = new ByteBufferBuilder(1536)) {
+            MultiBufferSource.BufferSource lyricBuffers = MultiBufferSource.immediate(lyricStorage);
+            try {
+                renderInner(basePose, mc, camera, lyricBuffers);
+            } finally {
+                lyricBuffers.endBatch();
+            }
+        }
+    }
+
+    /** Camera view rotation baked into the root while the draw window uses an identity ModelView. */
+    static Matrix4f cameraBasePose(Matrix4f pose, float pitchDeg, float yawDeg) {
+        return pose.rotationX((float) Math.toRadians(pitchDeg))
+                .rotateY((float) Math.toRadians(yawDeg + 180.0));
     }
 
     private static void renderInner(Matrix4f basePose, Minecraft mc, Camera camera,
