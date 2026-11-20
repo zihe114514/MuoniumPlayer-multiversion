@@ -1,5 +1,6 @@
 package com.muoniumplayer.compat.lwjgl2;
 
+import com.muoniumplayer.core.input.WheelCallbackGuard;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWScrollCallback;
 import org.lwjgl.glfw.GLFWScrollCallbackI;
@@ -25,6 +26,7 @@ public final class Mouse {
     private static final int WHEEL_UNIT_PER_NOTCH = 120;
 
     private static final Object LOCK = new Object();
+    private static final WheelCallbackGuard WHEEL_CALLBACK_GUARD = new WheelCallbackGuard();
     private static int accumulatedWheel;
     private static boolean scrollHookInstalled;
     private static GLFWScrollCallback previousScrollCallback;
@@ -92,6 +94,14 @@ public final class Mouse {
         }
     }
 
+    /**
+     * Offer the original Screen callback to the project wheel accumulator. Calls made while our
+     * GLFW wrapper synchronously forwards into Minecraft are suppressed as duplicates.
+     */
+    public static void pushScreenScrollNotches(double notches) {
+        if (WHEEL_CALLBACK_GUARD.shouldAccumulateScreenFallback()) pushScrollNotches(notches);
+    }
+
     private static void installScrollHookIfNeeded() {
         long handle = Display.getWindowHandle();
         if (handle == 0L) {
@@ -109,7 +119,7 @@ public final class Mouse {
                 }
                 GLFWScrollCallback previous = previousScrollCallback;
                 if (previous != null) {
-                    previous.invoke(window, xOffset, yOffset);
+                    WHEEL_CALLBACK_GUARD.forwardToScreen(() -> previous.invoke(window, xOffset, yOffset));
                 }
             };
             // 先建 Callback 对象并持强引用（否则被 GC 后 native 侧变野指针），再安装；

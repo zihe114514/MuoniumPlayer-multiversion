@@ -232,8 +232,7 @@ public abstract class GuiScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
-        // 项目通过 Mouse.getDWheel() 轮询滚轮；GLFW 回调链已在 Mouse 里挂好，
-        // 这里再补一次会重复计数，故只做拦截返回，不再累加。
+        Mouse.pushScreenScrollNotches(amount);
         return true;
     }
 
