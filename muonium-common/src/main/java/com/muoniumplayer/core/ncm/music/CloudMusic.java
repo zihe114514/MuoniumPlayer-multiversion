@@ -1188,6 +1188,15 @@ public class CloudMusic implements SharedConstants {
         }
     }
 
+    /** 当前展示曲目是否仍持有启动恢复记忆；不启动播放或创建音频时钟。 */
+    public static boolean hasRestoredPlaybackMemory() {
+        try {
+            return restoredResumePoint() != null;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     /** 当前播放位置（毫秒）；未起播时保留匹配曲目的恢复位置。永不抛出。 */
     private static long currentPlaybackPositionMillis() {
         try {

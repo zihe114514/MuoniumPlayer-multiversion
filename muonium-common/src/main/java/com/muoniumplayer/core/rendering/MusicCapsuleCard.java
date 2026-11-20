@@ -389,8 +389,14 @@ public final class MusicCapsuleCard implements SharedRenderingConstants {
     }
 
     public static boolean rowContentActive() {
-        return frameSnapshot.music != null && (pausedSinceMs == 0L
-                || System.currentTimeMillis() - pausedSinceMs < PAUSE_TIMEOUT_MILLIS);
+        return rowContentActive(frameSnapshot.music != null, pausedSinceMs, System.currentTimeMillis(),
+                CloudMusic.hasRestoredPlaybackMemory());
+    }
+
+    static boolean rowContentActive(boolean hasMusic, long pausedSinceMillis, long nowMillis,
+                                    boolean restoredMemoryActive) {
+        return hasMusic && (restoredMemoryActive || pausedSinceMillis == 0L
+                || nowMillis - pausedSinceMillis < PAUSE_TIMEOUT_MILLIS);
     }
 
     public static double progressFraction(CloudMusic.PlaybackSnapshot snapshot) {

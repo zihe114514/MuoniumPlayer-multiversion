@@ -58,6 +58,7 @@ class PlaybackResumeStateTest {
         assertSame(CloudMusic.currentlyPlaying, snapshot.music);
         assertFalse(snapshot.playing);
         assertNull(snapshot.player);
+        assertTrue(CloudMusic.hasRestoredPlaybackMemory(), "matching startup memory remains available for display");
         assertFalse(CloudMusic.hasPlaybackClock(), "展示记忆不能让恢复态接受音频 seek");
         assertEquals(83_000L, CloudMusic.getSnapshot().positionMs, "恢复态不随墙钟前进");
         assertEquals(83_000L, savedPosition(), "未播放就退出也不能把记忆位置覆盖成零");
@@ -68,6 +69,7 @@ class PlaybackResumeStateTest {
         Music sameIdentity = song(42L, MusicPlatform.NETEASE, 200_000L);
         assertEquals(83_000L, take(sameIdentity, true));
         assertNull(pending.get());
+        assertFalse(CloudMusic.hasRestoredPlaybackMemory(), "consumed memory no longer extends the idle row lifetime");
         assertEquals(0L, take(sameIdentity, true));
     }
 
