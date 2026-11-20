@@ -62,7 +62,7 @@ class IslandNoticePriorityStaticTest {
         String source = Files.readString(ISLAND);
         assertTrue(source.contains("timedOut"));
         assertTrue(source.contains("timeoutNotice(waiting)"));
-        assertTrue(source.contains("recordNoticePresentation(sourceNoticeRevision, presented, System.currentTimeMillis())"));
+        assertTrue(source.contains("recordNoticePresentation(sourceNoticeRevision, noticePresented, System.currentTimeMillis())"));
         assertTrue(source.contains("NOTICE_VISIBLE_CLOCK.pause()"));
         assertTrue(source.contains("completionVisibleClock.record(System.currentTimeMillis())"));
     }

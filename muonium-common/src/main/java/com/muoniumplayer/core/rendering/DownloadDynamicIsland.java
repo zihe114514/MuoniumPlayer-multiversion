@@ -1290,10 +1290,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         IslandNoticeType safeType = type == null ? IslandNoticeType.NONE : type;
         String safeTitle = safeNoticeValue(title, "状态");
         String safeValue = safeNoticeValue(value, "—");
-        boolean capsuleInferenceStatus = getStyle() == DynamicIslandStyle.MUSIC_CAPSULE
+        boolean modelInferenceStatusEnabled = (safeType == IslandNoticeType.MODEL_INFERENCE
+                || safeType == IslandNoticeType.MODEL_INFERENCE_SUCCESS)
                 && AutomixSettings.isModelInferenceStatusEnabled();
         if (IslandNoticeRules.suppressAuxiliaryNotice(safeType.name(), safeTitle,
-                HudConfig.islandAuxiliaryNotices, capsuleInferenceStatus)) return;
+                HudConfig.islandAuxiliaryNotices, modelInferenceStatusEnabled)) return;
         long now = System.currentTimeMillis();
         long expiresAt = ttlMillis > 0L ? now + ttlMillis : 0L;
         if (isLowestPriorityNotice(safeType)) {
@@ -1985,14 +1986,19 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean surfaceBlocked = musicCardSurfaceBlockedNow();
         tickMusicCardState(surfaceBlocked, frameDelta * 10.0);
         final boolean cardOwnsFrame = musicCardClaimsSurface();
-        // 通道事实仍正常观察；音乐卡拥有表面时只暂停它们的展示与计时。
         final AutomixIslandRenderer.Frame mixFrame = !cardOwnsFrame && enabled && !activeDownload && !holdingCompletion
                 && (!activeNotice || allowsAutomixCurves(sourceNoticeType))
                 ? AutomixTransitionAnimation.islandFrame() : null;
         boolean mixMode = mixFrame != null;
         int sourceNoticePriority = noticePriority(sourceNoticeType, sourceNoticePersistent).rank;
-        boolean noticeMode = IslandNoticeRules.ownsSurface(activeNotice, sourceNoticePriority,
-                activeDownload, holdingCompletion, cardOwnsFrame);
+        boolean inferenceSuccessBubble = activeNotice && enabled
+                && sourceNoticeType == IslandNoticeType.MODEL_INFERENCE_SUCCESS;
+        boolean downloadCompletionBubble = IslandNoticeRules.downloadCompletionUsesBubble(holdingCompletion,
+                enabled, cardOwnsFrame, activeNotice, sourceNoticePriority);
+        boolean completionBubble = enabled && !cardOwnsFrame
+                && IslandNoticeRules.completionUsesBubble(downloadCompletionBubble, inferenceSuccessBubble);
+        boolean noticeMode = !inferenceSuccessBubble && IslandNoticeRules.ownsSurface(activeNotice,
+                sourceNoticePriority, activeDownload, holdingCompletion, cardOwnsFrame);
         boolean handoffShowsAmbient = handoffAmbient && !activeDownload && !holdingCompletion && !activeNotice;
         boolean ambientMode = !cardOwnsFrame && !mixMode && (handoffShowsAmbient
                 || IslandAmbientStatus.isAmbient(enabled, alwaysOn, activeDownload, holdingCompletion, noticeMode));
@@ -2001,6 +2007,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 holdingCompletion, activeNotice);
         if (playerAbsorbImpact || mixMode) shown = enabled;
         double expansionGoal = musicCapsuleRow && !surfaceBlocked ? 1.0
+                : completionBubble ? 0.0
                 : cardOwnsFrame ? IslandAmbientStatus.expansionTarget(true, true, alwaysOn && !ambient.isEmpty())
                 : IslandAmbientStatus.expansionTarget(shown, ambientMode, !ambient.isEmpty());
 
@@ -2038,7 +2045,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 ambientMode ? 1.0 : 0.0, com.muoniumplayer.core.screens.ncm.TransitionCurveCache.MOTION.at(
                         Math.max(0.0, Math.min(1.0, frameDelta * 3.0)))));
         successMorph = Interpolations.interpolate(successMorph,
-                enabled && holdingCompletion && !noticeMode ? 1f : 0f, successRate);
+                enabled && holdingCompletion && !noticeMode && !completionBubble ? 1f : 0f, successRate);
 
         spinnerRotation = (spinnerRotation + frameDelta * 7.2
                 * DynamicIslandMath.clamp(HudConfig.dynamicIslandSpinnerSpeed, .30, 3.0)) % 360.0;
@@ -2064,6 +2071,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         final IslandNoticeType renderedNoticeType = sourceNoticeType;
         final String renderedNoticeTitle = sourceNoticeTitle;
         final String renderedNoticeValue = sourceNoticeValue;
+        final boolean renderedNoticePersistent = sourceNoticePersistent;
+        final long renderedNoticeRevision = sourceNoticeRevision;
+        final long renderedCompletionBubbleStart = inferenceSuccessBubble ? sourceNoticeShownAt : completeAt;
+        final String renderedCompletionBubbleText = inferenceSuccessBubble ? "下一首就绪" : "下载完成";
+        final boolean renderedCompletionCapsuleRow = getStyle() == DynamicIslandStyle.MUSIC_CAPSULE
+                && MusicCapsuleCard.rowContentActive();
         final String renderedOutgoingNoticeTitle = outgoingNoticeTitle;
         final String renderedOutgoingNoticeValue = outgoingNoticeValue;
         final float renderedNoticeCopyTransition = DynamicIslandMath.clamp01f(noticeCopyTransition);
@@ -2078,8 +2091,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         System.currentTimeMillis(), shownAt, false, renderNotice,
                         renderedNoticeType, renderedNoticeTitle, renderedNoticeValue,
                         renderedOutgoingNoticeTitle, renderedOutgoingNoticeValue,
-                        renderedNoticeCopyTransition, renderedNoticeProgress, sourceNoticePersistent,
-                        renderedAmbient, renderedAmbientBlend, mixFrame, renderedShouldShow);
+                        renderedNoticeCopyTransition, renderedNoticeProgress, renderedNoticePersistent,
+                        renderedAmbient, renderedAmbientBlend, mixFrame, renderedShouldShow,
+                        activeNotice && sourceNoticeType == IslandNoticeType.MODEL_INFERENCE,
+                        activeDownload,
+                        completionBubble, inferenceSuccessBubble, renderedCompletionBubbleText,
+                        renderedCompletionBubbleStart, renderedCompletionCapsuleRow);
                 boolean cardPresented = cardOwnsFrame && musicCardOwnsSurface && MUSIC_CARD_BOUNDS != null
                         && visibility > .90f && musicCardInteraction.openness() >= .995
                         && SkijaGfx.active() && SkijaGfx.canvas() != null
@@ -2094,19 +2111,22 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 if (mouse != null && IslandVisibilityGate.isChatOpen()) {
                     MusicCapsuleCard.INSTANCE.drawConfirmation(mouse[0], mouse[1]);
                 }
-                // 回执必须在绘制成功之后。旧帧不替新消息消费时间；下载/Automix/不可见帧完全不计时。
-                boolean presented=IslandNoticeRules.presentationReady(
-                        enabled && renderNotice && mixFrame == null,
-                        SkijaGfx.active() && SkijaGfx.canvas() != null,
+                boolean backendReady = SkijaGfx.active() && SkijaGfx.canvas() != null;
+                boolean bubbleEntranceComplete = renderedCompletionBubbleStart > 0L
+                        && System.currentTimeMillis() - renderedCompletionBubbleStart >= 210L;
+                boolean bubblePresented = IslandNoticeRules.bubblePresentationReady(completionBubble,
+                        backendReady, visibility, bubbleEntranceComplete);
+                boolean noticePresented = inferenceSuccessBubble ? bubblePresented
+                        : IslandNoticeRules.presentationReady(enabled && renderNotice && mixFrame == null,
+                        backendReady,
                         visibility, expansion, contentAlpha, contentTransition,
                         renderedNoticeCopyTransition, isInstantStateChannel(renderedNoticeType));
-                recordNoticePresentation(sourceNoticeRevision, presented, System.currentTimeMillis());
-                if (enabled && renderedHoldingCompletion && !renderNotice && mixFrame == null && visibility > .75f
+                recordNoticePresentation(sourceNoticeRevision, noticePresented, System.currentTimeMillis());
+                if (renderedHoldingCompletion && !inferenceSuccessBubble && bubblePresented && mixFrame == null
                         && !downloading && downloadCompletedAt == sourceCompletedAt
-                        && expansion > .70 && contentAlpha > .70f && successMorph > .70f
-                        && SkijaGfx.active() && SkijaGfx.canvas() != null) {
+                        && backendReady) {
                     completionVisibleClock.record(System.currentTimeMillis());
-                } else completionVisibleClock.pause();
+                } else if (renderedHoldingCompletion) completionVisibleClock.pause();
             }
         }, true);
     }
@@ -2132,7 +2152,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         HudConfig.dynamicIslandEnabled ? "1.8 MB/s" : "灵动岛已关闭",
                         System.currentTimeMillis(), 0L, true, false,
                         IslandNoticeType.NONE, "", "", "", "", 1f, 0.0, false,
-                        ambient, ambient.isEmpty() ? 0f : 1f, null, true);
+                        ambient, ambient.isEmpty() ? 0f : 1f, null, true,
+                        false, false,
+                        false, false, "", 0L, false);
             }
         }, false);
     }
@@ -2172,7 +2194,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                             String outgoingNoticeValue, float noticeCopyBlend,
                             double noticeProgress, boolean activeNoticePersistent,
                             IslandAmbientStatus.Snapshot ambient, float ambientBlendValue,
-                             AutomixIslandRenderer.Frame mixFrame, boolean surfaceActive) {
+                            AutomixIslandRenderer.Frame mixFrame, boolean surfaceActive,
+                            boolean inferenceStatusActive, boolean downloadInProgress,
+                            boolean completionBubble, boolean inferenceSuccessBubble,
+                            String completionBubbleText, long completionBubbleStartedAt,
+                            boolean completionCapsuleRow) {
         double configuredScale = DynamicIslandMath.clamp(HudConfig.dynamicIslandScale, .60, 1.35);
         // 布局轴宽（真实渲染已进布局括号、编辑器预览也在编辑器的布局括号内），恒定、
         // 与 GUI Scale 无关；配合 renderIsolated 的 correction 层落在正确的物理尺寸上。
@@ -2263,14 +2289,27 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 : (style == DynamicIslandStyle.COMPACT ? 46.0 : COMPACT_WIDTH);
         double compactHeight = bounce ? BounceIslandMath.ROW_HEIGHT
                 : (style == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT);
+        if (completionCapsuleRow) {
+            targetExpandedWidth = MusicCapsuleCard.rowTargetWidth();
+            targetExpandedHeight = MusicCapsuleCard.ROW_HEIGHT;
+        } else if (completionBubble) {
+            targetExpandedWidth = compactWidth;
+            targetExpandedHeight = compactHeight;
+        }
         double islandHandoff = cardTransitionActive ? MusicCardMotion.islandHandoff(cardTransition) : 0.0;
         boolean trackNotice = cardTransitionActive && musicCardInteraction.trackNoticeActive();
-        boolean inferenceCapsule = musicCapsule && noticeMode
-                && activeNoticeType == IslandNoticeType.MODEL_INFERENCE;
-        boolean musicRow = MusicCapsuleCard.showCapsuleRow(musicCapsule, preview, noticeMode,
-                !cardOwnsFrame && isDownloadActive(), !cardOwnsFrame && completing, mixFrame != null,
-                MusicCapsuleCard.rowContentActive(), cardTransitionActive, inferenceCapsule);
-        if (musicRow || cardOwnsFrame && musicCapsule && MusicCapsuleCard.rowContentActive()) {
+        boolean inferenceBorderActive = !cardOwnsFrame && inferenceStatusActive;
+        boolean downloadBorderActive = !cardOwnsFrame && downloadInProgress;
+        boolean activityBorderActive = IslandNoticeRules.activityBorderActive(
+                inferenceBorderActive, downloadBorderActive);
+        boolean musicRow = MusicCapsuleCard.showCapsuleRow(musicCapsule, preview,
+                noticeMode || activityBorderActive, downloadBorderActive,
+                !cardOwnsFrame && completing, mixFrame != null,
+                MusicCapsuleCard.rowContentActive(), cardTransitionActive, activityBorderActive);
+        boolean capsuleRow = IslandNoticeRules.keepCapsuleRow(musicCapsule,
+                MusicCapsuleCard.rowContentActive(), cardOwnsFrame, cardTransitionActive)
+                || musicRow || cardOwnsFrame && musicCapsule && MusicCapsuleCard.rowContentActive();
+        if (capsuleRow) {
             targetExpandedWidth = MusicCapsuleCard.rowTargetWidth();
             targetExpandedHeight = MusicCapsuleCard.ROW_HEIGHT;
         }
@@ -2529,6 +2568,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         noticeProgress, ambient, ambientMix, layout, bounceStack, progress, success,
                         configuredScale, accentColor);
             }
+            if (activityBorderActive) drawInferenceCapsuleMarquee(x, y, width, height, radius, alpha,
+                    accentColor, now, downloadBorderActive ? progress : -1.0);
+            if (completionBubble) drawCapsuleCompletionBubble(x, y, width, height, radius, alpha,
+                    completionBubbleText, completionBubbleStartedAt, completionCapsuleRow, now);
             api.getGLStateManager().popMatrix();
             return;
         }
@@ -2540,27 +2583,29 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha * .64f);
             AutomixIslandRenderer.draw(SkijaGfx.canvas(), mixFrame, x, y, width, height, radius,
                     alpha * DynamicIslandMath.clamp01f(contentFade), accentColor);
+            if (activityBorderActive) drawInferenceCapsuleMarquee(x, y, width, height, radius, alpha,
+                    accentColor, now, downloadBorderActive ? progress : -1.0);
+            if (completionBubble) drawCapsuleCompletionBubble(x, y, width, height, radius, alpha,
+                    completionBubbleText, completionBubbleStartedAt, completionCapsuleRow, now);
             api.getGLStateManager().popMatrix();
             return;
         }
         if (cardTransitionActive && musicCapsule) {
             drawMusicCapsuleIsland(x, y, width, height, radius, alpha, (float) (1.0 - islandHandoff));
+            if (completionBubble) drawCapsuleCompletionBubble(x, y, width, height, radius, alpha,
+                    completionBubbleText, completionBubbleStartedAt, completionCapsuleRow, now);
             api.getGLStateManager().popMatrix();
             return;
         }
-        if (musicCapsule && !musicRow) {
+        if (musicCapsule && !capsuleRow) {
             drawMusicCapsuleSurface(x, y, width, height, radius, alpha);
-        } else if (musicRow) {
+        } else if (capsuleRow) {
             float rowAlpha = cardFrame == null ? 1f
                     : 1f - (float) DynamicIslandMath.smoothStep(cardTransition / .30);
             drawMusicCapsuleIsland(x, y, width, height, radius, alpha, rowAlpha);
-            if (inferenceCapsule) drawInferenceCapsuleMarquee(x, y, width, height, radius, alpha, accentColor, now);
-            api.getGLStateManager().popMatrix();
-            return;
-        }
-        // 常规胶囊先铺真背景，再按玻璃浓度压薄深色底；回弹样式单独处理。
-        boolean frosted = !liquidGlass && !musicCapsule
-                && GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
+        } else {
+            boolean frosted = !liquidGlass && !musicCapsule
+                    && GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
         float thin = frosted ? GlassLook.tintedAlpha(GlassLook.Surface.ISLAND, 1.0f) : 1.0f;
         if (liquidGlass) {
             renderLiquidGlassSurface(x, y, width, height, radius, alpha, now);
@@ -2587,7 +2632,6 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             roundedRect(x + radius * .70, y + .8, Math.max(2.0, width - radius * 1.40), .75, .38,
                     hexColor(1f, 1f, 1f, alpha * .055f * thin));
         }
-
         // 图标托盘与布局计算共用内缩口径，内容区留出固定呼吸位。
         double iconInset = liquidGlass ? 24.0 : 23.0;
         double iconExpandedX = centerX - (cardOwnsFrame ? width : expandedWidth) * .5 + iconInset;
@@ -2629,8 +2673,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 renderNoticeIcon(activeNoticeType, activeNoticeValue, iconX, iconY,
                         eventGlyphAlpha, iconAccentColor, now);
             } else {
-                renderSpinner(iconX, iconY, eventGlyphAlpha * (1f - success), iconAccentColor, now, preview);
-                renderSuccess(iconX, iconY, alpha * success * (1f - ambientMix));
+                if (!completionBubble) {
+                    renderSpinner(iconX, iconY, eventGlyphAlpha * (1f - success), iconAccentColor, now, preview);
+                    renderSuccess(iconX, iconY, alpha * success * (1f - ambientMix));
+                }
             }
         }
         if (ambientMix > .005f) {
@@ -2644,6 +2690,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         float eventFade = 1f - ambientMix;
         float textAlpha = alpha * contentAlpha * (float) expansionValue
                 * DynamicIslandMath.clamp01f(contentFade) * eventFade;
+        if (completionBubble) textAlpha = 0f;
         boolean styleNoticeCopy = musicCapsule && noticeMode && cardFrame == null;
         if (styleNoticeCopy) {
             double widthSpan = Math.max(1.0, layout.targetWidth - compactWidth);
@@ -2809,6 +2856,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 drawAmbientRow(ambient, x, y, width, height, style, ambientAlpha, ambientScale, accentColor);
             }
         }
+        }
+        if (activityBorderActive) drawInferenceCapsuleMarquee(x, y, width, height, radius, alpha,
+                accentColor, now, downloadBorderActive ? progress : -1.0);
+        if (completionBubble) drawCapsuleCompletionBubble(x, y, width, height, radius, alpha,
+                completionBubbleText, completionBubbleStartedAt, completionCapsuleRow, now);
         api.getGLStateManager().popMatrix();
         SkijaGfx.setColor(1f, 1f, 1f, 1f);
     }
@@ -3907,8 +3959,51 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 hexColor(1f, 1f, 1f, alpha * .035f * thin));
     }
 
+    private void drawCompletionBubbleIfActive(boolean bubble, double x, double y, double width,
+                                              double height, double radius, float alpha, String label,
+                                              long startedAt, boolean capsuleRow, long now) {
+        if (bubble) drawCapsuleCompletionBubble(x, y, width, height, radius, alpha,
+                label, startedAt, capsuleRow, now);
+    }
+
+    private void drawCapsuleCompletionBubble(double x, double y, double width, double height, double radius,
+                                             float alpha, String label, long startedAt, boolean capsuleRow,
+                                             long now) {
+        if (alpha <= .01f || startedAt <= 0L) return;
+        double elapsed = Math.max(0L, now - startedAt);
+        double progress = DynamicIslandMath.clamp01(elapsed / 210.0);
+        double eased = DynamicIslandMath.smoothStep(progress);
+        double textWidth = FontManager.pf12bold == null ? 0.0 : FontManager.pf12bold.getStringWidthD(label);
+        double bubbleWidth = Math.max(68.0, textWidth + 34.0);
+        double bubbleHeight = 22.0;
+        double centerX = x + width * .5;
+        double lift = (1.0 - eased) * 7.0;
+        double bubbleX = centerX - bubbleWidth * .5;
+        double bubbleY = y + height - 1.0 + lift;
+        float bubbleAlpha = alpha * (float) eased;
+        int accent = NCMTheme.getAccentColor();
+        roundedRect(bubbleX + 1.0, bubbleY + 1.2, bubbleWidth, bubbleHeight, bubbleHeight * .5,
+                hexColor(0f, 0f, 0f, bubbleAlpha * .22f));
+        roundedRect(bubbleX, bubbleY, bubbleWidth, bubbleHeight, bubbleHeight * .5,
+                hexColor(.035f, .045f, .065f, bubbleAlpha * .96f));
+        roundedOutline(bubbleX, bubbleY, bubbleWidth, bubbleHeight, bubbleHeight * .5, .65,
+                new Color(RenderSystem.reAlpha(accent, bubbleAlpha * .78f), true));
+        drawIslandStatusIcon(IslandStatusIcons.SUCCESS, bubbleX + 12.0, bubbleY + bubbleHeight * .5,
+                bubbleAlpha, hexColor(.70f, 1f, .77f, bubbleAlpha));
+        if (FontManager.pf12bold != null) {
+            double available = Math.max(1.0, bubbleWidth - 29.0);
+            drawCenteredIslandText(FontManager.pf12bold, label, bubbleX + 17.0 + available * .5,
+                    bubbleY + 6.2, available, 1.0, hexColor(1f, 1f, 1f, bubbleAlpha));
+        }
+        if (progress >= 1.0 && capsuleRow) {
+            roundedRect(bubbleX + bubbleWidth * .5 - 5.0, bubbleY + bubbleHeight - .5,
+                    10.0, 1.2, .6, RenderSystem.reAlpha(accent, bubbleAlpha * .58f));
+        }
+    }
+
     private void drawInferenceCapsuleMarquee(double x, double y, double width, double height,
-                                             double radius, float alpha, int accentColor, long now) {
+                                             double radius, float alpha, int accentColor, long now,
+                                             double downloadProgress) {
         Canvas canvas = SkijaGfx.canvas();
         if (canvas == null || alpha <= .01f || width <= 8.0 || height <= 8.0) return;
         double inset = 1.25;
@@ -3921,15 +4016,22 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     (float) Math.min(radius, height * .5)), true);
             roundedOutline(x + inset, y + inset, innerWidth, innerHeight, innerRadius, 1.05,
                     new Color(RenderSystem.reAlpha(accentColor, alpha * .24f), true));
-            double phase = InferenceCapsuleMotion.phase(now);
             int samples = InferenceCapsuleMotion.sampleCount(innerWidth, innerHeight, innerRadius);
-            int trailSamples = Math.max(8, (int) Math.ceil(samples * .26));
+            double progress = InferenceCapsuleMotion.progress(downloadProgress);
+            int passed = InferenceCapsuleMotion.completedSamples(progress, samples);
+            if (passed > 1) drawCapsuleBorderFill(canvas, x + inset, y + inset, innerWidth, innerHeight,
+                    innerRadius, passed, samples, accentColor, alpha);
+
+            double trailSamples = InferenceCapsuleMotion.trailSampleCount(samples);
+            double head = InferenceCapsuleMotion.phase(now);
+            double trailLength = InferenceCapsuleMotion.trailLength(progress);
             for (int index = 0; index < trailSamples; index++) {
+                double t = index / (double) Math.max(1, trailSamples - 1);
+                double position = head - trailLength * t;
                 InferenceCapsuleMotion.Point point = InferenceCapsuleMotion.pointAt(
-                        innerWidth, innerHeight, innerRadius, phase - index / (double) samples * .26);
-                double trail = 1.0 - index / (double) trailSamples;
-                double glow = trail * trail;
-                int color = trail > .72 ? DynamicIslandMath.brightenAccent(accentColor, .46f) : accentColor;
+                        innerWidth, innerHeight, innerRadius, position);
+                double glow = (1.0 - t) * (1.0 - t);
+                int color = t < .28 ? DynamicIslandMath.brightenAccent(accentColor, .46f) : accentColor;
                 float tickAlpha = alpha * (float) (.16 + .84 * glow);
                 drawRotatedPill(x + inset + point.x, y + inset + point.y,
                         2.5 + 1.9 * glow, 1.2, (float) point.tangentDegrees,
@@ -3937,6 +4039,32 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             }
         } finally {
             canvas.restoreToCount(save);
+        }
+    }
+
+    private static void drawCapsuleBorderFill(Canvas canvas, double x, double y, double width, double height,
+                                              double radius, int points, int total, int accentColor, float alpha) {
+        try (io.github.humbleui.skija.PathBuilder builder = new io.github.humbleui.skija.PathBuilder();
+             io.github.humbleui.skija.Paint paint = new io.github.humbleui.skija.Paint();
+             io.github.humbleui.skija.Shader shader = io.github.humbleui.skija.Shader.makeLinearGradient(
+                     (float) x, (float) y, (float) (x + width), (float) (y + height),
+                     new int[]{RenderSystem.reAlpha(accentColor, alpha * .78f),
+                             RenderSystem.reAlpha(accentColor, alpha * .08f)})) {
+            for (int index = 0; index <= points; index++) {
+                InferenceCapsuleMotion.Point point = InferenceCapsuleMotion.pointAt(
+                        width, height, radius, Math.min(1.0, index / (double) total));
+                float px = (float) (x + point.x);
+                float py = (float) (y + point.y);
+                if (index == 0) builder.moveTo(px, py); else builder.lineTo(px, py);
+            }
+            paint.setAntiAlias(true);
+            paint.setMode(io.github.humbleui.skija.PaintMode.STROKE);
+            paint.setStrokeCap(io.github.humbleui.skija.PaintStrokeCap.ROUND);
+            paint.setStrokeWidth(1.4f);
+            paint.setShader(shader);
+            try (io.github.humbleui.skija.Path path = builder.snapshot()) {
+                canvas.drawPath(path, paint);
+            }
         }
     }
 

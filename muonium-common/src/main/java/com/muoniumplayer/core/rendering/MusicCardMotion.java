@@ -10,10 +10,10 @@ final class MusicCardMotion {
         return showCapsuleRow(preview, notice, false, downloading, completing, mixing, musicActive);
     }
 
-    static boolean showCapsuleRow(boolean preview, boolean notice, boolean inferenceRunning,
+    static boolean showCapsuleRow(boolean preview, boolean notice, boolean capsuleBorderActive,
                                   boolean downloading, boolean completing, boolean mixing, boolean musicActive) {
-        return (!notice || inferenceRunning) && !downloading && !completing && !mixing
-                && (preview || musicActive);
+        return (!notice || capsuleBorderActive) && (!downloading || capsuleBorderActive)
+                && !completing && !mixing && (preview || musicActive);
     }
 
     static double contentReveal(double openness) {

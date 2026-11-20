@@ -20,6 +20,27 @@ final class InferenceCapsuleMotion {
         return Math.max(12, Math.min(96, (int) Math.ceil(perimeter / 5.0)));
     }
 
+    static int completedSamples(double progress, int sampleCount) {
+        if (sampleCount <= 0 || !Double.isFinite(progress) || progress < 0.0) return 0;
+        return Math.max(0, Math.min(sampleCount, (int) Math.floor(clamp01(progress) * sampleCount)));
+    }
+
+    static double progress(double progress) {
+        return Double.isFinite(progress) && progress >= 0.0 ? clamp01(progress) : -1.0;
+    }
+
+    static int trailSampleCount(int sampleCount) {
+        return Math.max(8, (int) Math.ceil(Math.max(0, sampleCount) * .26));
+    }
+
+    static double trailLength(double progress) {
+        return progress >= 0.0 ? .14 : .26;
+    }
+
+    private static double clamp01(double value) {
+        return Math.max(0.0, Math.min(1.0, value));
+    }
+
     static Point pointAt(double width, double height, double radius, double progress) {
         double w = Double.isFinite(width) ? Math.max(0.0, width) : 0.0;
         double h = Double.isFinite(height) ? Math.max(0.0, height) : 0.0;

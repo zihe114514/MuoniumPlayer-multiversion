@@ -116,11 +116,18 @@ public final class BilibiliMusicService {
         public final String url;
         public final String format;
         public final long bitrate;
+        /** Page metadata used for the resolved playback stream; null for download-only hi-res results. */
+        public final Track track;
 
         ResolveResult(String url, String format, long bitrate) {
+            this(url, format, bitrate, null);
+        }
+
+        ResolveResult(String url, String format, long bitrate, Track track) {
             this.url = url;
             this.format = format;
             this.bitrate = bitrate;
+            this.track = track;
         }
     }
 
@@ -188,7 +195,9 @@ public final class BilibiliMusicService {
             if (streams == null || streams.isJsonNull() || streams.size() == 0) {
                 // 未登录请求付费档位时 B 站可能只回 durl；这条兜底保持和改造前一致的行为。
                 ResolveResult durl = pickDurl(data);
-                if (durl != null) return durl;
+                if (durl != null) {
+                    return new ResolveResult(durl.url, durl.format, durl.bitrate, track);
+                }
                 throw new IllegalStateException("Bilibili response contains no DASH audio stream");
             }
 
@@ -219,7 +228,7 @@ public final class BilibiliMusicService {
             long bandwidth = longValue(chosen, "bandwidth");
             // Bilibili 纯音频 DASH 是分片 MP4。返回 "mp4" 可让现有的
             // 字节级检测器和 AacAudioDecoder 继续负责真实容器。
-            return new ResolveResult(urlValue, "mp4", bandwidth);
+            return new ResolveResult(urlValue, "mp4", bandwidth, track);
         } catch (Throwable throwable) {
             System.err.println("[Music/Bilibili] Song URL failed for " + nonBlank(sourceId) + ": "
                     + describe(throwable));
@@ -368,23 +377,35 @@ public final class BilibiliMusicService {
     private static Track loadVideo(String videoId, int page) throws Exception {
         JsonObject response = getJson(API_ROOT + "/view?" + viewIdQuery(videoId));
         requireSuccessful(response, "view");
-        JsonObject data = object(response, "data");
-        if (data == null) return null;
+        return trackFromViewData(object(response, "data"), videoId, page);
+    }
 
-        // view 总是回规范化的 bvid，所以 av 号进来的话以响应为准，别把自己的入参当身份。
+    static Track trackFromViewData(JsonObject data, String videoId, int page) {
+        if (data == null) return null;
+        JsonObject selectedPage;
+        JsonArray pages = array(data, "pages");
+        if (pages == null || pages.isJsonNull() || pages.size() == 0) {
+            if (page != 1) return null;
+            selectedPage = null;
+        } else {
+            selectedPage = selectPage(data, page);
+            if (selectedPage == null) return null;
+        }
+
+        JsonObject durationSource = selectedPage == null ? data : selectedPage;
+        long duration = longValue(durationSource, "duration");
+        if (duration <= 0L && selectedPage == null) return null;
+        String aid = string(data, "aid");
+        String cid = selectedPage == null ? string(data, "cid") : string(selectedPage, "cid");
+        if (aid.isEmpty() || cid.isEmpty()) return null;
+
         String bvid = firstNonBlank(string(data, "bvid"), videoId);
-        JsonObject selectedPage = selectPage(data, page);
         String title = cleanText(string(data, "title"));
         String part = cleanText(string(selectedPage, "part"));
         if (!part.isEmpty() && !part.equals(title)) title = title + " - " + part;
         String artist = cleanText(string(object(data, "owner"), "name"));
-        long duration = longValue(selectedPage == null ? data : selectedPage, "duration") * 1000L;
         String cover = normalizeCover(string(data, "pic"));
-        String aid = string(data, "aid");
-        String cid = string(selectedPage == null ? data : selectedPage, "cid");
-        if (aid.isEmpty() || cid.isEmpty()) return null;
-        return new Track(bvid, page, title, artist, duration,
-                cover, aid, cid);
+        return new Track(bvid, page, title, artist, duration * 1000L, cover, aid, cid);
     }
 
     /** {@code view} 的 id 参数：BV 号用 {@code bvid=}，AV 号用 {@code aid=}。 */

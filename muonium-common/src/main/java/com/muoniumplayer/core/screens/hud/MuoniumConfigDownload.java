@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.muoniumplayer.core.settings.JsonConfigStorage;
+import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.update.SemVer;
 import com.muoniumplayer.core.update.UpdateChecker;
 import com.muoniumplayer.core.utils.network.HttpDownloadRace;
@@ -34,10 +35,10 @@ import java.util.Map;
  * <p>失败不阻挡进游戏：MuoniumConfig 只提供设置界面，下载失败时主体功能（听歌、HUD 绘制）
  * 照常运行，只少了那个界面。这与 Skija 缺原生库不同 —— 那个缺了渲染层整个起不来。</p>
  *
- * <h2>每次启动都查更新，而不是"只在没装时下载"</h2>
+ * <h2>选择 MuoniumConfig 时检查更新</h2>
  * 以前这里只做「mods/ 里没有就下一次」，于是 MuoniumConfig 的 bug 修复只能等玩家升级
  * 整个播放器 —— 客户端把版本号钉死在 {@link #BUILDS} 里，老客户端永远看不到新版。
- * 现在每次启动都读一次远端清单（{@link MuoniumConfigIndex}），比已装版本新才下载：
+ * 选择该界面时每次启动读一次远端清单（{@link MuoniumConfigIndex}），比已装版本新才下载：
  *
  * <ol>
  *   <li>清单优先，{@link #BUILDS} 只是<b>兜底</b>（断网 / 镜像全挂时退回内置值）；</li>
@@ -125,34 +126,34 @@ public final class MuoniumConfigDownload {
      * <p>本表由 MuoniumConfig 仓库的 {@code tools/publish.py} 生成，别手改。</p>
      */
     private static final Map<String, Build> BUILDS = Map.ofEntries(
-            Map.entry("26.3/fabric", new Build("muoniumconfig-1.8.0.jar",
-                    26127283L, "482dee8aef0886f42c3e0a7781971cd0e034942dbdb42ad973f14b661a74dd66")),
-            Map.entry("26.3/neoforge", new Build("muoniumconfig-1.8.0.jar",
-                    28384897L, "6511f0c4b6793af65fbb577d3bae57c4c1651fca37cae0e9ba07b2709aca14d8")),
-            Map.entry("26.2/fabric", new Build("muoniumconfig-1.8.0.jar",
-                    26117103L, "f6132725742e86904e401f7bbcc4fcf8f26f805380a5e5bf4cf91029bdd9e8bc")),
-            Map.entry("26.2/neoforge", new Build("muoniumconfig-1.8.0.jar",
-                    28374841L, "438bc477ea79919fe924c28e15a3ed7d1f186c132dcef0fb52b825c780ed10fe")),
-            Map.entry("26.1.2/fabric", new Build("muoniumconfig-1.8.0.jar",
-                    26122758L, "063ea267f9eba39a99f9499741e15a7b2fb671e8577d49a91fb28fb85e88ba2b")),
-            Map.entry("26.1.2/neoforge", new Build("muoniumconfig-1.8.0.jar",
-                    28380521L, "4cc2d428be9fa56a9ed1fac72abab70c2043d5d58e8e79642c0fe0c9fbe63830")),
-            Map.entry("1.21.11/fabric", new Build("muoniumconfig-1.8.0.jar",
-                    26223310L, "0a37fb509bb679cee2f10ac5a190fcff4cbd69ab6c6197b5442d63ad8efa7ccd")),
-            Map.entry("1.21.11/neoforge", new Build("muoniumconfig-1.8.0.jar",
-                    28375664L, "a390c7b5d086b10a863b7705437ebaff84848f583e9520fe82078bf304f3e2e9")),
-            Map.entry("1.21.10/fabric", new Build("muoniumconfig-1.8.0.jar",
-                    26091928L, "c71c425a4cef6d6c10c6d20a91f6cbbf316a823b83dac3c84c66d390a536ceb5")),
-            Map.entry("1.21.10/neoforge", new Build("muoniumconfig-1.8.0.jar",
-                    28246642L, "8cf2a723e5fea2fafb60effff4ccb6ce6ee322184c39ea2d604f5acfeaf589e6")),
-            Map.entry("1.21.1/fabric", new Build("muoniumconfig-1.8.0.jar",
-                    26094211L, "f76899367739c84027a17abfaa01913554b6b3e22316c59bfbc30e922ac3ce50")),
-            Map.entry("1.21.1/neoforge", new Build("muoniumconfig-1.8.0.jar",
-                    27987682L, "9bec3dba3f9f430904ecb3ab2ef37b94c34cf393110f8045a078f756cc46b5b1")),
-            Map.entry("1.20.1/fabric", new Build("muoniumconfig-1.8.0.jar",
-                    25911194L, "9899a117b0a15fd5423a9716aff80893b011a9ba2582b0a0251666b687abd0df")),
-            Map.entry("1.20.1/forge", new Build("muoniumconfig-1.8.2.jar",
-                    28308795L, "858b2029c97b27a487f20db1b3e535a6d70f4c130e856f6a39d2f476dcff024c"))
+            Map.entry("26.3/fabric", new Build("muoniumconfig-1.9.0.jar",
+                    26131788L, "9f2ac81da4f74a3e455154f1116dd1b3e5300a2b95012ba8af8999f90e6abac9")),
+            Map.entry("26.3/neoforge", new Build("muoniumconfig-1.9.0.jar",
+                    28394780L, "e8ad9a4ca6deb7ba0567fb6b4ba0ce696ea35493bc51b561b37f6c432c8ea0d7")),
+            Map.entry("26.2/fabric", new Build("muoniumconfig-1.9.0.jar",
+                    26121606L, "52d8f132f2b11536da9d3cfdb070c7bbed9cfa0a61c73d32faec67410f715a71")),
+            Map.entry("26.2/neoforge", new Build("muoniumconfig-1.9.0.jar",
+                    28384719L, "47da4d67d69435c77bd1376e6f94b747265c35643ce194db9d424ac448ecef66")),
+            Map.entry("26.1.2/fabric", new Build("muoniumconfig-1.9.0.jar",
+                    26127268L, "508eeed6f9b140639056e9eb91462bac9ece656f4b1fe06cd9c4290edd813cb4")),
+            Map.entry("26.1.2/neoforge", new Build("muoniumconfig-1.9.0.jar",
+                    28390407L, "040f8d3d565b33cb5d4693558b5c58662069a3ea3d5fd1a63e7f6ddefb010171")),
+            Map.entry("1.21.11/fabric", new Build("muoniumconfig-1.9.0.jar",
+                    26227944L, "4210eb587e57d70674f66e872771bcf55315dfcd564a63e78911e9f5a917d6d4")),
+            Map.entry("1.21.11/neoforge", new Build("muoniumconfig-1.9.0.jar",
+                    28385550L, "2ff212528c2931ac04d7c95d7d0c8640490ccfff78835ff2b4f452b82fbbf6f8")),
+            Map.entry("1.21.10/fabric", new Build("muoniumconfig-1.9.0.jar",
+                    26096565L, "52f43a7375988075b3c63d301196eed1e6ceb329bf45be771a198adadf04cee5")),
+            Map.entry("1.21.10/neoforge", new Build("muoniumconfig-1.9.0.jar",
+                    28256563L, "eb1c92bac5db9bcbf9a46fe65d8b400e55de242ecb3dd70f86f8557b79dc3199")),
+            Map.entry("1.21.1/fabric", new Build("muoniumconfig-1.9.0.jar",
+                    26100287L, "ca6fa1b4663480b31c910fd19331ca62c929d52c8424bd46949b48195ef320d2")),
+            Map.entry("1.21.1/neoforge", new Build("muoniumconfig-1.9.0.jar",
+                    27997603L, "558373146028df80f86565c0ca93a6361ff9409362bf4a0d78b03d951c1d20f0")),
+            Map.entry("1.20.1/fabric", new Build("muoniumconfig-1.9.0.jar",
+                    25916438L, "5704d6e51bd95844706773f4abd56c6e1e25ea94654a29a96382d34e1f0b295b")),
+            Map.entry("1.20.1/forge", new Build("muoniumconfig-1.9.0.jar",
+                    28318705L, "a7748159dda383489257f05afc5016a885f5e9b59a462a42daedb0029ecd159f"))
     );
 
     /** 内置兜底构建：文件名 + 钉死的字节数与 sha256。 */
@@ -319,10 +320,10 @@ public final class MuoniumConfigDownload {
     }
 
     /**
-     * 每次启动游戏都查一遍：没装就装，装了但不是最新就更新。
+     * 记录车道；选中 MuoniumConfig 时检查，没装就装，装了但不是最新就更新。
      *
      * <p>调用点是七树共用的 {@code UpdateChecker.beginCheck} 与各加载器入口 —— 每个客户端
-     * init 都会走，所以「每次启动都查」由它们天然保证。判重靠 {@link #started}：一轮会话
+     * init 都会走；判重靠 {@link #started}：一轮会话
      * 只会真正跑一次。只判断就走，绝不在调用线程（通常是主线程）上等网络。</p>
      *
      * @param mcVersion 当前游戏的 MC 版本，例如 {@code "26.3"}
@@ -334,6 +335,7 @@ public final class MuoniumConfigDownload {
         String key = buildKey(mcVersion, loaderId);
         if (key.isEmpty()) return false;
         lane = key;
+        if (!wantsMuoniumConfig()) return false;
 
         // 这是「每次启动都查」的唯一闸：两处调用点（beginCheck 与加载器入口）都会进来，
         // 只有第一个能通过。失败后的会话内重试走 retry()，不走这里。
@@ -341,9 +343,10 @@ public final class MuoniumConfigDownload {
             if (started || inFlight) {
                 return false;
             }
+            if (!startWorker(key)) return false;
             started = true;
+            return true;
         }
-        return startWorker(key);
     }
 
     /**
@@ -356,7 +359,7 @@ public final class MuoniumConfigDownload {
      * @return 是否真的起了后台线程
      */
     private static boolean retry() {
-        if (!enabled()) return false;
+        if (!enabled() || !wantsMuoniumConfig()) return false;
         String key = lane;
         if (key == null || key.isEmpty()) return false;
         return startWorker(key);
@@ -369,7 +372,7 @@ public final class MuoniumConfigDownload {
      * 还是删不掉（文件被别的进程锁着），那种要靠用户动手，自动重试只会刷日志。</p>
      */
     public static boolean shouldRetry() {
-        if (!enabled() || restartRequired || inFlight) {
+        if (!enabled() || !wantsMuoniumConfig() || restartRequired || inFlight) {
             return false;
         }
         State current = state;
@@ -383,7 +386,18 @@ public final class MuoniumConfigDownload {
 
     /** 供宿主 tick 调用：该重试时起一轮。返回是否真的起了。 */
     public static boolean tick() {
+        if (!started && lane != null && !lane.isEmpty() && wantsMuoniumConfig()) {
+            int slash = lane.indexOf('/');
+            if (slash > 0) return ensureDownloaded(lane.substring(0, slash), lane.substring(slash + 1));
+        }
         return shouldRetry() && retry();
+    }
+
+    /** 根据 OneConfig 探测结果和当前界面选择判断是否应下载/更新。 */
+    private static boolean wantsMuoniumConfig() {
+        return HudInitialSelection.wantsMuoniumConfig(
+                HudInitialSelection.isOneConfigInstalled(),
+                HudConfig.HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi));
     }
 
     /**
@@ -455,6 +469,11 @@ public final class MuoniumConfigDownload {
             if (entry == null || !entry.isUsable()) {
                 // 这个 MC 版本/加载器还没有对应构建：不下载，也不刷日志。
                 state = stuckState(stuck);
+                return;
+            }
+            if (!wantsMuoniumConfig()) {
+                state = stuckState(stuck);
+                synchronized (LOCK) { started = false; }
                 return;
             }
             target = entry;
@@ -808,6 +827,7 @@ public final class MuoniumConfigDownload {
      * （纯外观损失，常驻会变成骚扰），由各树渲染器自己管窗口。</p>
      */
     public static boolean noticeVisible() {
+        if (HudInitialSelection.noticeVisible()) return true;
         State current = state();
         if (current.phase() == Phase.DOWNLOADING || current.phase() == Phase.DONE) {
             return true;
@@ -830,6 +850,9 @@ public final class MuoniumConfigDownload {
      * 而它至少能解释为什么没动静。</p>
      */
     public static List<String> noticeLines() {
+        if (HudInitialSelection.noticeVisible()) {
+            return List.of("检测到已安装 OneConfig，为避免冲突", "已将 HUD 设置界面切换为内置界面，并且不下载MuoniumConfig");
+        }
         State current = state();
         List<String> lines = new ArrayList<>();
         switch (current.phase()) {

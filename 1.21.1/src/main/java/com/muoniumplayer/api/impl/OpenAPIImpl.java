@@ -1,11 +1,14 @@
 package com.muoniumplayer.api.impl;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.network.chat.Component;
 import com.muoniumplayer.api.OpenAPI;
 import com.muoniumplayer.api.features.ExtensionModule;
 import com.muoniumplayer.api.features.ExtensionScreen;
 import com.muoniumplayer.api.features.ExtensionWidget;
+import com.muoniumplayer.compat.mc.GuiScreen;
 import com.muoniumplayer.api.interfaces.EventHandler;
 import com.muoniumplayer.api.interfaces.modules.values.ValueManager;
 import com.muoniumplayer.api.interfaces.render.FontUtil;
@@ -58,7 +61,36 @@ public class OpenAPIImpl extends OpenAPI {
 
     @Override
     public void displayScreen(ExtensionScreen screen) {
-        Minecraft.getInstance().setScreen(screen);
+        Minecraft mc = Minecraft.getInstance();
+        Screen current = mc.screen;
+        boolean leavingMusicUi = screen == null
+                && (current instanceof com.muoniumplayer.core.screens.ncm.NCMScreen
+                || current instanceof com.muoniumplayer.core.screens.ncm.IslandSearchOverlay
+                || current instanceof com.muoniumplayer.core.screens.ncm.MusicCardOverlay);
+        if (screen == null && current instanceof GuiScreen) {
+            Screen returnScreen = ((GuiScreen) current).getReturnScreen();
+            if (returnScreen != null) {
+                ((GuiScreen) current).setReturnScreen(null);
+                mc.setScreen(returnScreen);
+                if (leavingMusicUi && mc.screen == null) {
+                    com.muoniumplayer.core.utils.IMBlockerCompat.restoreGameIMEState();
+                }
+                return;
+            }
+        } else if (screen != null) {
+            Screen returnScreen = current;
+            if (current instanceof GuiScreen
+                    && ((GuiScreen) current).getReturnScreen() != null) {
+                returnScreen = ((GuiScreen) current).getReturnScreen();
+            }
+            if (returnScreen instanceof TitleScreen) {
+                screen.setReturnScreen(returnScreen);
+            }
+        }
+        mc.setScreen(screen);
+        if (leavingMusicUi && mc.screen == null) {
+            com.muoniumplayer.core.utils.IMBlockerCompat.restoreGameIMEState();
+        }
     }
 
     @Override

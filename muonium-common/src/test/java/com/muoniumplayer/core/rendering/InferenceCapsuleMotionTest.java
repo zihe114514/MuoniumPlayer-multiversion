@@ -27,6 +27,22 @@ class InferenceCapsuleMotionTest {
     }
 
     @Test
+    void downloadProgressFillsTheRoundedPathMonotonicallyAndClamps() {
+        int samples = InferenceCapsuleMotion.sampleCount(176.0, 26.0, 13.0);
+        assertEquals(0, InferenceCapsuleMotion.completedSamples(0.0, samples));
+        assertEquals(samples / 2, InferenceCapsuleMotion.completedSamples(.5, samples));
+        assertEquals(samples, InferenceCapsuleMotion.completedSamples(1.0, samples));
+        assertEquals(0, InferenceCapsuleMotion.completedSamples(Double.NaN, samples));
+        assertEquals(0, InferenceCapsuleMotion.completedSamples(-1.0, samples));
+        assertEquals(samples, InferenceCapsuleMotion.completedSamples(2.0, samples));
+        assertEquals(-1.0, InferenceCapsuleMotion.progress(Double.NaN));
+        assertEquals(-1.0, InferenceCapsuleMotion.progress(-1.0));
+        assertEquals(1.0, InferenceCapsuleMotion.progress(2.0));
+        assertTrue(InferenceCapsuleMotion.trailSampleCount(samples) <= samples);
+        assertEquals(.14, InferenceCapsuleMotion.trailLength(.5), 1e-12);
+        assertEquals(.26, InferenceCapsuleMotion.trailLength(-1.0), 1e-12);
+    }
+    @Test
     void invalidGeometryHasFiniteSafeResults() {
         assertEquals(0, InferenceCapsuleMotion.sampleCount(Double.NaN, 26.0, 13.0));
         InferenceCapsuleMotion.Point point = InferenceCapsuleMotion.pointAt(Double.NaN, -1.0,

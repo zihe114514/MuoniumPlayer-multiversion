@@ -1,8 +1,31 @@
 package com.muoniumplayer.core.rendering;
 
-/** 决策纯函数：通知优先级、过滤与表面所有权。 */
+/** Decides notification priority, filtering, surface ownership and compact completion treatment. */
 final class IslandNoticeRules {
     private IslandNoticeRules() {
+    }
+
+    static boolean completionUsesBubble(boolean downloadCompletion, boolean inferenceSuccess) {
+        return downloadCompletion || inferenceSuccess;
+    }
+
+    static boolean downloadCompletionUsesBubble(boolean completing, boolean enabled, boolean cardOwnsSurface,
+                                               boolean activeNotice, int noticePriority) {
+        return completing && enabled && !cardOwnsSurface && (!activeNotice || noticePriority < 2);
+    }
+
+    static boolean activityBorderActive(boolean inferenceActive, boolean downloadActive) {
+        return inferenceActive || downloadActive;
+    }
+
+    static boolean bubblePresentationReady(boolean active, boolean backendReady, float visibility,
+                                          boolean entranceComplete) {
+        return active && backendReady && visibility > .75f && entranceComplete;
+    }
+
+    static boolean keepCapsuleRow(boolean musicCapsule, boolean rowActive, boolean cardOwnsSurface,
+                                  boolean transitionActive) {
+        return musicCapsule && rowActive && !cardOwnsSurface && !transitionActive;
     }
 
     static boolean suppressAuxiliaryNotice(String type, String title, boolean enabled) {

@@ -33,12 +33,17 @@ final class CineSession {
         }
     }
 
+    record Motion(double x, double y, double z, double yaw, double pitch, double roll, double fov) {
+        static final Motion ZERO = new Motion(0d, 0d, 0d, 0d, 0d, 0d, 0d);
+    }
+
     record Frame(long generation, CinePose previous, CinePose current,
-                 Transition transition, float barFraction) {
-        static final Frame IDLE = new Frame(0L, null, null, null, 0f);
+                 Transition transition, float barFraction, Motion previousMotion, Motion currentMotion) {
+        static final Frame IDLE = new Frame(0L, null, null, null, 0f, Motion.ZERO, Motion.ZERO);
         boolean active() { return current != null; }
         CinePose sample(float partialTick) {
-            return current == null ? null : CinePose.interpolate(previous, current, partialTick);
+            return current == null ? null
+                    : interpolateMotion(previous, current, previousMotion, currentMotion, partialTick);
         }
     }
 
@@ -55,6 +60,52 @@ final class CineSession {
     private record Target(CineDirector.Vec3Holder position, CineDirector.Vec3Holder focus) { }
     private record Step(double value, double velocity) { }
     private record VectorStep(double x, double y, double z, double vx, double vy, double vz) { }
+
+    static CinePose interpolateMotion(CinePose previous, CinePose current,
+                                      Motion previousMotion, Motion currentMotion, float partialTick) {
+        if (previous == null || previous == current) return current;
+        float t = Float.isFinite(partialTick) ? Math.max(0f, Math.min(1f, partialTick)) : 1f;
+        double yawEnd = previous.yawDeg()
+                + CineShots.wrapDegrees(current.yawDeg() - previous.yawDeg());
+        return new CinePose(
+                hermite(previous.x(), current.x(), previousMotion.x(), currentMotion.x(), t),
+                hermite(previous.y(), current.y(), previousMotion.y(), currentMotion.y(), t),
+                hermite(previous.z(), current.z(), previousMotion.z(), currentMotion.z(), t),
+                CineShots.wrapDegrees((float) hermite(previous.yawDeg(), yawEnd,
+                        previousMotion.yaw(), currentMotion.yaw(), t)),
+                (float) hermite(previous.pitchDeg(), current.pitchDeg(), previousMotion.pitch(), currentMotion.pitch(), t),
+                (float) hermite(previous.rollDeg(), current.rollDeg(), previousMotion.roll(), currentMotion.roll(), t),
+                (float) hermite(previous.fovOffsetDeg(), current.fovOffsetDeg(), previousMotion.fov(), currentMotion.fov(), t));
+    }
+
+    private static double hermite(double start, double end, double startVelocity, double endVelocity, double t) {
+        if (t <= 0d) return start;
+        if (t >= 1d) return end;
+        double delta = end - start;
+        if (Math.abs(delta) < 1.0e-9d) return start;
+        double startTangent = finite(startVelocity) * TICK_SECONDS;
+        double endTangent = finite(endVelocity) * TICK_SECONDS;
+        double alpha = startTangent / delta;
+        double beta = endTangent / delta;
+        if (alpha < 0d) alpha = startTangent = 0d;
+        if (beta < 0d) beta = endTangent = 0d;
+        double magnitude = alpha * alpha + beta * beta;
+        if (magnitude > 9d) {
+            double scale = 3d / Math.sqrt(magnitude);
+            startTangent = scale * alpha * delta;
+            endTangent = scale * beta * delta;
+        }
+        double t2 = t * t;
+        double t3 = t2 * t;
+        return (2d * t3 - 3d * t2 + 1d) * start
+                + (t3 - 2d * t2 + t) * startTangent
+                + (-2d * t3 + 3d * t2) * end
+                + (t3 - t2) * endTangent;
+    }
+
+    private static double finite(double value) {
+        return Double.isFinite(value) ? value : 0d;
+    }
 
     private Frame frame = Frame.IDLE;
     private Object world;
@@ -216,7 +267,8 @@ final class CineSession {
         prepareShot(probe, scene, settings, playback.grid(), now);
         CinePose vanilla = playerEyePose(scene);
         frame = new Frame(generation, vanilla, vanilla, null,
-                settings.showCinematicBars() ? settings.cinematicBarPercent() / 100f : 0f);
+                settings.showCinematicBars() ? settings.cinematicBarPercent() / 100f : 0f,
+                Motion.ZERO, Motion.ZERO);
         publish(probe, scene, settings);
     }
 
@@ -368,8 +420,10 @@ final class CineSession {
         CinePose current = frame.current();
         CinePose previous = frame.previous();
         if (current == null || previous == null) return;
+        Motion previousMotion = frame.currentMotion();
         frame = new Frame(frame.generation(), shifted(previous, dx, dy, dz),
-                shifted(current, dx, dy, dz), frame.transition(), frame.barFraction());
+                shifted(current, dx, dy, dz), frame.transition(), frame.barFraction(),
+                previousMotion, previousMotion);
     }
 
     private static CinePose shifted(CinePose pose, double dx, double dy, double dz) {
@@ -457,7 +511,7 @@ final class CineSession {
         CinePose old = frame.current();
         if (old == null) {
             old = playerEyePose(scene);
-            frame = new Frame(generation, old, old, null, bars);
+            frame = new Frame(generation, old, old, null, bars, Motion.ZERO, Motion.ZERO);
         }
         VectorStep position = springVector(old.x(), old.y(), old.z(), desired.x(), desired.y(), desired.z(),
                 xVelocity, yVelocity, zVelocity, CAMERA_POSITION_ACCEL, CAMERA_POSITION_SPEED, dt);
@@ -491,7 +545,10 @@ final class CineSession {
         CinePose pose = new CinePose(path.x(), path.y(), path.z(), CineShots.wrapDegrees((float) yaw.value()),
                 (float) pitch.value(), (float) roll.value(), (float) fov.value());
         if (!pose.isFinite()) throw new IllegalStateException("运镜生成了非有限相机位姿");
-        frame = new Frame(generation, old, pose, frameTransition, bars);
+        Motion previousMotion = frame.currentMotion();
+        Motion currentMotion = new Motion(xVelocity, yVelocity, zVelocity,
+                yawVelocity, pitchVelocity, rollVelocity, fovVelocity);
+        frame = new Frame(generation, old, pose, frameTransition, bars, previousMotion, currentMotion);
     }
 
     private Target target(Scene scene) {

@@ -279,7 +279,7 @@ public final class BilibiliFavoriteService {
         }
     }
 
-    private static Music toMusic(JsonElement element) {
+    static Music toMusic(JsonElement element) {
         if (element == null || !element.isJsonObject()) return null;
         JsonObject media = element.getAsJsonObject();
         if (BilibiliMusicService.longValue(media, "type") != TYPE_VIDEO) return null;

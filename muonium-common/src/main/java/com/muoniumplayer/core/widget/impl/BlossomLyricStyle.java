@@ -11,6 +11,7 @@ import com.muoniumplayer.core.rendering.animation.spring.SpringAnimation;
 import com.muoniumplayer.core.rendering.animation.spring.SpringParams;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
+import com.muoniumplayer.core.settings.DesktopLyricSetting;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.render.skija.SkijaEffects;
 import com.muoniumplayer.render.skija.SkijaShapes;
@@ -462,7 +463,7 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
             double activeK = computeActiveK(line, posMs, prevEnd);
             double baseAlpha = Math.max(MIN_ALPHA, IDLE_ALPHA + (1.0 - IDLE_ALPHA) * activeK);
             drawScaledLine(line, lay, rx + px, drawY, posMs, activeK, baseAlpha, mainStep,
-                    baseRgb, highRgb, scaleSpring[i].getCurrentPosition());
+                    baseRgb, highRgb, scaleSpring[i].getCurrentPosition(), wrapW);
         }
     }
     private void ensureLineArrays(int n) {
@@ -610,7 +611,7 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
 
         // 中心锚点用整块的一半而不是 lay.mainCenter：单行模式是整块居中，行槽的上半空白不算。
         drawScaledLine(line, lay, rx + px, drawY, posMs, activeK, baseAlpha, mainStep,
-                baseRgb, highRgb, singleScaleSpring.getCurrentPosition(), blockH * .5);
+                baseRgb, highRgb, singleScaleSpring.getCurrentPosition(), blockH * .5, wrapW);
 
         // 之后切回多行必须从零重新播种，否则弹簧接着单行模式的旧位置往下走。
         lineSpringInit = false;
@@ -627,30 +628,67 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
 
     private void drawScaledLine(LyricLine line, LineLayout lay, double x, double y, long posMs,
                                 double activeK, double baseAlpha, double mainStep,
-                                int baseRgb, int highRgb, double scale) {
+                                int baseRgb, int highRgb, double scale, double wrapW) {
         drawScaledLine(line, lay, x, y, posMs, activeK, baseAlpha, mainStep, baseRgb, highRgb,
-                scale, lay.mainCenter);
+                scale, lay.mainCenter, wrapW);
     }
 
     private void drawScaledLine(LyricLine line, LineLayout lay, double x, double y, long posMs,
                                 double activeK, double baseAlpha, double mainStep,
-                                int baseRgb, int highRgb, double scale, double anchorOffsetY) {
+                                int baseRgb, int highRgb, double scale, double anchorOffsetY,
+                                double wrapW) {
         api.getGLStateManager().pushMatrix();
-        scaleAtPos(x, y + anchorOffsetY, scale);
+        // 缩放锚点跟着对齐走：贴左仍然锚在文字列左边缘，居中锚列中心、贴右锚右边缘。
+        // 否则居中/贴右时，当前行放大（currentLineScale）会把文字往右推，看着像在漂移。
+        scaleAtPos(x + alignAnchor(wrapW), y + anchorOffsetY, scale);
         try {
             if (lay.rowStart != null) {
                 drawWordRow(line, x, y, posMs, activeK, baseAlpha, lay.rowStart, mainStep,
-                        baseRgb, highRgb);
+                        baseRgb, highRgb, wrapW);
             } else if (lay.plainRows != null) {
                 int argb = (alpha255(baseAlpha) << 24) | (baseRgb & 0xFFFFFF);
                 for (int r = 0; r < lay.plainRows.length; r++) {
-                    font.drawString(lay.plainRows[r], x, y + r * mainStep, argb);
+                    String row = lay.plainRows[r];
+                    // 行级歌词（无逐字时序）同样按对齐落点，各物理行各算各的宽度。
+                    font.drawString(row, x + alignOffset(font.getStringWidthD(row), wrapW),
+                            y + r * mainStep, argb);
                 }
             }
         } finally {
             api.getGLStateManager().popMatrix();
         }
     }
+
+    /**
+     * 一段文字在文字列（{@code wrapW}）里要往右挪多少，由「桌面歌词对齐」设置决定。
+     *
+     * <p>夹到 {@code >= 0}：折行是按列宽算的，正常情况下行宽不会超；万一字体度量抖动让
+     * 某行宽了一两像素，贴左的负偏移会把字推到卡片外，宁可就地贴边。</p>
+     */
+    private static double alignOffset(double textWidth, double wrapW) {
+        double slack = Math.max(0.0, wrapW - textWidth);
+        switch (DesktopLyricSetting.get()) {
+            case CENTER:
+                return slack * .5;
+            case RIGHT:
+                return slack;
+            default:
+                return 0.0;
+        }
+    }
+
+    /** 缩放锚点在文字列里的横向偏移，与 {@link #alignOffset} 同一套对齐语言。 */
+    private static double alignAnchor(double wrapW) {
+        switch (DesktopLyricSetting.get()) {
+            case CENTER:
+                return wrapW * .5;
+            case RIGHT:
+                return wrapW;
+            default:
+                return 0.0;
+        }
+    }
+
 
     /**
      * 逐字歌词的一整行（可能折成多个物理行）。
@@ -664,7 +702,7 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
      */
     private void drawWordRow(LyricLine line, double x, double y, long posMs, double activeK,
                              double baseAlpha, int[] rowStart, double mainStep,
-                             int baseRgb, int highRgb) {
+                             int baseRgb, int highRgb, double wrapW) {
         List<LyricLine.Word> words = line.words;
         int n = words.size();
         float[] ww = wordWidths(line, font);
@@ -676,9 +714,15 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
         int rows = rowStart.length - 1;
         for (int r = 0; r < rows; r++) {
             int from = rowStart[r];
-            int to = rowStart[r + 1];
-            double acc = x;
-            for (int i = from; i < to && i < n; i++) {
+            int to = Math.min(rowStart[r + 1], n);
+            // 每个物理行各算各的宽度再决定起步点：折行之后每行长短不一，整块用一个偏移
+            // 只会让短行看起来还是贴左。
+            double rowWidth = 0.0;
+            for (int i = from; i < to; i++) {
+                rowWidth += ww[i];
+            }
+            double acc = x + alignOffset(rowWidth, wrapW);
+            for (int i = from; i < to; i++) {
                 wordX[i] = acc;
                 wordRow[i] = r;
                 acc += ww[i];

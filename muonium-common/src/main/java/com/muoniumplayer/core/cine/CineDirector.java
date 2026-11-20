@@ -118,7 +118,7 @@ public final class CineDirector {
     public static float fovOffsetDeg(float partialTick) {
         CineSession.Frame current = frame;
         if (!current.active()) return 0f;
-        CinePose pose = CinePose.interpolate(current.previous(), current.current(), partialTick);
+        CinePose pose = current.sample(partialTick);
         return pose.fovOffsetDeg();
     }
 

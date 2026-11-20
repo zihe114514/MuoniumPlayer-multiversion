@@ -45,6 +45,61 @@ class WorldLyricsMathTest {
         assertEquals(1.0, len, 1e-9);
     }
 
+    @Test
+    void facePlayerBillboardCancelsCameraRootAtEveryCameraAngle() {
+        double[][] cameraAngles = {{0, 0}, {90, 0}, {-90, 0}, {35, -20}, {-145, 55}};
+        for (double[] angles : cameraAngles) {
+            WorldLyricsState.CameraView camera = camera(angles[0], angles[1]);
+            double yaw = WorldLyricsState.facePlayerYaw(camera);
+            double pitch = WorldLyricsState.facePlayerPitch(camera);
+
+            double[] xAxis = transformBillboardAxis(-1, 0, 0, yaw, pitch, angles[0], angles[1]);
+            double[] yAxis = transformBillboardAxis(0, -1, 0, yaw, pitch, angles[0], angles[1]);
+            double[] zAxis = transformBillboardAxis(0, 0, 1, yaw, pitch, angles[0], angles[1]);
+            assertAxis(xAxis, 1, 0, 0, angles);
+            assertAxis(yAxis, 0, -1, 0, angles);
+            assertAxis(zAxis, 0, 0, -1, angles);
+        }
+    }
+
+    private static double[] transformBillboardAxis(double x, double y, double z,
+                                                    double yaw, double pitch,
+                                                    double cameraYaw, double cameraPitch) {
+        double[] v = rotateX(x, y, z, pitch);
+        v = rotateY(v[0], v[1], v[2], -yaw);
+        v = rotateY(v[0], v[1], v[2], cameraYaw + 180.0);
+        return rotateX(v[0], v[1], v[2], cameraPitch);
+    }
+
+    private static double[] rotateX(double x, double y, double z, double degrees) {
+        double r = Math.toRadians(degrees), c = Math.cos(r), s = Math.sin(r);
+        return new double[] {x, c * y - s * z, s * y + c * z};
+    }
+
+    private static double[] rotateY(double x, double y, double z, double degrees) {
+        double r = Math.toRadians(degrees), c = Math.cos(r), s = Math.sin(r);
+        return new double[] {c * x + s * z, y, -s * x + c * z};
+    }
+
+    private static void assertAxis(double[] actual, double x, double y, double z, double[] angles) {
+        assertEquals(x, actual[0], 1e-9, "camera=" + java.util.Arrays.toString(angles));
+        assertEquals(y, actual[1], 1e-9, "camera=" + java.util.Arrays.toString(angles));
+        assertEquals(z, actual[2], 1e-9, "camera=" + java.util.Arrays.toString(angles));
+    }
+
+    private static WorldLyricsState.CameraView camera(double yaw, double pitch) {
+        return new WorldLyricsState.CameraView() {
+            @Override public double eyeX() { return 0; }
+            @Override public double eyeY() { return 0; }
+            @Override public double eyeZ() { return 0; }
+            @Override public double lookX() { return 0; }
+            @Override public double lookY() { return 0; }
+            @Override public double lookZ() { return 1; }
+            @Override public double yawDeg() { return yaw; }
+            @Override public double pitchDeg() { return pitch; }
+        };
+    }
+
     // ==================== seededJitter（入场动画的确定性相位） ====================
 
     @Test

@@ -38,6 +38,7 @@ public abstract class GuiScreen extends Screen {
 
     /** 当前帧的 GuiGraphics，仅在 {@link #render} 期间非 null。 */
     protected GuiGraphics currentDrawContext;
+    private Screen returnScreen;
 
     protected GuiScreen() {
         super(Component.empty());
@@ -78,7 +79,17 @@ public abstract class GuiScreen extends Screen {
      * 跨版本共享的界面代码只应调这一个版本中立的名字。
      */
     public void closeScreen() {
-        mc.setScreen(null);
+        Screen target = returnScreen;
+        returnScreen = null;
+        mc.setScreen(target);
+    }
+
+    public Screen getReturnScreen() {
+        return returnScreen;
+    }
+
+    public void setReturnScreen(Screen returnScreen) {
+        this.returnScreen = returnScreen;
     }
 
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {

@@ -189,7 +189,7 @@ class CineStaticTest {
         assertTrue(director.contains("CineBars.render()"));
         String fovSample = director.substring(director.indexOf("public static float fovOffsetDeg("),
                 director.indexOf("public static TransitionFrame currentTransition("));
-        assertTrue(fovSample.contains("CinePose.interpolate(current.previous(), current.current(), partialTick)"));
+        assertTrue(fovSample.contains("current.sample(partialTick)"));
         assertTrue(director.contains("frame.sample(partialTick)"));
         assertFalse(shared("core/cine/CineSession.java").contains("lastMeteredBeatNanos"));
         assertFalse(shared("core/cine/CineSession.java").contains("fovPunch"));

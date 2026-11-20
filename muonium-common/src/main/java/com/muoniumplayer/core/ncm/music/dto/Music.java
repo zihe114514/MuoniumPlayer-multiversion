@@ -94,6 +94,8 @@ public class Music {
      * {@code transient} 把它排除在 Lombok 相等性和序列化播放列表数据之外。
      */
     private transient volatile long decodedDurationMillis;
+    /** Bilibili 分P播放时由当前 /view 响应确认的页级时长，不写入歌单/播放历史。 */
+    private transient volatile long resolvedPlaybackDurationMillis;
 
     @SerializedName("mark")
     private final long featureFlag;
@@ -834,7 +836,17 @@ public class Music {
 
     /** 源元数据时长，回退到解码时测得的长度。 */
     public long getDuration() {
+        if (resolvedPlaybackDurationMillis > 0L) return resolvedPlaybackDurationMillis;
         return duration > 0L ? duration : decodedDurationMillis;
+    }
+
+    /**
+     * 接受一次已成功解析的 Bilibili 分P元数据。只保存正时长，保留元数据缺失时原有解码器
+     * 回填语义；sourceId 校验防止过期/错页解析结果污染当前曲目。
+     */
+    public void applyBilibiliPlaybackDuration(String resolvedSourceId, long millis) {
+        if (!isBilibili() || millis <= 0L || !getSourceId().equals(resolvedSourceId)) return;
+        resolvedPlaybackDurationMillis = millis;
     }
 
     /** 为一个未携带时长元数据的源记录解码器报告的长度。 */
@@ -1608,17 +1620,23 @@ public class Music {
 
     private Tuple<String, String> resolveBilibiliPlayUrl() {
         final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
-        return resolveWithTimeout(new Callable<Tuple<String, String>>() {
+        final String requestedSourceId = getSourceId();
+        BilibiliMusicService.ResolveResult resolved = resolveValueWithTimeout(new Callable<BilibiliMusicService.ResolveResult>() {
             @Override
-            public Tuple<String, String> call() {
-                BilibiliMusicService.ResolveResult result =
-                        BilibiliMusicService.getSongUrl(getSourceId(), requestedQuality);
-                if (result == null) return null;
-                playbackQuality = detectSourcePlaybackQuality(result.format, requestedQuality);
-                considerHighestQuality(result.format, 0L);
-                return new Tuple<>(result.url, result.format);
+            public BilibiliMusicService.ResolveResult call() {
+                return BilibiliMusicService.getSongUrl(requestedSourceId, requestedQuality);
             }
         }, "Bilibili", GD_PLAY_URL_RESOLVE_TIMEOUT_SECONDS);
+        if (resolved == null) return null;
+
+        Tuple<String, String> normalized = normalizePlayUrl(new Tuple<>(resolved.url, resolved.format));
+        if (normalized == null) return null;
+        if (resolved.track != null) {
+            applyBilibiliPlaybackDuration(requestedSourceId, resolved.track.durationMillis);
+        }
+        playbackQuality = detectSourcePlaybackQuality(normalized.getB(), requestedQuality);
+        considerHighestQuality(normalized.getB(), 0L);
+        return normalized;
     }
 
     /**
@@ -1786,6 +1804,25 @@ public class Music {
             return null;
         }
     }
+    private <T> T resolveValueWithTimeout(Callable<T> resolver, String resolverName, long timeoutSeconds) {
+        Future<T> future = URL_RESOLVER.submit(resolver);
+        try {
+            return future.get(Math.max(1L, timeoutSeconds), TimeUnit.SECONDS);
+        } catch (TimeoutException timeout) {
+            future.cancel(true);
+            System.err.println("[Music] " + resolverName + " URL resolver timed out for " + getStableKey());
+        } catch (InterruptedException interrupted) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException failure) {
+            future.cancel(true);
+            Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+            System.err.println("[Music] " + resolverName + " URL resolver failed for " + getStableKey()
+                    + ": " + cause.getMessage());
+        }
+        return null;
+    }
+
     private Tuple<String, String> resolveWithTimeout(Callable<Tuple<String, String>> resolver, String resolverName) {
         return resolveWithTimeout(resolver, resolverName, PLAY_URL_RESOLVE_TIMEOUT_SECONDS);
     }

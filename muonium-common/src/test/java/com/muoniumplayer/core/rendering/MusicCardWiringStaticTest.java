@@ -70,12 +70,36 @@ class MusicCardWiringStaticTest {
     }
 
     @Test
-    void modelInferenceKeepsTheMusicRowLoadingAndHandsCompletionToTheNoticeCard() throws Exception {
+    void modelInferenceUsesAllStyleActivityBorderAndCompletionBubble() throws Exception {
         String island = read("core/rendering/DownloadDynamicIsland.java");
         String rules = read("core/rendering/IslandNoticeRules.java");
-        assertTrue(island.contains("activeNoticeType == IslandNoticeType.MODEL_INFERENCE"));
-        assertTrue(island.contains("boolean inferenceCapsule = musicCapsule && noticeMode"));
-        assertTrue(island.contains("drawInferenceCapsuleMarquee("));
+        assertTrue(island.contains("boolean inferenceBorderActive = !cardOwnsFrame && inferenceStatusActive"));
+        assertTrue(island.contains("boolean downloadBorderActive = !cardOwnsFrame && downloadInProgress"));
+        assertTrue(island.contains("boolean activityBorderActive = IslandNoticeRules.activityBorderActive("));
+        int publisher = island.indexOf("private static void publishNotice(IslandNoticeType type,String title,String value,");
+        int inferenceGate = island.indexOf("boolean modelInferenceStatusEnabled", publisher);
+        int publishLock = island.indexOf("long now = System.currentTimeMillis();", inferenceGate);
+        assertTrue(publisher >= 0 && inferenceGate > publisher && publishLock > inferenceGate);
+        assertFalse(island.substring(inferenceGate, publishLock).contains("getStyle()"),
+                "inference status is independent of the selected island style");
+        int draw = island.indexOf("private void drawIsland(");
+        int drawEnd = island.indexOf("private double tickIslandExpansion(", draw);
+        String drawBody = island.substring(draw, drawEnd);
+        int bounceStart = drawBody.indexOf("if (bounce && mixFrame == null)");
+        int mixStart = drawBody.indexOf("if (mixFrame != null)", bounceStart);
+        int cardTransitionStart = drawBody.indexOf("if (cardTransitionActive && musicCapsule)", mixStart);
+        assertTrue(bounceStart >= 0 && mixStart > bounceStart && cardTransitionStart > mixStart);
+        String bounceBranch = drawBody.substring(bounceStart, mixStart);
+        String mixBranch = drawBody.substring(mixStart, cardTransitionStart);
+        String standardBranch = drawBody.substring(cardTransitionStart);
+        assertTrue(bounceBranch.contains("if (activityBorderActive) drawInferenceCapsuleMarquee("));
+        assertTrue(bounceBranch.contains("if (completionBubble) drawCapsuleCompletionBubble("));
+        assertTrue(mixBranch.contains("if (activityBorderActive) drawInferenceCapsuleMarquee("));
+        assertTrue(mixBranch.contains("if (completionBubble) drawCapsuleCompletionBubble("));
+        assertTrue(standardBranch.contains("if (activityBorderActive) drawInferenceCapsuleMarquee("));
+        assertTrue(standardBranch.contains("if (completionBubble) drawCapsuleCompletionBubble("));
+        assertTrue(island.contains("activeNotice && sourceNoticeType == IslandNoticeType.MODEL_INFERENCE"));
+        assertTrue(island.contains("IslandNoticeRules.bubblePresentationReady(completionBubble"));
         assertTrue(island.contains("MODEL_INFERENCE_TIMEOUT_MILLIS = 240_000L"));
         assertTrue(island.contains("\"下一首就绪 · \""));
         assertTrue(rules.contains("modelInferenceEnabled"));
@@ -85,7 +109,7 @@ class MusicCardWiringStaticTest {
     @Test
     void selectedMusicCapsuleKeepsItsSurfaceWhenNoSongRowExists() throws Exception {
         String island = read("core/rendering/DownloadDynamicIsland.java");
-        int musicSurface = island.indexOf("if (musicCapsule && !musicRow)", island.indexOf("private void drawIsland("));
+        int musicSurface = island.indexOf("if (musicCapsule && !capsuleRow)", island.indexOf("private void drawIsland("));
         int genericPlate = island.indexOf("boolean frosted = !liquidGlass && !musicCapsule", musicSurface);
         assertTrue(musicSurface > 0 && genericPlate > musicSurface);
         assertTrue(island.substring(musicSurface, genericPlate).contains("drawMusicCapsuleSurface("));

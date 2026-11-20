@@ -29,6 +29,7 @@ import com.muoniumplayer.core.screens.ncm.LyricDuetGroups;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
 import com.muoniumplayer.core.screens.ncm.LyricsPanelGeometry;
 import com.muoniumplayer.core.settings.ClientSettings;
+import com.muoniumplayer.core.settings.DesktopLyricSetting;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.utils.Tuple;
 import com.muoniumplayer.core.utils.WidgetWrapper;
@@ -104,6 +105,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         // 相同的响应式视口。在此保留 NumberValues 以保持包装器兼容性。
         this.addValues(alignMode, lyricHeight, lyricColor, currentLyricColor, shadow, singleLine, graceScroll, showRoman, dynIsland, preferAmllLyrics, preferQqQrcLyrics);
 
+        // 对齐值由 HudSettingsModel 维护；模块值仅保留为共享 API 镜像。
+        alignMode.setValue(DesktopLyricSetting.modeName());
+
         Tuple<ExtensionWidget, WidgetWrapper.WidgetPosSizeInterface> wrapped = WidgetWrapper.createWrapper(this, this::onRender);
         this.widget = wrapped.getA();
         this.wpsInterface = wrapped.getB();
@@ -116,6 +120,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         currentLyricColor.setValue(new Color(HudConfig.currentLyricColorRgb, true));
         width.setValue((double) HudConfig.lyricWidth);
         height.setValue((double) HudConfig.lyricHeight);
+        // 对齐配置独立于 HudConfig；更新模块值镜像，避免旧消费者读到过期值。
+        alignMode.setValue(DesktopLyricSetting.modeName());
     }
 
     /**
@@ -725,7 +731,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
 
     /** 本帧应当使用的对齐方式。 */
     private String activeAlignMode() {
-        return duetAlignOverride != null ? duetAlignOverride : this.alignMode.getValue();
+        // 对唱行仍然按段左右分列；其余行读共享的桌面歌词对齐设置。
+        return duetAlignOverride != null ? duetAlignOverride : DesktopLyricSetting.modeName();
     }
 
     /**

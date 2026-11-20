@@ -2894,9 +2894,10 @@ public class GuiHudEditorPro extends GuiScreen {
 
     /** 切到 OneConfig 的真实 UI，并把选择记到配置里。 */
     private void switchToOneConfig() {
-        HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
-        HudConfig.save();
-        OneConfigHudBridge.open();
+        if (OneConfigHudBridge.open()) {
+            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
+            HudConfig.save();
+        }
     }
 
     // ==================== 杂项 ====================

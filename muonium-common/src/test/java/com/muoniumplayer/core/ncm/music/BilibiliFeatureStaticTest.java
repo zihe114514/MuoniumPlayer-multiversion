@@ -1,6 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.muoniumplayer.testsupport.ProjectPaths;
 import org.junit.jupiter.api.DisplayName;
@@ -19,6 +20,7 @@ import java.util.TreeMap;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -148,6 +150,54 @@ class BilibiliFeatureStaticTest {
         assertEquals("y=c", BilibiliSessionStore.joinCookies(hostile),
                 "含 ; 的值会被丢掉：那是在往请求头里注入字段");
         assertEquals("", BilibiliSessionStore.joinCookies(null));
+    }
+
+    @Test
+    @DisplayName("多P收藏播放按/view所选页校准时长，缺页/缺时长时拒绝总时长兜底")
+    void favoriteMultiPageUsesVerifiedPageDurationForPlayback() {
+        String bvid = "BV11msw6LEt8";
+        JsonObject favoriteMedia = JsonParser.parseString("""
+                {"type":2,"attr":0,"bvid":"BV11msw6LEt8","page":2,"duration":609,
+                 "title":"多P视频","upper":{"name":"UP主"},"cover":"https://i0.hdslb.com/cover.jpg","id":123}
+                """).getAsJsonObject();
+        com.muoniumplayer.core.ncm.music.dto.Music favorite = BilibiliFavoriteService.toMusic(favoriteMedia);
+        assertEquals(609_000L, favorite.getDuration(), "列表阶段保留收藏接口值，不为每行追加请求");
+        assertEquals(bvid + "_p2", favorite.getSourceId());
+
+        JsonObject view = JsonParser.parseString("""
+                {"bvid":"BV11msw6LEt8","aid":456,"title":"多P视频","pic":"https://i0.hdslb.com/cover.jpg",
+                 "owner":{"name":"UP主"},"duration":609,"cid":1001,
+                 "pages":[{"page":1,"duration":284,"cid":1001,"part":"第一P"},
+                          {"page":2,"duration":325,"cid":1002,"part":"第二P"}]}
+                """).getAsJsonObject();
+        BilibiliMusicService.Track playback = BilibiliMusicService.trackFromViewData(view, bvid, 2);
+        assertNotEquals(null, playback);
+        assertEquals(2, playback.page);
+        assertEquals(325_000L, playback.durationMillis);
+        assertEquals("1002", playback.cid);
+
+        favorite.applyBilibiliPlaybackDuration("BV11msw6LEt8_p1", 284_000L);
+        assertEquals(609_000L, favorite.getDuration(), "错页元数据不得校准收藏条目");
+        favorite.applyBilibiliPlaybackDuration(favorite.getSourceId(), playback.durationMillis);
+        assertEquals(325_000L, favorite.getDuration(), "有效播放解析后按P2时长做试听检测");
+        assertFalse(CrossSourceSwitcher.isIncompleteStream(favorite.getDuration(), 320_000L),
+                "P2完整解码不应被609秒整稿时长误判");
+        assertTrue(CrossSourceSwitcher.isIncompleteStream(favorite.getDuration(), 60_000L),
+                "真实60秒试听仍必须被原有完整性闸拒绝");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> BilibiliMusicService.trackFromViewData(view, bvid, 3),
+                "多P响应缺请求页时不得回退根级总时长/CID");
+        JsonObject missingPageDuration = JsonParser.parseString("""
+                {"bvid":"BV11msw6LEt8","aid":456,"duration":609,"cid":1001,
+                 "pages":[{"page":2,"duration":0,"cid":1002}]}
+                """).getAsJsonObject();
+        BilibiliMusicService.Track missingDuration = BilibiliMusicService.trackFromViewData(
+                missingPageDuration, bvid, 2);
+        assertNotEquals(null, missingDuration, "CID有效时不因缺时长直接禁止播放");
+        assertEquals(0L, missingDuration.durationMillis,
+                "分P时长缺失时标记为未知，不借用整稿总时长");
+        assertTrue(BilibiliMusicService.trackFromViewData(view, bvid, 2).durationMillis != 609_000L);
     }
 
     // ════════════════════════════ 合集 / 分P / 收藏夹 id ════════════════════════════

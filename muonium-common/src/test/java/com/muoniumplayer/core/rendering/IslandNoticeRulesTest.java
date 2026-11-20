@@ -5,6 +5,27 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class IslandNoticeRulesTest {
     @Test
+    void downloadAndInferenceSuccessUseBubblesButFailureAndCoveredSurfacesDoNot() {
+        assertTrue(IslandNoticeRules.completionUsesBubble(true, false));
+        assertTrue(IslandNoticeRules.completionUsesBubble(false, true));
+        assertFalse(IslandNoticeRules.completionUsesBubble(false, false));
+        assertTrue(IslandNoticeRules.downloadCompletionUsesBubble(true, true, false, false, 0));
+        assertTrue(IslandNoticeRules.downloadCompletionUsesBubble(true, true, false, true, 1));
+        assertFalse(IslandNoticeRules.downloadCompletionUsesBubble(true, true, false, true, 2));
+        assertFalse(IslandNoticeRules.downloadCompletionUsesBubble(true, false, false, false, 0));
+        assertFalse(IslandNoticeRules.downloadCompletionUsesBubble(true, true, true, false, 0));
+        assertTrue(IslandNoticeRules.activityBorderActive(true, false));
+        assertTrue(IslandNoticeRules.activityBorderActive(false, true));
+        assertFalse(IslandNoticeRules.activityBorderActive(false, false));
+        assertTrue(IslandNoticeRules.bubblePresentationReady(true, true, 1f, true));
+        assertFalse(IslandNoticeRules.bubblePresentationReady(true, false, 1f, true));
+        assertFalse(IslandNoticeRules.bubblePresentationReady(true, true, .5f, true));
+        assertFalse(IslandNoticeRules.bubblePresentationReady(true, true, 1f, false));
+        assertTrue(IslandNoticeRules.keepCapsuleRow(true, true, false, false));
+        assertFalse(IslandNoticeRules.keepCapsuleRow(true, true, true, false));
+        assertFalse(IslandNoticeRules.keepCapsuleRow(false, true, false, false));
+    }
+    @Test
     void auxiliaryNoticesDefaultQuietlyWithoutHidingActionableFeedback() {
         assertTrue(IslandNoticeRules.suppressAuxiliaryNotice("LISTENING_DURATION_SUCCESS", "时长上报", false));
         assertTrue(IslandNoticeRules.suppressAuxiliaryNotice("MODEL_INFERENCE", "模型推理中", false));

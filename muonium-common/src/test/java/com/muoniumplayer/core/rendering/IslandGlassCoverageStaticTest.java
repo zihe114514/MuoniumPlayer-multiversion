@@ -112,7 +112,7 @@ class IslandGlassCoverageStaticTest {
     void musicCapsuleNoticesKeepTheirSelectedSurface() throws Exception {
         String src = read(island());
         int draw = src.indexOf("private void drawIsland(");
-        int musicSurface = src.indexOf("if (musicCapsule && !musicRow)", draw);
+        int musicSurface = src.indexOf("if (musicCapsule && !capsuleRow)", draw);
         int genericPlate = src.indexOf("boolean frosted = !liquidGlass && !musicCapsule", musicSurface);
         int musicSurfaceMethod = src.indexOf("private void drawMusicCapsuleSurface(");
         assertTrue(musicSurface > draw && genericPlate > musicSurface);

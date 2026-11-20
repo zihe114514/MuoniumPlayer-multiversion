@@ -246,10 +246,12 @@ class MusicCardMotionTest {
         assertFalse(MusicCardMotion.showCapsuleRow(false, false, true, false, false, true));
         assertFalse(MusicCardMotion.showCapsuleRow(false, false, false, true, false, true));
         assertFalse(MusicCardMotion.showCapsuleRow(false, false, false, false, true, true));
+        assertFalse(MusicCardMotion.showCapsuleRow(false, false, false, true, false, false, true),
+                "downloads yield the row unless the border progress surface is explicitly active");
+        assertTrue(MusicCardMotion.showCapsuleRow(false, false, true, true, false, false, true),
+                "downloads keep the row while border progress is active");
         assertTrue(MusicCardMotion.showCapsuleRow(false, true, true, false, false, false, true),
                 "model inference keeps the music row while its border carries progress");
-        assertFalse(MusicCardMotion.showCapsuleRow(false, true, true, true, false, false, true),
-                "downloads still own the capsule surface");
     }
 
     @Test

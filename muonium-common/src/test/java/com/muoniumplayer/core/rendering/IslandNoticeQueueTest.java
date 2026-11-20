@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.rendering;
 
+import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.settings.HudConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -259,18 +260,32 @@ class IslandNoticeQueueTest {
     }
 
     @Test
-    void auxiliaryPublishersRequireOptInButTheirFailuresStayVisible() throws Exception {
+    void modelInferencePreferenceHidesOnlyStatusWhileFailuresRemainVisible() throws Exception {
         HudConfig.islandAuxiliaryNotices = false;
-        DownloadDynamicIsland.beginModelInference("quiet", "model");
-        DownloadDynamicIsland.finishModelInference("quiet", "model", 10L);
-        assertEquals("NONE", ((Enum<?>)get("noticeType")).name());
-        assertTrue(queue().isEmpty());
+        AutomixSettings.isModelInferenceStatusEnabled();
+        Field inferenceStatus = AutomixSettings.class.getDeclaredField("modelInferenceStatus");
+        inferenceStatus.setAccessible(true);
+        boolean savedInferenceStatus = inferenceStatus.getBoolean(null);
+        try {
+            inferenceStatus.setBoolean(null, false);
+            DownloadDynamicIsland.beginModelInference("quiet", "model");
+            DownloadDynamicIsland.finishModelInference("quiet", "model", 10L);
+            assertEquals("NONE", ((Enum<?>)get("noticeType")).name());
+            assertTrue(queue().isEmpty());
 
-        publish("MODEL_INFERENCE_FAILURE", "failure");
-        assertEquals("MODEL_INFERENCE_FAILURE", ((Enum<?>)get("noticeType")).name());
-        HudConfig.islandAuxiliaryNotices = true;
-        DownloadDynamicIsland.beginModelInference("opt-in", "model");
-        assertEquals(List.of("MODEL_INFERENCE:opt-in"), keys());
+            DownloadDynamicIsland.failModelInference("quiet", "model");
+            assertEquals("MODEL_INFERENCE_FAILURE", ((Enum<?>)get("noticeType")).name());
+
+            queue().clear();
+            invoke("publishActiveNoticeLocked", new Class<?>[]{typeClass(), String.class, String.class,
+                    boolean.class, boolean.class, long.class}, type("NONE"), "", "", false, false, now());
+            inferenceStatus.setBoolean(null, true);
+            DownloadDynamicIsland.beginModelInference("visible", "model");
+            assertEquals("MODEL_INFERENCE", ((Enum<?>)get("noticeType")).name());
+            assertTrue(queue().isEmpty());
+        } finally {
+            inferenceStatus.setBoolean(null, savedInferenceStatus);
+        }
     }
 
     @Test

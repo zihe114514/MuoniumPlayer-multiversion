@@ -17,6 +17,7 @@ import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.HudSettingsIcons;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.settings.DesktopLyricSetting;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.settings.HudSetting;
 import com.muoniumplayer.core.screens.GuiAnnouncements;
@@ -1316,7 +1317,8 @@ public final class HudSettingsModel {
                                 // 样式选择是这一页最高频的操作，前置（「常用」组里还有一份同一对象的引用）。
                                 quickOsdStyle,
                                 slider(HudSetting.OSD_WIDTH, "桌面歌词占多宽，太长自动换行。"),
-                                slider(HudSetting.OSD_HEIGHT, "桌面歌词的显示高度，放不下时优先保原文。")),
+                                slider(HudSetting.OSD_HEIGHT, "桌面歌词的显示高度，放不下时优先保原文。"),
+                                osdAlignChoice()),
                         new Group("卡片样式", HudSettingsIcons.PALETTE,
                                 quickOsdStyle,
                                 slider(HudSetting.BLOSSOM_LINES, "卡片里同时显示几行歌词。",
@@ -2268,6 +2270,54 @@ public final class HudSettingsModel {
         if (HudConfig.osdLyricStyle == style) return;
         HudConfig.osdLyricStyle = style;
         saveNow();
+    }
+
+    /**
+     * 桌面歌词对齐：左靠 / 居中 / 右靠。
+     *
+     * <p>只影响「经典」样式里每行文字的落点；Blossom 卡片是按卡片排版的不走这条路径，
+     * 对唱行也永远按左右分列（那是语义，不是对齐偏好）。权威值在共享层的
+     * {@link DesktopLyricSetting}——放 HudConfig 里要改七份（见 {@code ConfigPaths} 的注释）。</p>
+     */
+    private static Entry osdAlignChoice() {
+        return choice("桌面歌词对齐",
+                "每行歌词在歌词框里靠哪边。经典与 Blossom 卡片都适用；对唱行仍按左右分列。",
+                new Supplier<String>() {
+                    public String get() {
+                        return DesktopLyricSetting.label();
+                    }
+                }, new Runnable() {
+                    public void run() {
+                        cycleOsdAlign();
+                    }
+                }, DesktopLyricSetting.labels(), HudSettingsModel::setOsdAlign,
+                new String[] {"每行贴内容区左边缘。",
+                        "每行居中（默认，与加这个设置之前一致）。",
+                        "每行贴内容区右边缘。"});
+    }
+
+    /** 点一下换下一档：左靠 → 居中 → 右靠 → 左靠。 */
+    private static void cycleOsdAlign() {
+        String[] labels = DesktopLyricSetting.labels();
+        String current = DesktopLyricSetting.label();
+        int index = 0;
+        for (int i = 0; i < labels.length; i++) {
+            if (labels[i].equals(current)) {
+                index = i;
+                break;
+            }
+        }
+        setOsdAlign(labels[(index + 1) % labels.length]);
+    }
+
+    /** 写入共享配置（{@link DesktopLyricSetting#setLabel} 内部即落盘），再刷新旧编辑器面板的镜像值。 */
+    private static void setOsdAlign(String label) {
+        DesktopLyricSetting.setLabel(label);
+        try {
+            MuoniumPlayerExtension.getInstance().musicLyrics.loadHudEditorSettings();
+        } catch (Throwable ignored) {
+            // 歌词组件还没就绪无所谓：配置已经是新值，渲染下一帧就会按它对齐。
+        }
     }
 
     /** 背景采集倍率的三档显示名，顺序就是 {@code 1 / 2 / 4}。 */

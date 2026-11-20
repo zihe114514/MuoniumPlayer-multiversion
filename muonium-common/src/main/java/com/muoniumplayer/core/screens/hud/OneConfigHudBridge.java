@@ -194,8 +194,7 @@ public final class OneConfigHudBridge {
             ensureRegistered();
             ClassLoader loader = OneConfigHudBridge.class.getClassLoader();
             Class<?> routeType = Class.forName(ROUTE_CLASS, true, loader);
-            Constructor<?> constructor = routeType.getConstructor(String.class, String.class);
-            Object route = constructor.newInstance(TREE_ID, null);
+            Object route = createModConfigRoute(routeType, TREE_ID);
             Class<?> ui = Class.forName(UI_CLASS, true, loader);
             Method open = ui.getMethod("open", Object.class);
             open.invoke(null, route);
@@ -207,6 +206,17 @@ public final class OneConfigHudBridge {
             System.out.println("[MuoniumPlayer/OneConfigBridge] open(): 失败 —— " + t);
             t.printStackTrace(System.out);
             return false;
+        }
+    }
+
+    /** OneConfig 1.7.1 adds a submenu argument; MuoniumConfig 1.8.0 has two. */
+    static Object createModConfigRoute(Class<?> routeType, String treeId) throws Exception {
+        try {
+            Constructor<?> constructor = routeType.getConstructor(String.class, String.class, String.class);
+            return constructor.newInstance(treeId, null, null);
+        } catch (NoSuchMethodException absent) {
+            Constructor<?> constructor = routeType.getConstructor(String.class, String.class);
+            return constructor.newInstance(treeId, null);
         }
     }
 

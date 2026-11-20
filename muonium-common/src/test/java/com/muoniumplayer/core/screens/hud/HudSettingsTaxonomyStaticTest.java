@@ -43,9 +43,12 @@ class HudSettingsTaxonomyStaticTest {
      *
      * <p>2026-11-17 「播放」页新增「智能动态均衡」toggle（automix 学习式 EQ，
      * 七树同步）—— 播放页 29 → 30，26.3 总数 200 → 201，其余六树 196 → 197。</p>
+     *
+     * <p>2026-11-20 七树「面板与卡片」页新增「桌面歌词对齐」choice（值存共享层 DesktopLyricSetting，
+     * 不经 HudConfig）—— 本页 +1，26.3 总数 201 → 202，其余六树总数 197 → 198。</p>
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(12, 22, 9, 31, 4, 33, 30, 22, 31, 4, 3);
+            Arrays.asList(12, 22, 10, 31, 4, 33, 30, 22, 31, 4, 3);
 
     /**
      * 「常用」页只在 26.3 起存在。
@@ -67,13 +70,14 @@ class HudSettingsTaxonomyStaticTest {
     }
 
     private static List<Integer> expectedCounts() {
-        return hasFavoritesPage()
-                ? Arrays.asList(12, 22, 9, 31, 4, 33, 30, 22, 31, 4, 3)
-                : Arrays.asList(28, 31, 9, 31, 30, 22, 33, 6, 4, 3);
+        if (hasFavoritesPage()) {
+            return COUNTS;
+        }
+        return Arrays.asList(28, 31, 10, 31, 30, 22, 33, 6, 4, 3);
     }
 
     private static int expectedTotal() {
-        return hasFavoritesPage() ? TOTAL : 197;
+        return hasFavoritesPage() ? TOTAL : 198;
     }
 
     private static String versionName() {
@@ -149,16 +153,15 @@ class HudSettingsTaxonomyStaticTest {
      *  同日陀螺组再添「过渡转速」滑条（不按节拍时的基础恒速，值存 music_spin.json）——
      *  播放页 +1；同日组内再添「头乱晃」toggle + 「头部动作」choice（乱晃/低头/360°转头；头部
      *  动作仅在两个开关都打开时可见；值存同一 music_spin.json）—— 播放页 +2。
-     * 2026-11-14「卡点运镜」移除节拍变焦入口（运行时从不改 FOV）——娱乐页 22 → 21，总数 197 → 196；其余六树娱乐页 22 → 21，总数 193 → 192。
-     * 2026-11-15 灵动岛增加独立「通知」组与「辅助通知」开关——灵动岛页 +1，26.3 总数 196 → 197，其余六树 192 → 193。
-     * 同日「卡点运镜」新增「环境镜头比例」choice，并扩展人物/自然/昼夜/维度/洞穴镜头——娱乐页 21 → 22，总数 197 → 198；其余六树娱乐页 21 → 22，总数 193 → 194。
+     * 2026-11-20 七树「面板与卡片」页新增「桌面歌词对齐」choice（值存共享层 DesktopLyricSetting，
+     * 不经 HudConfig）—— 本页 9 → 10，26.3 总数 201 → 202，其余六树 190 → 191。
      */
     // 独立模板预设栏目只增加四条 ACTION，不回搬各树原有分类或设置条目。
     // 2026-11-12 灵动岛五款音乐卡：26.3 +1 触发方式；其余六树补三项卡片设置并 +1 触发方式。
     // 2026-11-16 七树灵动岛追加「音乐胶囊最大长度」滑块：每页 30 → 31，26.3 总数 200，其余六树 196。
     // 2026-11-17 七树「播放」页追加「智能动态均衡」toggle（automix 学习式 EQ）：
     //            播放页 29 → 30，26.3 总数 200 → 201，其余六树 196 → 197。
-    private static final int TOTAL = 201;
+    private static final int TOTAL = 202;
 
     @Test
     @DisplayName("分类顺序、每页条目数和独立模板栏目不许悄悄变")

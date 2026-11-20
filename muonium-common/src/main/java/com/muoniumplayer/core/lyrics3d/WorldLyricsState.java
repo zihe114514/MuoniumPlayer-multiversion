@@ -387,9 +387,9 @@ public final class WorldLyricsState {
             double len = Math.sqrt(rx * rx + ry * ry + rz * rz);
             double yaw;
             double pitch;
-            if (params.facePlayer() && len > 1e-4) {
-                yaw = Math.toDegrees(Math.atan2(-rx, rz));
-                pitch = Math.toDegrees(Math.atan2(-ry, Math.sqrt(rx * rx + rz * rz)));
+            if (params.facePlayer()) {
+                yaw = facePlayerYaw(camera);
+                pitch = facePlayerPitch(camera);
             } else {
                 yaw = f.spawnYawDeg;
                 pitch = f.spawnPitchDeg;
@@ -1366,6 +1366,15 @@ public final class WorldLyricsState {
         };
     }
 
+    /** 公告牌姿态抵消相机根旋转，使文字面始终朝向屏幕观察者。 */
+    static double facePlayerYaw(CameraView camera) {
+        return camera.yawDeg();
+    }
+
+    static double facePlayerPitch(CameraView camera) {
+        return camera.pitchDeg();
+    }
+
     // ==================== 一句歌词（spawn / charTimes / wrap） ====================
 
     /**
@@ -1865,10 +1874,11 @@ public final class WorldLyricsState {
 
         double yaw;
         double pitch;
-        if (params.facePlayer() && len > 1e-4) {
-            // 朝向镜头：从「镜头 → 歌词」方向反算
-            yaw = Math.toDegrees(Math.atan2(-rx, rz));
-            pitch = Math.toDegrees(Math.atan2(-ry, Math.sqrt(rx * rx + rz * rz)));
+        if (params.facePlayer()) {
+            // 相机根姿态已作用于整个公告牌；叠加当前相机 yaw/pitch 可抵消这次旋转，
+            // 让锚点位于东西/斜向时也保持与屏幕平行。
+            yaw = facePlayerYaw(camera);
+            pitch = facePlayerPitch(camera);
         } else {
             yaw = f.spawnYawDeg;
             pitch = f.spawnPitchDeg;

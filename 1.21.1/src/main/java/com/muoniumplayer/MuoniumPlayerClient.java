@@ -341,7 +341,21 @@ public final class MuoniumPlayerClient {
         if (keyOpenMusic == null) {
             return;
         }
-        if (mc.player != null && mc.screen == null) {
+        if (mc.screen instanceof net.minecraft.client.gui.screens.TitleScreen) {
+            if (keyOpenMusic.consumeClick()) {
+                MuoniumPlayerExtension.getInstance().musicPlayerModule.setEnabled(true);
+            }
+            // 主菜单只开放播放器入口；游戏内操作键不在标题界面生效。
+            keyEditHud.consumeClick();
+            keyPreviousTrack.consumeClick();
+            keyNextTrack.consumeClick();
+            keyVolumeUp.consumeClick();
+            keyVolumeDown.consumeClick();
+            keyTogglePause.consumeClick();
+            keyQuickSearch.consumeClick();
+            keyAmbientNow.consumeClick();
+            keySpeakerPlace.consumeClick();
+        } else if (mc.player != null && mc.screen == null) {
             if (keyOpenMusic.consumeClick()) {
                 MuoniumPlayerExtension.getInstance().musicPlayerModule.setEnabled(true);
             }
@@ -735,8 +749,9 @@ public final class MuoniumPlayerClient {
         }
         // "oneconfig" 与 "mconfig" 都指向同一个界面：前者是玩家自己装的 OneConfig，
         // 后者是本项目魔改并自动下载的那一份，两者 API 相同，由 OneConfigHudBridge 统一接。
-        // 所以这里不再按 hudEditorUi 分支判断 —— 只要桥能打开就用 MuoniumConfig。
-        if (OneConfigHudBridge.open()) {
+        // 显式选择内置界面时跳过外部桥；其他界面不可用时再回退。
+        if (!HudConfig.HUD_EDITOR_UI_BUILTIN.equals(HudConfig.hudEditorUi)
+                && OneConfigHudBridge.open()) {
             return;
         }
         // MuoniumConfig 不在（还没下载完 / 下载失败 / 玩家自己卸了）：

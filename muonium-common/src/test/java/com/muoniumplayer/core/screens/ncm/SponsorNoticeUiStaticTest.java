@@ -70,7 +70,7 @@ class SponsorNoticeUiStaticTest {
         }
         assertTrue(overlay.contains("if (resolved || (never && !repeat)) return"));
         assertTrue(overlay.contains("neverButton.setHidden(!repeat)"));
-        assertTrue(overlay.contains("if (never) forever.run();\n        else later.run();"));
+        assertTrue(overlay.replace("\r\n", "\n").contains("if (never) forever.run();\n        else later.run();"));
     }
 
     @Test

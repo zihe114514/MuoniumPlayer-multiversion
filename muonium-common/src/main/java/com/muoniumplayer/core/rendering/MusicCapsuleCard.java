@@ -594,9 +594,9 @@ public final class MusicCapsuleCard implements SharedRenderingConstants {
 
     static boolean showCapsuleRow(boolean musicCapsuleStyle, boolean preview, boolean notice,
                                   boolean downloading, boolean completing, boolean mixing,
-                                  boolean musicActive, boolean cardTransitionActive, boolean inferenceRunning) {
+                                  boolean musicActive, boolean cardTransitionActive, boolean capsuleBorderActive) {
         return musicCapsuleStyle && !cardTransitionActive
-                && MusicCardMotion.showCapsuleRow(preview, notice, inferenceRunning,
+                && MusicCardMotion.showCapsuleRow(preview, notice, capsuleBorderActive,
                 downloading, completing, mixing, musicActive);
     }
 

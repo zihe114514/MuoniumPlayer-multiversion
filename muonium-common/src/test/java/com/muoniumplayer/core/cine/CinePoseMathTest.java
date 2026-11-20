@@ -72,6 +72,34 @@ class CinePoseMathTest {
     }
 
     @Test
+    void hermitePoseSamplingKeepsEndpointsShortestYawAndNoOvershoot() {
+        CinePose from = CinePose.of(0d, 64d, -2d, 179f, 5f, 0f);
+        CinePose to = new CinePose(2d, 66d, 4d, -179f, 9f, 0f, 8f);
+        CineSession.Motion start = new CineSession.Motion(5d, 0d, 0d, 45d, 0d, 0d, 3d);
+        CineSession.Motion end = new CineSession.Motion(0d, 5d, 0d, -45d, 0d, 0d, 0d);
+        assertEquals(from, CineSession.interpolateMotion(from, to, start, end, 0f));
+        assertEquals(to, CineSession.interpolateMotion(from, to, start, end, 1f));
+        double probeT = 0.00001d;
+        CinePose first = CineSession.interpolateMotion(from, to, start, end, (float) probeT);
+        assertEquals(5d, (first.x() - from.x()) / (probeT * 0.05d), 0.02d,
+                "采样起点应延续当前相机速度");
+        CinePose previous = first;
+        for (int i = 1; i < 1000; i++) {
+            CinePose sample = CineSession.interpolateMotion(from, to, start, end, i / 1000f);
+            assertTrue(sample.x() >= -1.0e-9d && sample.x() <= 2d + 1.0e-9d);
+            assertTrue(sample.y() >= 64d - 1.0e-9d && sample.y() <= 66d + 1.0e-9d);
+            assertTrue(sample.z() >= -2d - 1.0e-9d && sample.z() <= 4d + 1.0e-9d);
+            double yawDelta = CineShots.wrapDegrees(sample.yawDeg() - from.yawDeg());
+            assertTrue(yawDelta >= -1.0e-4d && yawDelta <= 2d + 1.0e-4d);
+            assertTrue(sample.fovOffsetDeg() >= 0f && sample.fovOffsetDeg() <= 8f);
+            assertTrue(sample.isFinite());
+            assertTrue(sample.x() >= previous.x() - 1.0e-7d);
+            assertTrue(sample.y() >= previous.y() - 1.0e-7d);
+            previous = sample;
+        }
+    }
+
+    @Test
     void randRange可复现且在区间内() {
         double a = CineShots.randRange(42L, 1, 3d, 8d);
         double b = CineShots.randRange(42L, 1, 3d, 8d);

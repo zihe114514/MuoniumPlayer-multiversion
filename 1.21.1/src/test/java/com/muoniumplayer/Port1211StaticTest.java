@@ -376,6 +376,25 @@ class Port1211StaticTest {
         org.junit.jupiter.api.Assertions.assertEquals(60, writes[0]);
     }
 
+    @Test
+    @DisplayName("标题界面可用播放器键且从播放器关闭后返回标题界面")
+    void musicPlayerCanOpenAndReturnFromTitleScreen() throws IOException {
+        String client = stripComments(read(ProjectPaths.sourceFile(Paths.get(
+                "com", "muoniumplayer", "MuoniumPlayerClient.java"))));
+        int titleGate = client.indexOf("mc.screen instanceof net.minecraft.client.gui.screens.TitleScreen");
+        int titleOpen = client.indexOf("keyOpenMusic.consumeClick()", titleGate);
+        int worldGate = client.indexOf("mc.player != null && mc.screen == null", titleGate);
+        assertTrue(titleGate >= 0 && titleOpen > titleGate && worldGate > titleOpen,
+                "标题界面只开放播放器快捷键，世界内热键分支保持独立");
+
+        String api = stripComments(read(ProjectPaths.sourceFile(Paths.get(
+                "com", "muoniumplayer", "api", "impl", "OpenAPIImpl.java"))));
+        assertTrue(api.contains("screen.setReturnScreen(returnScreen)"),
+                "从标题界面进入的 ExtensionScreen 必须记住主菜单返回目标");
+        assertTrue(api.contains("mc.setScreen(returnScreen)"),
+                "关闭播放器时应恢复标题界面，而不是清成空屏");
+    }
+
     private static boolean usesAwtClipboard(Path file) {
         try {
             String text = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
