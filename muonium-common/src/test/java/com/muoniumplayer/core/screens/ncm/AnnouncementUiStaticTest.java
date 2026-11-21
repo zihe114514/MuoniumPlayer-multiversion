@@ -212,7 +212,11 @@ class AnnouncementUiStaticTest {
         for (String tree : TREES) {
             Path versionJava = versionJava(tree);
             String compat = read(versionJava.resolve("com/muoniumplayer/compat/mc/GuiScreen.java"));
-            String scroll = body(compat, "public boolean mouseScrolled(");
+            String scrollSignature = tree.equals("1.20.1 recode")
+                    ? "public boolean mouseScrolled(double mouseX, double mouseY, double amount)"
+                    : "public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount)";
+            assertTrue(compat.contains(scrollSignature), tree + " Screen scroll signature must match this lane");
+            String scroll = body(compat, scrollSignature);
             if (tree.equals("26.3")) {
                 assertFalse(scroll.contains("Mouse.pushScreenScrollNotches"), "26.3 SDL 不走 GLFW Screen 回退");
                 Path mixin = versionJava.resolve("com/muoniumplayer/mixin/MouseScrollMixin.java");
@@ -226,11 +230,6 @@ class AnnouncementUiStaticTest {
                     .contains("WHEEL_CALLBACK_GUARD.shouldAccumulateScreenFallback()"), tree);
             assertTrue(body(mouse, "private static void installScrollHookIfNeeded()")
                     .contains("WHEEL_CALLBACK_GUARD.forwardToScreen("), tree + " 同步链回原版回调须避免二次累计");
-            if (tree.equals("1.20.1 recode")) {
-                assertTrue(scroll.contains("mouseScrolled(double mouseX, double mouseY, double amount)"), tree);
-            } else {
-                assertTrue(scroll.contains("mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount)"), tree);
-            }
         }
     }
 
