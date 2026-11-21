@@ -119,7 +119,7 @@ MuoniumPlayer 是 Minecraft **纯客户端**音乐 mod，mod id 为 `muonium`，
 
 ### 6.2 H 打开的设置中心：MuoniumConfig
 
-Compose 界面源码位于独立仓库 `E:\oneconfig lite\MuoniumConfig-src`。本仓库负责设置数据、反射契约、下载/更新与宿主提示，不在这里重做 Compose 页面。
+Compose 界面源码位于独立仓库 `E:\Mu\oneconfig lite\MuoniumConfig-src`。本仓库负责设置数据、反射契约、下载/更新与宿主提示，不在这里重做 Compose 页面。
 
 - 默认 UI 已是 `mconfig`；以本树 `HudConfig.HUD_EDITOR_UI_*` 及加载逻辑为准，旧文档的 `builtin` 默认说明已失效。
 - 改外仓前读其 `AGENTS.md`（如有）、`docs/MAINTENANCE.md`、`docs/PITFALLS.md`。
