@@ -7,6 +7,12 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.utils.cursor.CursorUtils;
+import com.muoniumplayer.render.skija.SkijaGfx;
+import io.github.humbleui.skija.Canvas;
+import io.github.humbleui.skija.FilterTileMode;
+import io.github.humbleui.skija.ImageFilter;
+import io.github.humbleui.skija.Paint;
+import io.github.humbleui.types.Rect;
 
 /**
  * 「苹果」：仿 Apple Music 全屏歌词。
@@ -210,6 +216,7 @@ final class AppleLyricRenderer extends AbstractStageLyricRenderer {
     private double anchorY;
 
     private CFontRenderer font = null;
+    private final Paint[] blurPaints = new Paint[13];
     private double fontScale = 1;
     private double fontPx = 16;
     /** 未缩放的行高，与折行步距。绘制时按未缩放量推进，见 {@link #drawToken}。 */
@@ -359,29 +366,66 @@ final class AppleLyricRenderer extends AbstractStageLyricRenderer {
                         5.0, litColor, alpha * (pressed ? .11 : .055));
             }
 
-            for (int t = 0; t < row.toks.size(); t++) {
-                Tok tok = row.toks.get(t);
-                drawToken(row, tok, blockX, textTop - lift, pivotX, pivotY - lift, lineScale,
-                        positionMs, active, distance < 0, rowAlpha, litColor, dimColor,
-                        effects && active, glowStrength, popScale);
+            double blur = HudConfig.fullscreenLyricEdgeBlur
+                    ? LyricPlaybackFocus.blur(distance, row.line.timestamp - positionMs, hovered || pressed ? 1 : 0)
+                    : 0;
+            int blurKey = (int) Math.round(Math.min(12.0, fontPx * .16) * blur);
+            Canvas canvas = blurKey > 0 ? SkijaGfx.canvas() : null;
+            int layer = -1;
+            if (canvas != null) {
+                float pad = blurKey * 1.5f + 3f;
+                var bounds = Rect.makeLTRB((float) target.left() - pad, (float) target.top() - pad,
+                        (float) target.right() + pad, (float) target.bottom() + pad);
+                layer = canvas.saveLayer(bounds, blurPaint(blurKey));
+                rowAlpha = Math.min(alpha, rowAlpha * (1 + .20 * blur));
             }
-
-            if (row.translation != null && translationFont != null) {
-                double transWidth = row.translationRawWidth * translationScale;
-                double transX = row.right ? blockX + row.width - transWidth : blockX;
-                double transY = textTop + row.translationY - lift;
-                FullscreenLyricStage.pushMatrix();
-                try {
-                    FullscreenLyricStage.scaleAt(transX, transY, translationScale);
-                    translationFont.drawString(row.translation, transX, transY,
-                            FullscreenLyricStage.withAlpha(dimColor, rowAlpha * .72));
-                } finally {
-                    FullscreenLyricStage.popMatrix();
+            try {
+                for (int t = 0; t < row.toks.size(); t++) {
+                    Tok tok = row.toks.get(t);
+                    drawToken(row, tok, blockX, textTop - lift, pivotX, pivotY - lift, lineScale,
+                            positionMs, active, distance < 0, rowAlpha, litColor, dimColor,
+                            effects && active, glowStrength, popScale);
                 }
+
+                if (row.translation != null && translationFont != null) {
+                    double transWidth = row.translationRawWidth * translationScale;
+                    double transX = row.right ? blockX + row.width - transWidth : blockX;
+                    double transY = textTop + row.translationY - lift;
+                    FullscreenLyricStage.pushMatrix();
+                    try {
+                        FullscreenLyricStage.scaleAt(transX, transY, translationScale);
+                        translationFont.drawString(row.translation, transX, transY,
+                                FullscreenLyricStage.withAlpha(dimColor, rowAlpha * .72));
+                    } finally {
+                        FullscreenLyricStage.popMatrix();
+                    }
+                }
+            } finally {
+                if (canvas != null) canvas.restoreToCount(layer);
             }
         }
         if (acceptingPointer && interaction.canHit(pointerX, pointerY)) CursorUtils.setOverride(CursorUtils.HAND);
     }
+    void disposeLyricBlur() {
+        for (int i = 1; i < blurPaints.length; i++) {
+            if (blurPaints[i] != null) {
+                blurPaints[i].close();
+                blurPaints[i] = null;
+            }
+        }
+    }
+
+    private Paint blurPaint(int key) {
+        if (blurPaints[key] == null) {
+            Paint paint = new Paint();
+            try (ImageFilter filter = ImageFilter.makeBlur(key / 2f, key / 2f, FilterTileMode.DECAL)) {
+                paint.setImageFilter(filter);
+            }
+            blurPaints[key] = paint;
+        }
+        return blurPaints[key];
+    }
+
     /**
      * 画一个音节块。
      *

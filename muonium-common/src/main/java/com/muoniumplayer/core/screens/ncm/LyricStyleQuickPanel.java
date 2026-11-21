@@ -522,6 +522,10 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private double viewWidth = Double.NaN;
 
     private boolean expanded;
+
+    boolean isExpanded() {
+        return expanded;
+    }
     private float expandAnimation;
     private boolean pendingSave;
 
