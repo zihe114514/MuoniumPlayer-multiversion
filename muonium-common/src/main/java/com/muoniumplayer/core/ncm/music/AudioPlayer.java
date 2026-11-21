@@ -7,6 +7,7 @@ import repackage.com.jsyn.devices.AudioDeviceManager;
 import repackage.com.jsyn.devices.javasound.JavaSoundAudioDevice;
 import repackage.com.jsyn.exceptions.ChannelMismatchException;
 import repackage.processing.sound.AutomixDeckChain;
+import repackage.processing.sound.Engine;
 import repackage.processing.sound.SoundFile;
 import com.muoniumplayer.core.ncm.music.audio.OpenALAudioDevice;
 import com.muoniumplayer.core.viper.ViperRuntime;
@@ -95,6 +96,8 @@ public class AudioPlayer {
 
     /** 由 {@link #prepareStart(float)} 设置：读头已定位、搁架已接入、窗口已预热。 */
     private volatile boolean prepared;
+    /** A previously rendered deck must quiesce before its streamed ring is reseeded. */
+    private volatile boolean hasStartedPlayback;
 
     /**
      * 「这一路 deck 已经被要求播放」这一意图，在 {@link #play()} 排队的那一刻同步置位。
@@ -144,6 +147,7 @@ public class AudioPlayer {
         this.closed = false;
         this.replacementStopped = false;
         this.prepared = false;
+        this.hasStartedPlayback = false;
         // 新曲目还没有被要求播放。此刻 deck 上挂的是上一首的播放意图，
         // 留着它会让界面在新曲真正起播之前就报告「正在播放」——正是本次要修的那个错。
         // 新曲目已真正起播——正是本次改动所要修正的那种不匹配。
@@ -179,6 +183,7 @@ public class AudioPlayer {
         // 暂停/播放键被反复点按时叠出的第二层、第三层音就是这么来的。
         if (this.player.isPlaying()) {
             this.playRequested = true;
+            this.hasStartedPlayback = true;
             return;
         }
 
@@ -194,6 +199,7 @@ public class AudioPlayer {
             this.player.amp(effectiveAmp());
             this.player.play();
             this.player.amp(effectiveAmp());
+            this.hasStartedPlayback = true;
         } catch (ChannelMismatchException mismatch) {
             // 为声道变化保留 CloudMusic 里既有的重试路径。
             this.playRequested = false;
@@ -257,6 +263,7 @@ public class AudioPlayer {
             // 先接链的话，淡化中进来的 deck 会完全不经滤波地播放——
             // 两首曲子都保留完整低频，接缝处就会咚地撞一下。
             attachAutomixChain();
+            this.hasStartedPlayback = true;
             this.player.play();
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
@@ -282,7 +289,13 @@ public class AudioPlayer {
      */
     public void prepareStart(float millis) {
         if (!isUsable()) return;
+        this.prepared = false;
         try {
+            if (this.hasStartedPlayback) {
+                this.playRequested = false;
+                this.player.stop();
+                if (!Engine.awaitAudioBlocks(2, 500L)) return;
+            }
             finished = false;
             this.player.amp(0.0f);
             float cued = cueTo(millis);
@@ -314,6 +327,7 @@ public class AudioPlayer {
         try {
             this.player.amp(effectiveAmp());
             attachAutomixChain();   // 幂等；这条链通常从 prepareStart() 起就一直活着。
+            this.hasStartedPlayback = true;
             this.player.play();
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
@@ -346,9 +360,9 @@ public class AudioPlayer {
      * 把流式窗口拉到给定位置，让首次读取不发生在音频回调内部。
      * 一个采样就够了：读头会在被请求的下标周围填满一整个窗口。
      *
-     * <p>走 {@link SoundFile#preparePlaybackWindowAt} 的预备路径：后台把 cue 周围的 PCM 发布到
-     * deck 自己的环形缓存，并为首次 WSOLA 前瞻保留约 370ms；随后从该游标继续顺序预取。
-     * 远位置读只影响尚未出声的 incoming deck，不会把正在播放 deck 的 ring 锚点拖走。</p>
+     * <p>走 {@link SoundFile#preparePlaybackWindowAt} 的预备路径：只允许从未被音频线程消费过的 deck
+     * 将 cue 周围的 PCM 发布到自己的环形缓存，并为首次 WSOLA 前瞻保留约 370ms。曾播放过的 deck
+     * 必须先通过 Engine.awaitAudioBlocks 确认停止边界，再重新定位并预填。</p>
      */
     private void primeStreamWindow(float millis) {
         try {

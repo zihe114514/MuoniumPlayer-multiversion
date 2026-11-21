@@ -18,7 +18,13 @@ class ManualAutomixSelectionStaticTest {
         String entry = region(source(), "private static void startPlaybackList(", "public static boolean isPersonalFmActive()");
         assertTrue(entry.indexOf("requestManualSelection(") < entry.indexOf("stopExistingPlayThread()"));
         String request = region(source(), "private boolean requestManualSelection(", "private boolean manualSelectionCurrent(");
-        assertTrue(request.contains("AutomixSettings.isEnabled()"));
+        assertFalse(request.contains("AutomixSettings.isEnabled()"),
+                "manual selection must remain available when automatic automix is disabled");
+        assertTrue(request.contains("awaitingPlaybackAction"));
+        assertTrue(request.contains("outgoing.isPausing() && (playing.get() || !outgoing.isFinished())"),
+                "pause remains paused, while a naturally ended deck can wait for its prepared successor");
+        assertFalse(request.contains("personalFmActive"),
+                "queued FM tracks use the same prepared-deck handover while a successor exists");
         assertTrue(request.contains("MpPartyClient.inRoom()"));
         assertTrue(request.contains("NeteaseListenTogetherService.isActive()"));
         assertTrue(request.contains("KuGouListenTogetherService.isActive()"));
@@ -37,11 +43,17 @@ class ManualAutomixSelectionStaticTest {
 
     @Test
     void readinessNeedsNoBeatStemOrEnvelopeAnalysis() throws Exception {
-        String prepare = region(source(), "private void prepareManualSelection(", "private static AutomixPlan manualSelectionPlan()");
+        String cloud = source();
+        String manualPrepare = region(cloud, "private void prepareManualSelection(", "private void prepareNaturalSelection(");
+        assertTrue(manualPrepare.contains("prepareSelectionDeck(selection, false)"));
+        String prepare = region(cloud, "private void prepareSelectionDeck(ManualSelection selection, boolean natural)",
+                "private boolean selectionCurrent(");
         assertTrue(prepare.contains("new AudioPlayer(file)"));
-        assertTrue(prepare.contains("deck.setFadeGain(0.0f)"));
+        assertTrue(prepare.contains("deck.setFadeGain(0f)"));
         assertTrue(prepare.contains("deck.prepareStart(0f)"));
-        assertTrue(prepare.contains("selection.ready = track"));
+        assertTrue(prepare.contains("selection.ready = ready"));
+        assertTrue(prepare.contains("!deck.isUsable() || !deck.isPrepared()"),
+                "a deck whose streamed window was not safely prepared must not be published as ready");
         assertFalse(prepare.contains("AutomixPlanner.plan("));
         assertFalse(prepare.contains("warmAdvancedEnvelope"));
         assertFalse(prepare.contains("attachVocalMaterial"));
@@ -53,10 +65,12 @@ class ManualAutomixSelectionStaticTest {
     void pendingSelectionHasPriorityAndPauseDoesNotAutoResume() throws Exception {
         String tick = region(source(), "private void waitForPlaybackCompletion()", "private void handlePlaybackCompletion()");
         assertTrue(tick.indexOf("tryManualSelectionHandover(") < tick.indexOf("tryManualNextHandover("));
-        assertTrue(tick.indexOf("tryManualSelectionHandover(") < tick.indexOf("if (!playing.get()) break"));
+        assertTrue(tick.indexOf("if ((activePlayer.isFinished() || !playing.get()) && manualSelection == null) break")
+                < tick.indexOf("if (tryManualSelectionHandover(activePlayer))"));
         assertTrue(tick.contains("if (manualSelection != null) {"));
         String handover = region(source(), "private boolean tryManualSelectionHandover(", "private void cancelManualSelection()");
-        assertTrue(handover.contains("if (!outgoing.isFinished() && outgoing.isPausing()) return false"));
+        assertTrue(handover.contains("if (outgoing.isPausing() && !outgoing.isFinished()) return false"),
+                "a deliberate pause stays paused; natural completion can still accept a ready successor");
         assertTrue(handover.contains("cancelArmedTrack()"));
         assertFalse(handover.contains("stopCurrentPlayback()"));
     }
@@ -71,7 +85,10 @@ class ManualAutomixSelectionStaticTest {
         int session = commit.indexOf("CloudMusic.beginNewSession(track.song)");
         assertTrue(start >= 0 && accepted > start && previousFade > accepted);
         assertTrue(queue > previousFade && session > queue);
-        assertTrue(commit.contains("manualSelection != selection"));
+        assertTrue(commit.contains("boolean selectionOwnerValid = selection == null"));
+        assertTrue(commit.contains("? manualSelection == null"));
+        assertTrue(commit.contains("selection.naturalAdvance ? naturalSelection == selection"));
+        assertTrue(commit.contains(": manualSelection == selection"));
         assertTrue(commit.contains("selection.ready = null"));
         String cancel = region(source(), "private void cancelPlayback()", "private boolean playListChanged()");
         assertTrue(cancel.contains("cancelManualSelection()"));
@@ -96,8 +113,13 @@ class ManualAutomixSelectionStaticTest {
         String cloud = source();
         String handover = region(cloud, "long overlapOverrideMillis, ManualSelection selection)",
                 "private void driveAutomixFade()");
+        assertTrue(handover.contains("selection != null && selection.naturalAdvance"));
+        assertTrue(handover.contains("AutomixPlan.naturalQuickMix(overlapOverrideMillis)"));
         assertTrue(handover.contains("manualTransition ? manualSelectionPlan() : track.plan"));
-        assertTrue(handover.contains("if (selection == null || !track.plan.manualQuickMix) incoming.prepareStart(0f)"));
+        assertTrue(handover.contains("if (selection == null || !track.plan.manualQuickMix) incoming.prepareStart(0f)"),
+                "only analysis plans need a cue correction during commit");
+        assertTrue(handover.contains("if (manualTransition && (selection == null || !selection.naturalAdvance)"),
+                "natural crossfade must not install manual DSP processing");
         assertTrue(handover.indexOf("incoming.resetAutomixProcessing()")
                 < handover.indexOf("incoming.startPrepared()"));
         assertTrue(handover.indexOf("outgoing.enableManualTransitionProcessing()")
@@ -134,6 +156,49 @@ class ManualAutomixSelectionStaticTest {
         String previous = region(cloud, "private void stopPreviousPlayer()", "private void handleUnplayableSong(");
         assertFalse(previous.contains("sleep("));
         assertTrue(previous.contains("AudioPlayer.releaseLater("));
+    }
+
+    @Test
+    void manualAndNaturalCrossfadesDoNotStopTheOutgoingDeckBeforeIncomingIsReady() throws Exception {
+        String cloud = source();
+        String request = region(cloud, "private boolean requestManualSelection(List<Music> queue, int index, boolean replaceQueue)",
+                "private boolean manualSelectionCurrent(");
+        assertFalse(request.contains("AutomixSettings.isEnabled()"));
+        assertTrue(request.contains("new ManualSelection(queue, index, replaceQueue, session, false)"));
+        assertTrue(request.indexOf("prepareManualSelection(selection)") < request.indexOf("return true;"));
+
+        String prepare = region(cloud, "private void maybePrepareNextForCrossfade(", "private void resetArmState()");
+        assertTrue(prepare.contains("NATURAL_PREPARE_LEAD_MILLIS"));
+        assertTrue(prepare.contains("naturalSelection = selection"));
+        assertTrue(prepare.contains("prepareNaturalSelection(selection)"));
+        assertFalse(prepare.contains("AutomixPlanner.plan("));
+
+        String natural = region(cloud, "private boolean tryNaturalSelectionHandover(", "private boolean tryManualSelectionHandover(");
+        assertTrue(natural.contains("selection.queueRevision != queueRevision"));
+        assertTrue(natural.contains("peekNextIndex() != selection.index"));
+        assertTrue(natural.contains("performAutomixHandover(outgoing, track, NATURAL_QUICK_MIX_MILLIS, selection)"));
+        String automix = region(cloud, "private boolean tryAutomixHandover(", "private boolean performAutomixHandover(AudioPlayer outgoing, ArmedTrack track)");
+        assertTrue(automix.contains("track.rearmPending || track.deck == null || !track.deck.isPrepared()"),
+                "natural handover must wait for a safely re-armed deck");
+
+        String ordinary = region(cloud, "private void performOrdinaryNextAfterFailedHandover()", "private boolean tryAutomixHandover(");
+        assertTrue(ordinary.contains("stopCurrentPlayback()"), "hard-switch fallback remains only for failed/unavailable preparation");
+    }
+
+    @Test
+    void naturalSelectionRemainsSeparateFromManualQueueOwnership() throws Exception {
+        String cloud = source();
+        String naturalHandover = region(cloud, "private boolean tryNaturalSelectionHandover(", "private void cancelNaturalSelection()");
+        assertTrue(naturalHandover.contains("naturalSelection != selection"));
+        assertTrue(naturalHandover.contains("performAutomixHandover(outgoing, track, NATURAL_QUICK_MIX_MILLIS, selection)"));
+        String commit = region(cloud, "long overlapOverrideMillis, ManualSelection selection)",
+                "private void driveAutomixFade()");
+        assertTrue(commit.contains("selection.naturalAdvance ? naturalSelection == selection"));
+        assertFalse(naturalHandover.contains("manualSelection = selection"));
+        String plan = Files.readString(ProjectPaths.sharedJava().resolve(Paths.get(
+                "com", "muoniumplayer", "core", "ncm", "music", "AutomixPlan.java")));
+        assertTrue(plan.contains("static AutomixPlan naturalQuickMix(long overlapMillis)"));
+        assertTrue(plan.contains("0L, 0f, \"natural quick mix\", null, 0f, 0f, false"));
     }
 
     private static String region(String source, String from, String to) {

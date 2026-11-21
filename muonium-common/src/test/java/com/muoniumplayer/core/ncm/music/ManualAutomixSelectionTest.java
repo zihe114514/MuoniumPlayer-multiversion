@@ -352,9 +352,9 @@ class ManualAutomixSelectionTest {
 
     private Object selection(Music song) throws Exception {
         Constructor<?> constructor = selectionType.getDeclaredConstructor(List.class, int.class,
-                boolean.class, PlaybackSession.class);
+                boolean.class, PlaybackSession.class, boolean.class);
         constructor.setAccessible(true);
-        return constructor.newInstance(new ArrayList<>(Collections.singletonList(song)), 0, true, session);
+        return constructor.newInstance(new ArrayList<>(Collections.singletonList(song)), 0, true, session, false);
     }
 
     private void prepare(Object selection) throws Exception {

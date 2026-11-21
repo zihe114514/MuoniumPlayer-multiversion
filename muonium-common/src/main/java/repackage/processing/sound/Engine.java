@@ -18,6 +18,8 @@ import java.io.OutputStream;
 import java.io.PrintStream;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.IntStream;
@@ -72,7 +74,7 @@ public class Engine {
 	 * 将此变量设置为null ，强制创建（第二个）单例，
 	 * 然后随意手动更换。
 	 */
-	private static Engine singleton;
+	private static volatile Engine singleton;
 
 	// static Engine getEngine(boolean portAudio) {
 	// 	返回引擎。
@@ -109,6 +111,27 @@ public class Engine {
 	/** 注销一个先前用 {@link #addAudioTask(Runnable)} 注册的控制任务。 */
 	public static void removeAudioTask(Runnable task) {
 		if (task != null && Engine.singleton != null) Engine.singleton.synth.removeAudioTask(task);
+	}
+
+	/** 等待音频线程完成指定数量的缓冲区回调，再安全修改已渲染的采样。 */
+	public static boolean awaitAudioBlocks(int blocks, long timeoutMillis) {
+		if (blocks <= 0) return true;
+		Engine engine = Engine.singleton;
+		if (engine == null || !(engine.synth instanceof SynthesisEngine) || !engine.synth.isRunning()) return false;
+
+		SynthesisEngine synth = (SynthesisEngine) engine.synth;
+		CountDownLatch completed = new CountDownLatch(blocks);
+		Runnable barrier = completed::countDown;
+		synth.addCompletedBufferTask(barrier);
+		try {
+			return completed.await(Math.max(0L, timeoutMillis), TimeUnit.MILLISECONDS)
+					&& synth.isRunning();
+		} catch (InterruptedException interrupted) {
+			Thread.currentThread().interrupt();
+			return false;
+		} finally {
+			synth.removeCompletedBufferTask(barrier);
+		}
 	}
 
 	static Engine getEngine(boolean portAudio) {

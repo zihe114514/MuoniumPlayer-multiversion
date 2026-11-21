@@ -34,6 +34,26 @@ class AutomixTransitionCurveTest {
     }
 
     @Test
+    void naturalQuickMixIsAnEqualPowerPlainCrossfade() {
+        AutomixPlan plan = AutomixPlan.naturalQuickMix(1_200L);
+
+        assertEquals(1_200L, plan.overlapMillis);
+        assertEquals(1f, plan.outgoingGain(0.0), .0001f);
+        assertEquals(0f, plan.incomingGain(0.0), .0001f);
+        assertEquals(0f, plan.outgoingGain(1.0), .0001f);
+        assertEquals(1f, plan.incomingGain(1.0), .0001f);
+        assertEquals(0f, plan.incomingBassDb(.5), .0001f);
+        assertEquals(0f, plan.incomingMidDb(.5), .0001f);
+        assertEquals(0f, plan.incomingHighDb(.5), .0001f);
+        assertEquals(0f, plan.incomingVocalDepth(.5), .0001f);
+        for (int i = 0; i <= 100; i++) {
+            double p = i / 100.0;
+            double sum = Math.pow(plan.outgoingGain(p), 2) + Math.pow(plan.incomingGain(p), 2);
+            assertEquals(1.0, sum, .0001, "equal-power progress=" + p);
+        }
+    }
+
+    @Test
     void previewIsARealPlanSnapshotRatherThanAVisualOnlyCurve() {
         AutomixTransitionCurve preview = AutomixTransitionCurve.preview();
 

@@ -191,6 +191,31 @@ class AutomixAudioThreadExecutionStaticTest {
     }
 
     @Test
+    @DisplayName("重复预备先停旧读头并跨过音频缓冲边界，再改写流式 ring")
+    void rearmingRenderedDeckWaitsForAudioBoundaryBeforeReseeding() throws IOException {
+        String audioPlayer = read(music("AudioPlayer.java"));
+        String prepare = body(audioPlayer, "public void prepareStart(float millis)");
+
+        int stop = prepare.indexOf("this.player.stop()");
+        int barrier = prepare.indexOf("Engine.awaitAudioBlocks(2, 500L)");
+        int cue = prepare.indexOf("float cued = cueTo(millis)");
+        assertTrue(stop >= 0 && barrier > stop && cue > barrier,
+                "已渲染 deck 必须先停、等待两个音频缓冲，再 cue 和重填 ring");
+        assertTrue(prepare.contains("if (this.hasStartedPlayback)"),
+                "只有已被音频线程消费的 deck 才需等待停稳边界");
+
+        String engine = read(repackage("processing", "sound", "Engine.java"));
+        String await = body(engine, "public static boolean awaitAudioBlocks(int blocks, long timeoutMillis)");
+        assertTrue(await.contains("completed.await("));
+        assertTrue(await.contains("synth.addCompletedBufferTask(barrier)"));
+        assertTrue(await.contains("synth.removeCompletedBufferTask(barrier)"));
+        String synthesis = new String(Files.readAllBytes(JAVA.resolve(Paths.get(
+                "repackage", "com", "jsyn", "engine", "SynthesisEngine.java"))), StandardCharsets.UTF_8);
+        assertTrue(body(synthesis, "public void generateNextBuffer()").contains("for (Runnable task : completedBufferTasks)"),
+                "屏障必须在整块混合和输出观察之后触发");
+    }
+
+    @Test
     @DisplayName("预卷在后台预填 cue 环形缓存，音频线程首读不做同步读盘")
     void preparedDeckSeedsItsStreamedPlaybackWindow() throws IOException {
         String audioPlayer = read(music("AudioPlayer.java"));

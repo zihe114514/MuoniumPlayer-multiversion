@@ -162,6 +162,12 @@ final class AutomixPlan {
         return manualQuickMix(overlapMillis, true);
     }
 
+    static AutomixPlan naturalQuickMix(long overlapMillis) {
+        return new AutomixPlan(0L, overlapMillis, 0L, 1f, false, false, 1f, false,
+                0L, 0f, "natural quick mix", null, 0f, 0f, false,
+                .42, .42, .45, false, 500.0, 0f, 0.0, false, null);
+    }
+
     static AutomixPlan manualQuickMix(long overlapMillis, boolean processing) {
         return new AutomixPlan(0L, overlapMillis, 0L, 1f, false, processing, 1f, false,
                 0L, 0f, processing ? "manual spectral mix" : "manual plain mix", null, 0f, 0f, false,

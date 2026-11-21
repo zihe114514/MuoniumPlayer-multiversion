@@ -439,8 +439,15 @@ class RoomAutomixStaticTest {
                 "房间没开交叠时这条捷径必须关着");
         assertTrue(cloud.contains("return ((PlayThread) active).requestRoomHandover();"),
                 "交接只能在播放线程上发生，不能从网络线程直接换播放器");
-        assertTrue(cloud.contains("if (track == null || track.plan == null || !track.roomMode) return false;"),
+        int roomStart = cloud.indexOf("private boolean requestRoomHandover()");
+        int roomEnd = cloud.indexOf("long blendRemainingMillis()", roomStart);
+        assertTrue(roomStart >= 0 && roomEnd > roomStart, "房间交接方法边界必须存在");
+        String roomRequest = cloud.substring(roomStart, roomEnd);
+        assertTrue(roomRequest.contains("track.roomMode"),
                 "只有房间模式下预备出来的那一首才认这个请求");
+        assertTrue(roomRequest.contains("track.rearmPending")
+                        && roomRequest.contains("!track.deck.isPrepared()"),
+                "尚未完成安全重备的播放牌不能接受换歌帧");
         assertTrue(cloud.contains("boolean byRoomFrame = track.roomMode && roomHandoverRequested;"),
                 "tick 里必须认下这个请求，而不是等本地位置推到交叠点");
         assertTrue(cloud.contains("if (byRoomFrame) roomHandoverRequested = false;"),
