@@ -2182,7 +2182,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         int kind = com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions.currentKind();
         boolean rendered;
         if (kind == 1) {
-            rendered = coverBackdrop.render(posX, posY, width, height, alpha, current,
+            rendered = coverBackdrop.render(posX, posY, width, height, alpha, snapshot,
                     HudConfig.fullscreenLyricFluidStatic);
         } else if (!com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions.isQPlayer(kind)) {
             rendered = foliaBackground.render(posX, posY, width, height, alpha, current);

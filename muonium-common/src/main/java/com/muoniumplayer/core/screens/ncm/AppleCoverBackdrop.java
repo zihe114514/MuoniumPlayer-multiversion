@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.screens.ncm;
 
+import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.PlaybackPulse;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.render.skija.SkijaGfx;
 import io.github.humbleui.skija.Canvas;
@@ -16,7 +18,7 @@ final class AppleCoverBackdrop {
     private final int[] target = new int[3];
     private long lastFrame;
     private double fade = 1;
-    private double time;
+    private final CoverRhythmMotion motion = new CoverRhythmMotion();
     private byte[] mountedBytes;
     private Image currentArt;
     private Image previousArt;
@@ -27,7 +29,7 @@ final class AppleCoverBackdrop {
     void reset() {
         lastFrame = 0;
         fade = 1;
-        time = 0;
+        motion.reset();
         if (previousArt != null) previousArt.close();
         if (currentArt != null) currentArt.close();
         previousArt = currentArt = null;
@@ -38,13 +40,15 @@ final class AppleCoverBackdrop {
     }
 
     boolean render(double x, double y, double width, double height, float alpha,
-                   Music track, boolean staticMode) {
+                   CloudMusic.PlaybackSnapshot snapshot, boolean staticMode) {
         Canvas canvas = SkijaGfx.canvas();
         if (canvas == null || width <= 0 || height <= 0) return false;
         long now = System.nanoTime();
         boolean first = lastFrame == 0;
         double dt = first ? 0 : Math.min(.05, Math.max(0, (now - lastFrame) / 1e9));
+        if (!first && now - lastFrame > 400_000_000L) motion.reset();
         lastFrame = now;
+        Music track = snapshot.music;
         updateArtwork(track, now);
         artFade = staticMode ? 1 : Math.min(1, artFade + dt / .84);
         if (artFade == 1 && previousArt != null) {
@@ -70,8 +74,13 @@ final class AppleCoverBackdrop {
             fade = 0;
         }
         fade = staticMode ? 1 : Math.min(1, fade + dt / .72);
-        if (!staticMode) time += dt;
-        double t = staticMode ? 0 : time;
+        // A mirror can report a playback clock without supplying audio to the local analyser.
+        boolean playing = !staticMode && snapshot.player != null && CloudMusic.isAudibleSnapshot(snapshot);
+        float onset = playing ? PlaybackPulse.beat() : 0f;
+        float loudness = playing ? PlaybackPulse.loudness() : 0f;
+        var beat = motion.sample(dt, snapshot.sessionId, snapshot.positionMs, playing, staticMode, onset, loudness);
+        double pulse = beat.getPulse();
+        double energy = beat.getEnergy();
         Rect bounds = Rect.makeXYWH((float) x, (float) y, (float) width, (float) height);
         Rect unit = Rect.makeWH(1f, 1f);
         try (Paint paint = new Paint()) {
@@ -87,18 +96,18 @@ final class AppleCoverBackdrop {
                 paint.setColor(0xff171618);
                 canvas.drawRect(unit, paint);
 
-                drawField(canvas, unit, paint, (float) (.17 + .12 * Math.sin(t * .26)),
-                        (float) (.16 + .10 * Math.sin(t * .19)), .90f, tint(0));
-                drawField(canvas, unit, paint, (float) (.80 + .10 * Math.sin(t * .20 + 1.2)),
-                        (float) (.51 + .13 * Math.sin(t * .24 + 2.1)), .84f, tint(1));
-                drawField(canvas, unit, paint, (float) (.29 + .14 * Math.sin(t * .18 + 2.3)),
-                        (float) (.94 + .11 * Math.sin(t * .21 + .8)), .77f, tint(2));
+                drawField(canvas, unit, paint, (float) (.17 - .085 * pulse),
+                        (float) (.16 + .09 * energy), (float) (.90 + .16 * pulse), tint(0));
+                drawField(canvas, unit, paint, (float) (.88 + .085 * pulse - .05 * energy),
+                        (float) (.57 - .12 * pulse), (float) (.84 + .10 * energy), tint(1));
+                drawField(canvas, unit, paint, (float) (.39 + .12 * energy),
+                        (float) (1.02 - .12 * pulse), (float) (.77 + .12 * pulse), tint(2));
 
                 float blend = (float) (artFade * artFade * (3 - 2 * artFade));
                 if (previousArt != null) {
-                    drawArtwork(canvas, paint, previousArt, t, currentArt == null ? 1 - blend : 1);
+                    drawArtwork(canvas, paint, previousArt, pulse, energy, currentArt == null ? 1 - blend : 1);
                 }
-                if (currentArt != null) drawArtwork(canvas, paint, currentArt, t, blend);
+                if (currentArt != null) drawArtwork(canvas, paint, currentArt, pulse, energy, blend);
 
                 try (Shader shade = Shader.makeLinearGradient(0f, 0f, 0f, 1f,
                         new int[] {0x0c000000, 0x28000000, 0xaa000000}, STOPS)) {
@@ -130,13 +139,14 @@ final class AppleCoverBackdrop {
         artFade = waitingSince == now && previousArt == null ? 1 : 0;
     }
 
-    private static void drawArtwork(Canvas canvas, Paint paint, Image image, double time, float alpha) {
+    private static void drawArtwork(Canvas canvas, Paint paint, Image image,
+                                    double pulse, double energy, float alpha) {
         if (alpha <= .001f) return;
         Rect source = Rect.makeWH(image.getWidth(), image.getHeight());
         drawDrift(canvas, paint, image, source, alpha * .82f,
-                .13 * Math.sin(time * .29), .10 * Math.cos(time * .22), 16 * Math.sin(time * .24), 0);
+                -.078 * pulse, .08 + .08 * energy, -12 * pulse, 0);
         drawDrift(canvas, paint, image, source, alpha * .32f,
-                .12 * Math.cos(time * .31), .08 * Math.sin(time * .23), 19 * Math.cos(time * .19), 180);
+                .12 + .08 * pulse, -.07 * energy, 19 + 10 * pulse, 180);
     }
 
     private static void drawDrift(Canvas canvas, Paint paint, Image image, Rect source, float alpha,
