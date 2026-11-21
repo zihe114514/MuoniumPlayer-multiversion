@@ -57,7 +57,8 @@ final class CineSession {
         }
     }
 
-    private record Target(CineDirector.Vec3Holder position, CineDirector.Vec3Holder focus) { }
+    private record Target(CineDirector.Vec3Holder position, CineDirector.Vec3Holder focus,
+                          double rollDegrees) { }
     private record Step(double value, double velocity) { }
     private record VectorStep(double x, double y, double z, double vx, double vy, double vz) { }
 
@@ -289,7 +290,7 @@ final class CineSession {
                 scene.pitch(), 0f);
         CinePose desired = new CinePose(target.x(), target.y(), target.z(), target.yawDeg(),
                 target.pitchDeg(), 0f, 0f);
-        publishPose(probe, scene, desired, TICK_SECONDS, 0f, null);
+        publishPose(probe, scene, desired, TICK_SECONDS, 0f, null, 0.8d);
         CinePose current = frame.current();
         if (near(current, target)) {
             frame = Frame.IDLE;
@@ -445,7 +446,6 @@ final class CineSession {
         shotFovStartMotion = motionSeconds;
         shotSequence++;
         shotMotionStart = motionSeconds;
-        orbitStartDegrees = scene.yaw() + 75d + shotSequence * 57d;
         CineDirector.MobSample candidate = settings.enableMobFocus() && shotSequence % 4 == 2
                 ? probe.nearestMovingMob(settings.mobFocusRange()) : null;
         CineShots.Shot mobShot = candidate == null ? null : shotDeck.takeMobIfAvailable();
@@ -466,6 +466,8 @@ final class CineSession {
             if (shot == null) throw new IllegalStateException("当前场景没有可用镜头");
         }
         mob = shot == CineShots.Shot.MOB_FOLLOW || shot == CineShots.Shot.ENV_WILDLIFE_WATCH ? candidate : null;
+        boolean worldAnchored = CineShots.ShotDeck.isEnvironment(shot) && shot.domain != CineShots.Domain.MOB;
+        orbitStartDegrees = (worldAnchored ? 0d : scene.yaw()) + shot.cameraAngle + shotSequence * 57d;
         planCut(settings, grid, now, now);
     }
 
@@ -488,7 +490,7 @@ final class CineSession {
     }
 
     private void publish(CineDirector.SceneProbe probe, Scene scene, CineSettings.Snapshot settings) {
-        Target target = target(scene);
+        Target target = target(scene, settings);
         CineDirector.Vec3Holder safe = probe.clipCamera(scene.x(), scene.eyeY(), scene.z(),
                 target.position().x(), target.position().y(), target.position().z());
         double dx = target.focus().x() - safe.x();
@@ -500,21 +502,23 @@ final class CineSession {
         double shotElapsed = Math.max(0d, motionSeconds - shotMotionStart);
         CinePose desired = new CinePose(safe.x(), safe.y(), safe.z(), CineShots.wrapDegrees(yaw),
                 Math.max(-89.9f, Math.min(89.9f, pitch)),
-                (float) (shot.rollDegrees * CineShots.smootherstep(Math.min(1d, shotElapsed / 2d))),
+                (float) (target.rollDegrees() * CineShots.smootherstep(Math.min(1d, shotElapsed / 2d))),
                 shotFovValue());
         float bars = settings.showCinematicBars() ? settings.cinematicBarPercent() / 100f : 0f;
-        publishPose(probe, scene, desired, TICK_SECONDS, bars, transition);
+        publishPose(probe, scene, desired, TICK_SECONDS, bars, transition, settings.trackingSoftness());
     }
 
     private void publishPose(CineDirector.SceneProbe probe, Scene scene, CinePose desired,
-                             double dt, float bars, Transition frameTransition) {
+                             double dt, float bars, Transition frameTransition, double trackingSoftness) {
         CinePose old = frame.current();
         if (old == null) {
             old = playerEyePose(scene);
             frame = new Frame(generation, old, old, null, bars, Motion.ZERO, Motion.ZERO);
         }
+        double responseScale = returning ? 1d : trackingResponseScale(trackingSoftness);
         VectorStep position = springVector(old.x(), old.y(), old.z(), desired.x(), desired.y(), desired.z(),
-                xVelocity, yVelocity, zVelocity, CAMERA_POSITION_ACCEL, CAMERA_POSITION_SPEED, dt);
+                xVelocity, yVelocity, zVelocity, CAMERA_POSITION_ACCEL * responseScale,
+                CAMERA_POSITION_SPEED * responseScale, dt);
         CineDirector.Vec3Holder path = probe.clipCamera(old.x(), old.y(), old.z(),
                 position.x(), position.y(), position.z());
         boolean clipped = Math.abs(path.x() - position.x()) + Math.abs(path.y() - position.y())
@@ -531,11 +535,11 @@ final class CineSession {
             zVelocity = position.vz();
         }
         Step yaw = springAngle(old.yawDeg(), desired.yawDeg(), yawVelocity, true,
-                CAMERA_ANGLE_ACCEL, CAMERA_ANGLE_SPEED, dt);
+                CAMERA_ANGLE_ACCEL * responseScale, CAMERA_ANGLE_SPEED * responseScale, dt);
         Step pitch = springAngle(old.pitchDeg(), desired.pitchDeg(), pitchVelocity, false,
-                CAMERA_ANGLE_ACCEL, CAMERA_ANGLE_SPEED, dt);
+                CAMERA_ANGLE_ACCEL * responseScale, CAMERA_ANGLE_SPEED * responseScale, dt);
         Step roll = springAngle(old.rollDeg(), desired.rollDeg(), rollVelocity, true,
-                CAMERA_ANGLE_ACCEL, CAMERA_ANGLE_SPEED, dt);
+                CAMERA_ANGLE_ACCEL * responseScale, CAMERA_ANGLE_SPEED * responseScale, dt);
         Step fov = spring(old.fovOffsetDeg(), desired.fovOffsetDeg(), fovVelocity,
                 CAMERA_FOV_ACCEL, CAMERA_FOV_SPEED, dt);
         yawVelocity = yaw.velocity();
@@ -551,40 +555,67 @@ final class CineSession {
         frame = new Frame(generation, old, pose, frameTransition, bars, previousMotion, currentMotion);
     }
 
-    private Target target(Scene scene) {
+    private Target target(Scene scene, CineSettings.Snapshot settings) {
         double age = Math.max(0d, motionSeconds - shotMotionStart);
         CineShots.Style style = shot.style;
         boolean environment = CineShots.ShotDeck.isEnvironment(shot);
         boolean landscape = environment && shot.domain != CineShots.Domain.MOB;
-        double centerX = landscape ? scene.x() : mob == null ? scene.x() : mob.x();
-        double centerY = landscape ? scene.y() : mob == null ? scene.y() : mob.y();
-        double centerZ = landscape ? scene.z() : mob == null ? scene.z() : mob.z();
-        double focusY = mob == null ? scene.y() + shot.focusHeight
-                : mob.y() + Math.max(0.65d, mob.bbHeight() * 0.55d);
+        CineDirector.MobSample tracked = mob;
+        double leadSeconds = tracked == null ? 0d : Math.min(0.22d, settings.trackingSoftness() * 0.2d);
+        CineDirector.Vec3Holder trackedPosition = tracked == null ? null
+                : predictedMobPosition(tracked, 1d, leadSeconds);
+        double centerX = landscape ? scene.x() : trackedPosition == null ? scene.x() : trackedPosition.x();
+        double centerY = landscape ? scene.y() : trackedPosition == null ? scene.y() : trackedPosition.y();
+        double centerZ = landscape ? scene.z() : trackedPosition == null ? scene.z() : trackedPosition.z();
+        double focusY = trackedPosition == null ? scene.y() + shot.focusHeight
+                : trackedPosition.y() + Math.max(0.65d, tracked.bbHeight() * 0.55d);
         double cameraAngle = shot.cameraAngle + (environment ? 0d : scene.yaw());
         double radius = shot.radius;
-        if (style == CineShots.Style.DOLLY_IN) {
+        double cameraHeight = shot.cameraHeight;
+        double cameraSide = 0d;
+        double rollDegrees = shot.rollDegrees;
+        if (style == CineShots.Style.ORBIT) {
+            cameraAngle = orbitStartDegrees + age * orbitRateDegreesPerSecond(radius);
+            cameraHeight += Math.sin(age * 0.24d) * 0.18d;
+        } else if (style == CineShots.Style.PAN) {
+            cameraAngle += Math.sin(age * 0.12d) * 8d;
+        } else if (style == CineShots.Style.DOLLY_IN) {
             radius = shot.radius - Math.max(0d, shot.radius - 3.4d) * CineShots.smootherstep(age / 7d);
         } else if (style == CineShots.Style.DOLLY_OUT) {
             radius = shot.radius + 4.5d * CineShots.smootherstep(age / 7d);
-        } else if (style == CineShots.Style.ORBIT) {
-            cameraAngle = orbitStartDegrees + age * 18d;
-        } else if (style == CineShots.Style.PAN) {
-            cameraAngle += Math.sin(age * 0.12d) * 8d;
+        } else if (style == CineShots.Style.CRANE_UP) {
+            double progress = CineShots.smootherstep(age / 6d);
+            cameraHeight += 6d * progress;
+            radius += 0.8d * progress;
+        } else if (style == CineShots.Style.CRANE_DOWN) {
+            double progress = CineShots.smootherstep(age / 6d);
+            cameraHeight += (Math.max(2d, shot.focusHeight + 1.2d) - shot.cameraHeight) * progress;
+            radius += 1.2d * progress;
+        } else if (style == CineShots.Style.TRUCK) {
+            cameraSide = shot.focusAngle * CineShots.smootherstep(age / 5d) * 3d;
+        } else if (style == CineShots.Style.SPIRAL_IN || style == CineShots.Style.SPIRAL_OUT) {
+            double progress = CineShots.smootherstep(age / 7d);
+            boolean inward = style == CineShots.Style.SPIRAL_IN;
+            radius += (inward ? -1d : 1d) * Math.min(4.5d, shot.radius * 0.65d) * progress;
+            cameraAngle += (inward ? 1d : -1d) * 270d * progress;
+            cameraHeight += Math.sin(progress * Math.PI * 2d) * 0.5d;
         }
         double cameraRadians = Math.toRadians(cameraAngle);
-        // 机位角沿用旧约定：人物镜头 c=0 在人物背后、180 在面前；环境镜头为世界方位角。
         double cameraX = centerX + Math.sin(cameraRadians) * radius;
-        double cameraY = centerY + shot.cameraHeight;
+        double cameraY = centerY + cameraHeight;
         double cameraZ = centerZ - Math.cos(cameraRadians) * radius;
-        if (style == CineShots.Style.ORBIT) cameraY += Math.sin(age * 0.24d) * 0.18d;
+        if (cameraSide != 0d) {
+            double sideRadians = Math.toRadians(cameraAngle + 90d);
+            cameraX += Math.sin(sideRadians) * cameraSide;
+            cameraZ -= Math.cos(sideRadians) * cameraSide;
+        }
 
-        double focusX = centerX;
-        double focusZ = centerZ;
+        double compositionFocusX = centerX;
+        double compositionFocusZ = centerZ;
         if (shot.focusDistance > 0d) {
             double focusRadians = Math.toRadians((environment ? 0d : scene.yaw()) + shot.focusAngle);
-            focusX = scene.x() - Math.sin(focusRadians) * shot.focusDistance;
-            focusZ = scene.z() + Math.cos(focusRadians) * shot.focusDistance;
+            compositionFocusX = scene.x() - Math.sin(focusRadians) * shot.focusDistance;
+            compositionFocusZ = scene.z() + Math.cos(focusRadians) * shot.focusDistance;
         }
         if (style == CineShots.Style.LANDSCAPE || style == CineShots.Style.SKY) {
             focusY += Math.sin(age * 0.07d) * 0.05d;
@@ -592,9 +623,14 @@ final class CineSession {
         if (style == CineShots.Style.CAVE) {
             double detailRadians = Math.toRadians((environment ? 0d : scene.yaw()) + shot.focusAngle
                     + (shotSequence % 2 == 0 ? 0d : -35d));
-            focusX = scene.x() - Math.sin(detailRadians) * Math.max(2d, shot.focusDistance);
+            compositionFocusX = scene.x() - Math.sin(detailRadians) * Math.max(2d, shot.focusDistance);
             focusY = scene.y() + shot.focusHeight + Math.sin(age * 0.16d) * 0.08d;
-            focusZ = scene.z() + Math.cos(detailRadians) * Math.max(2d, shot.focusDistance);
+            compositionFocusZ = scene.z() + Math.cos(detailRadians) * Math.max(2d, shot.focusDistance);
+        }
+        if (style == CineShots.Style.TRUCK) {
+            double sideRadians = Math.toRadians((environment ? 0d : scene.yaw()) + shot.focusAngle);
+            compositionFocusX = scene.x() - Math.sin(sideRadians) * shot.focusDistance;
+            compositionFocusZ = scene.z() + Math.cos(sideRadians) * shot.focusDistance;
         }
         if (style == CineShots.Style.PAN) {
             double drift = Math.sin(age * 0.08d) * Math.min(0.55d, Math.abs(shot.sweepDegrees) * 0.01d);
@@ -602,7 +638,12 @@ final class CineSession {
             cameraZ += Math.sin(cameraRadians) * drift;
         }
         return new Target(new CineDirector.Vec3Holder(cameraX, cameraY, cameraZ),
-                new CineDirector.Vec3Holder(focusX, focusY, focusZ));
+                new CineDirector.Vec3Holder(compositionFocusX, focusY, compositionFocusZ), rollDegrees);
+    }
+
+    static double orbitRateDegreesPerSecond(double radius) {
+        double averageRadius = (CineShots.Shot.ORBIT_WIDE.radius + CineShots.Shot.ORBIT_CLOSE.radius) * 0.5d;
+        return 18d * Math.max(0.55d, Math.min(1.45d, averageRadius / Math.max(1d, radius)));
     }
 
     private static long halfTransition(CineSettings.Snapshot settings) {
@@ -611,6 +652,35 @@ final class CineSession {
 
     private static boolean metered(CineBeatSource.Grid grid) {
         return grid != null && grid.isMetered();
+    }
+
+    static CineDirector.Vec3Holder predictedMobPosition(CineDirector.MobSample mob,
+                                                        double partialTick, double leadSeconds) {
+        if (mob == null) return null;
+        double t = Double.isFinite(partialTick) ? clamp(partialTick, 0d, 1d) : 1d;
+        double leadTicks = Double.isFinite(leadSeconds) ? clamp(leadSeconds, 0d, 0.22d) * 20d : 0d;
+        double dx = mob.x() - mob.previousX();
+        double dy = mob.y() - mob.previousY();
+        double dz = mob.z() - mob.previousZ();
+        double leadX = dx * leadTicks;
+        double leadY = dy * leadTicks;
+        double leadZ = dz * leadTicks;
+        double leadLength = Math.sqrt(leadX * leadX + leadY * leadY + leadZ * leadZ);
+        if (!Double.isFinite(leadLength)) {
+            leadX = leadY = leadZ = 0d;
+        } else if (leadLength > 0.75d) {
+            double scale = 0.75d / leadLength;
+            leadX *= scale;
+            leadY *= scale;
+            leadZ *= scale;
+        }
+        return new CineDirector.Vec3Holder(mob.previousX() + dx * t + leadX,
+                mob.previousY() + dy * t + leadY, mob.previousZ() + dz * t + leadZ);
+    }
+
+    static double trackingResponseScale(double trackingSoftness) {
+        if (!Double.isFinite(trackingSoftness) || trackingSoftness <= 0d) return 0.5d;
+        return clamp(0.8d / trackingSoftness, 0.5d, 2.5d);
     }
 
     private static float unit(float value) {

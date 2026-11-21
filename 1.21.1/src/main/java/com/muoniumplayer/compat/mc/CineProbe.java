@@ -264,7 +264,8 @@ public final class CineProbe implements CineDirector.SceneProbe {
     }
 
     private static MobSample sample(Mob mob) {
-        return new MobSample(mob.getId(), mob.getX(), mob.getY(), mob.getZ(), mob.getBbHeight());
+        return new MobSample(mob.getId(), mob.xo, mob.yo, mob.zo,
+                mob.getX(), mob.getY(), mob.getZ(), mob.getBbHeight());
     }
 
     private boolean isAllowedMob(Mob mob, double range) {

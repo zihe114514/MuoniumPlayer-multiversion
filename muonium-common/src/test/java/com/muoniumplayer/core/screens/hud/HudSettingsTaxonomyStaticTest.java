@@ -46,9 +46,10 @@ class HudSettingsTaxonomyStaticTest {
      *
      * <p>2026-11-20 七树「面板与卡片」页新增「桌面歌词对齐」choice（值存共享层 DesktopLyricSetting，
      * 不经 HudConfig）—— 本页 +1，26.3 总数 201 → 202，其余六树总数 197 → 198。</p>
+     * <p>2026-11-21「追踪柔度」追加到娱乐页：26.3 娱乐页 22 → 23、总数 202 → 203；其余六树娱乐页 22 → 23、总数 199 → 201。</p>
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(12, 22, 10, 31, 4, 33, 30, 22, 31, 4, 3);
+            Arrays.asList(12, 22, 10, 31, 4, 33, 30, 23, 31, 4, 3);
 
     /**
      * 「常用」页只在 26.3 起存在。
@@ -73,11 +74,11 @@ class HudSettingsTaxonomyStaticTest {
         if (hasFavoritesPage()) {
             return COUNTS;
         }
-        return Arrays.asList(28, 31, 10, 31, 30, 22, 33, 6, 4, 3);
+        return Arrays.asList(28, 31, 10, 31, 30, 23, 33, 6, 4, 3);
     }
 
     private static int expectedTotal() {
-        return hasFavoritesPage() ? TOTAL : 198;
+        return hasFavoritesPage() ? TOTAL : 199;
     }
 
     private static String versionName() {
@@ -161,7 +162,7 @@ class HudSettingsTaxonomyStaticTest {
     // 2026-11-16 七树灵动岛追加「音乐胶囊最大长度」滑块：每页 30 → 31，26.3 总数 200，其余六树 196。
     // 2026-11-17 七树「播放」页追加「智能动态均衡」toggle（automix 学习式 EQ）：
     //            播放页 29 → 30，26.3 总数 200 → 201，其余六树 196 → 197。
-    private static final int TOTAL = 202;
+    private static final int TOTAL = 203;
 
     @Test
     @DisplayName("分类顺序、每页条目数和独立模板栏目不许悄悄变")
@@ -180,12 +181,29 @@ class HudSettingsTaxonomyStaticTest {
     }
 
     @Test
+    @DisplayName("七树卡点运镜恰有一条追踪柔度选择")
+    void cineTrackingSoftnessAppearsOnce() {
+        HudSettingsModel.Category cine = Arrays.stream(HudSettingsModel.categories())
+                .filter(category -> "娱乐".equals(category.title)).findFirst().orElseThrow();
+        List<HudSettingsModel.Entry> matches = new ArrayList<HudSettingsModel.Entry>();
+        for (HudSettingsModel.Group group : cine.groups) {
+            if (!"卡点运镜".equals(group.title)) continue;
+            for (HudSettingsModel.Entry entry : group.entries) {
+                if (entry.getLabel().contains("追踪柔度")) matches.add(entry);
+            }
+        }
+        assertEquals(1, matches.size());
+        assertEquals(HudSettingsModel.Kind.CHOICE, matches.get(0).kind);
+        assertArrayEquals(new String[]{"0.3 秒", "0.5 秒", "0.8 秒", "1.2 秒", "2 秒"},
+                matches.get(0).getChoices());
+    }
+
+    @Test
     @DisplayName("分类总数封顶：分类条是横排，页太多会被窗口裁掉")
     void categoryCountStaysWithinSidebarBudget() {
         // 独立「模板预设」+1：保留各树原来的分类分流，不把 26.3 的常用页倒灌到老树。
-        // 「娱乐」页再 +1：分类条横排 11 个短标题（最长的「信息栏与封面」6 字）在
-        // 各界面分辨率下目测放得下；真正的窗口裁切要 runClient 人工验收。
-        int cap = hasFavoritesPage() ? 11 : 10;
+        // 26.3 页面为 12 类，其余六树为 11 类；分类栏的实际宽度仍需 runClient 目测。
+        int cap = hasFavoritesPage() ? 12 : 11;
         assertTrue(HudSettingsModel.categories().length <= cap,
                 "分类页超过 " + cap + " 个就又开始「侧栏一半是空页」了；再加页先确认各界面分类条放得下");
     }

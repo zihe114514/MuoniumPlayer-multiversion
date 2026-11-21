@@ -71,6 +71,20 @@ class CineSettingsTest {
     }
 
     @Test
+    void 追踪柔度钳制并写入快照() {
+        assertEquals(0.8f, CineSettings.trackingSoftness(), 1.0e-6f);
+        assertEquals(0.5f, CineSettings.nextTrackingSoftness(0.3f), 1.0e-6f);
+        assertEquals(0.8f, CineSettings.nextTrackingSoftness(0.5f), 1.0e-6f);
+        assertEquals(1.2f, CineSettings.nextTrackingSoftness(0.8f), 1.0e-6f);
+        assertEquals(2f, CineSettings.nextTrackingSoftness(1.2f), 1.0e-6f);
+        assertEquals(0.3f, CineSettings.nextTrackingSoftness(2f), 1.0e-6f);
+        assertEquals(0.5f, CineSettings.nextTrackingSoftness(0.1f), 1.0e-6f);
+        CineSettings.setTrackingSoftness(Float.NaN);
+        assertEquals(CineSettings.SOFTNESS_MIN, CineSettings.trackingSoftness(), 1.0e-6f);
+        CineSettings.setTrackingSoftness(1.2f);
+        assertEquals(1.2f, CineSettings.snapshot().trackingSoftness(), 1.0e-6f);
+    }
+    @Test
     void 环境镜头比例钳制() {
         CineSettings.setEnvironmentShotPercent(-10);
         assertEquals(CineSettings.ENVIRONMENT_SHOT_PERCENT_MIN, CineSettings.environmentShotPercent());

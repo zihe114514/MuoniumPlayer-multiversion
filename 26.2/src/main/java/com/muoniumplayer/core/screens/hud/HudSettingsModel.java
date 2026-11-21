@@ -1822,6 +1822,13 @@ public final class HudSettingsModel {
                                         v -> CineSettings.setSpeedMultiplier(
                                                 Float.parseFloat(v.replace("×", "").trim())),
                                         CineSettings::isEnabled),
+                                choice("追踪柔度", "镜头跟随生物与机位转换的响应速度；数值越大越柔和。",
+                                        () -> String.format(java.util.Locale.ROOT, "%.1f 秒", CineSettings.trackingSoftness()),
+                                        () -> CineSettings.setTrackingSoftness(
+                                                CineSettings.nextTrackingSoftness(CineSettings.trackingSoftness())),
+                                        new String[]{"0.3 秒", "0.5 秒", "0.8 秒", "1.2 秒", "2 秒"},
+                                        v -> CineSettings.setTrackingSoftness(Float.parseFloat(v.replace(" 秒", ""))),
+                                        CineSettings::isEnabled),
                                 choice("环境镜头比例", "自动切镜时分配给风景、天空、洞穴与昼夜构图的比例；不适合当前维度/群系的镜头会跳过，默认 50%。",
                                         () -> CineSettings.environmentShotPercent() + "%",
                                         () -> CineSettings.setEnvironmentShotPercent(

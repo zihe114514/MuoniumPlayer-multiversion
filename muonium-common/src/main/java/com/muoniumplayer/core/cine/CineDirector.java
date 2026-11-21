@@ -65,7 +65,8 @@ public final class CineDirector {
     public record Vec3Holder(double x, double y, double z) {
     }
 
-    public record MobSample(int entityId, double x, double y, double z, float bbHeight) {
+    public record MobSample(int entityId, double previousX, double previousY, double previousZ,
+                            double x, double y, double z, float bbHeight) {
     }
 
     public record TransitionFrame(int effect, double progress, boolean covering) {

@@ -577,7 +577,8 @@ class CineSchedulerTest {
             return new CineDirector.Vec3Holder(Math.min(wallX, tx), ty, tz);
         }
         @Override public CineDirector.MobSample nearestMovingMob(double range) {
-            return mobPresent ? new CineDirector.MobSample(41, mobX, y, z + 3d, 1.8f) : null;
+            return mobPresent ? new CineDirector.MobSample(41, mobX - 0.2d, y, z + 2.8d,
+                    mobX, y, z + 3d, 1.8f) : null;
         }
         @Override public CineDirector.MobSample trackedMob(int id, double range) {
             trackedCalls++;

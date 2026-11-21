@@ -380,11 +380,14 @@ public final class CineSettings {
         }
     }
 
-    public static float trackingSoftness() {
-        load();
-        synchronized (LOCK) {
-            return trackingSoftness;
-        }
+    /** Cine chase response softness in seconds, clamped to Ambient Camera's 0.1..8 range. */
+    public static float nextTrackingSoftness(float value) {
+        float current = clamp(value, SOFTNESS_MIN, SOFTNESS_MAX);
+        if (current < 0.4f) return 0.5f;
+        if (current < 0.65f) return 0.8f;
+        if (current < 1.0f) return 1.2f;
+        if (current < 1.6f) return 2f;
+        return 0.3f;
     }
 
     public static void setTrackingSoftness(float value) {
@@ -393,6 +396,13 @@ public final class CineSettings {
         synchronized (LOCK) {
             trackingSoftness = v;
             saveLocked();
+        }
+    }
+
+    public static float trackingSoftness() {
+        load();
+        synchronized (LOCK) {
+            return trackingSoftness;
         }
     }
 
