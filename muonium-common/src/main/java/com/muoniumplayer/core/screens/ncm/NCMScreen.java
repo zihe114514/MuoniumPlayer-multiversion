@@ -2151,6 +2151,15 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         double mouseY = mY / yScale;
         WindowAdaptiveScale.end();
 
+        if (mouseButton == 0 && this.musicLyricsPanel != null) {
+            this.musicLyricsPanel.cancelLyricPointerPress();
+            if (this.musicLyricsPanel.pressLyricPointer(mouseX, mouseY)) {
+                this.pendingClickActive = false;
+                this.pendingClickSponsorOwner = null;
+                return;
+            }
+        }
+
         if (TouchSettings.ENABLED) {
             // 按下只记账（坐标已换算到布局空间，与 dispatchClick 内部口径一致）；
             // 松手沿上由 TouchGestures 判定这是点按还是拖动滚动。联想可见性与悬停行
@@ -2337,6 +2346,19 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     @Override
     public void mouseReleased(int mX, int mY, int state) {
         super.mouseReleased(mX, mY, state);
+        if (state == 0 && this.musicLyricsPanel != null && this.musicLyricsPanel.hasLyricPointerPress()) {
+            if (TouchSettings.ENABLED && !TouchGestures.get().consumeTap()) {
+                this.musicLyricsPanel.cancelLyricPointerPress();
+                return;
+            }
+            RenderSystem.refreshResolution();
+            WindowAdaptiveScale.begin();
+            double mouseX = mX / WindowAdaptiveScale.correctionX();
+            double mouseY = mY / WindowAdaptiveScale.correctionY();
+            WindowAdaptiveScale.end();
+            this.musicLyricsPanel.releaseLyricPointer(mouseX, mouseY);
+            return;
+        }
         if (!TouchSettings.ENABLED || !this.pendingClickActive || state != this.pendingClickButton) {
             return;
         }
