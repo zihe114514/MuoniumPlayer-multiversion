@@ -224,7 +224,11 @@ dependencies {
 }
 
 test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        if (!providers.gradleProperty('muonium.includeNetworkSmoke').map { it.toBoolean() }.getOrElse(false)) {
+            excludeTags 'network-smoke'
+        }
+    }
     // 测试 JVM 不许真去下载伴生包：断网/超时会拖垮整轮测试
     systemProperty 'muonium.skija.autoDownload', 'false'
     // CI（ubuntu）无 Skija 可用的原生加载链路：给需要原生库的测试类整类禁用
