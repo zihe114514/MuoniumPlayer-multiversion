@@ -83,8 +83,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     boolean prevMouse = false;
 
-    /** 本帧是否出现「按过且刚抬起且没拖过」的点沿；onRender 头部捕获，歌词行 seek 消费。 */
-    private boolean tapReleaseEdge;
+    private final ClassicLyricPointer classicLyricPointer = new ClassicLyricPointer();
+    private ClassicLyricPointer.Track applePressTrack;
 
     /** 本帧是否出现按下沿（onRender 头部捕获）：进度条拖拽起手用，拖不属于点按语义。 */
     private boolean lmbPressEdge;
@@ -198,6 +198,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     /** 当前样式对应的渲染器；{@code null} 表示走经典的滚动歌词。 */
+    private AppleLyricRenderer appleRenderer() {
+        return (AppleLyricRenderer) styleRenderers[FullscreenLyricStyle.APPLE.ordinal()];
+    }
+
     private FullscreenLyricRenderer currentStyleRenderer() {
         int index = FullscreenLyricStyle.current().ordinal();
         if (index < 0 || index >= styleRenderers.length) return null;
@@ -669,6 +673,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     public void onInit() {
+        invalidateLyricPointers();
         fluidLyricBackground.reset();
         foliaBackground.reset();
         if (handoffPrewarmed) {
@@ -716,6 +721,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     public void close() {
+        invalidateLyricPointers();
         closing = true;
         CoverHeroTransition.beginClose();
     }
@@ -730,17 +736,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     public void onRender(double mouseX, double mouseY, double posX, double posY, double width, double height, int dWheel) {
 
-        // 左键锁存与两条边沿都在这里统一结算（渲染各段之前）：
-        //  · tapReleaseEdge：「按过 + 刚抬起 + 这一按从头到尾没拖过」（TouchGestures#
-        //    lastPressWasDrag）= 一次点按。歌词行的 seek 据此结算——触屏时代按下那一下
-        //    可能只是滚动的起手，直接 seek 就是「想滑列表结果跳了进度」。
-        //  · lmbPressEdge：按下沿。进度条的拖拽起手是<b>拖</b>不是点，仍在按下沿启动，
-        //    由手势层的主轴锁定负责让位（竖向手势滑过进度条不 seek，见那一处的门）。
+        // The progress slider still uses the press edge; lyric clicks resolve through mouse events.
         boolean lmbDownNow = Mouse.isButtonDown(0);
-        boolean prevLatch = prevMouse;
-        this.tapReleaseEdge = prevLatch && !lmbDownNow
-                && !TouchGestures.get().lastPressWasDrag();
-        this.lmbPressEdge = lmbDownNow && !prevLatch;
+        this.lmbPressEdge = lmbDownNow && !prevMouse;
         prevMouse = lmbDownNow;
 
         // 本层不透明度不再自己插值，而是读转场时钟：整条「播放器主页 到 全屏歌词页」的进退场由
@@ -751,7 +749,14 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         if (!closing) prepareFrame(lyricViewport);
         // 进场前 16% 与退场末段本层都是全透明的。此前只有退场会跳过，进场仍会完整画一遍
         // 背景、控制栏与歌词；低配机上这就是开头连续掉帧的来源之一。
-        if (alpha <= CLOSE_ALPHA_EPSILON) return;
+        if (alpha <= CLOSE_ALPHA_EPSILON) {
+            invalidateLyricPointers();
+            return;
+        }
+        if (lmbDownNow) {
+            classicLyricPointer.pointerMoved(mouseX, mouseY, Math.max(1, TouchSettings.DRAG_THRESHOLD_PX));
+            appleRenderer().dragLyric(mouseX, mouseY);
+        }
 
         // 面板尺寸动画过程中按真实视口重排。阈值可避免亚像素变化导致每帧重建全部歌词。
         double viewportLyricWidth = lyricViewport.width;
@@ -794,11 +799,14 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             api.getGLStateManager().pushMatrix();
             api.getGLStateManager().translate(0, lyricRise, 0);
             if (presentation.preparing) {
+                invalidateLyricPointers();
                 renderPendingLyricStatus(lyricViewport, alpha);
             } else {
-                this.renderLyrics(mouseX, mouseY, posX, posY, width, height, lyricWheel, alpha, snapshot);
+                this.renderLyrics(mouseX, mouseY, posX, posY, width, height, lyricWheel, alpha, snapshot, contentScale, lyricRise);
             }
             api.getGLStateManager().popMatrix();
+        } else {
+            invalidateLyricPointers();
         }
         // 快捷面板画在最后：它是浮层，必须盖在封面与歌词之上。
         this.styleQuickPanel.render(mouseX, mouseY, posX, posY, width, height, alpha);
@@ -831,11 +839,15 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 hexColor(1, 1, 1, opacity * .54f));
     }
 
-    private void renderLyrics(double mouseX, double mouseY, double posX, double posY, double width, double height, int dWheel, float alphaIn, CloudMusic.PlaybackSnapshot snapshot) {
+    private void renderLyrics(double mouseX, double mouseY, double posX, double posY, double width, double height, int dWheel, float alphaIn, CloudMusic.PlaybackSnapshot snapshot,
+                              double contentScale, double lyricRise) {
         float alpha = alphaIn * (float) CoverHeroTransition.lyricsFade();
 
-        if (CloudMusic.lyrics.isEmpty()) return;
-        if (!CloudMusic.lyricsMatchCurrentTrack()) return;
+        long lyricRevision = CloudMusic.lyricsRevision;
+        if (CloudMusic.lyrics.isEmpty() || !CloudMusic.lyricsMatchCurrentTrack()) {
+            invalidateLyricPointers();
+            return;
+        }
 
         // 「有没有可用的播放时钟」不能问 snapshot.player：镜像态下出声的是外部播放器，
         // player 恒为 null，而进度与歌词都要照常走。
@@ -845,7 +857,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         double songProgress = playerNotReady ? 0 : (progressBarDragging ? overridePlaybackProgress : snapshot.positionMs);
 
         LyricViewport lyricViewport = createLyricViewport(posX, posY, width, height);
-        if (lyricViewport.width <= .5 || lyricViewport.height <= .5) return;
+        if (lyricViewport.width <= .5 || lyricViewport.height <= .5) {
+            invalidateLyricPointers();
+            return;
+        }
 
         // 「未到歌词模糊」（移植 qplayer edgeBlur）：开启且清晰带已收敛时主循环只更新
         // 状态不绘制，整列由循环后的「模糊份×带外蒙版 + 清晰份×带内蒙版」双通路绘制，
@@ -857,6 +872,15 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
         FullscreenLyricRenderer styleRenderer = currentStyleRenderer();
         if (styleRenderer != null) {
+            classicLyricPointer.invalidate();
+            if (styleRenderer instanceof AppleLyricRenderer apple && allowAppleLyricPointer()
+                    && lyricPointerTrack(snapshot, lyricRevision) != null) {
+                if (dWheel != 0) cancelLyricPointerPress();
+                apple.lyricPointer(mouseX, mouseY, snapshot, lyricRevision);
+            } else {
+                appleRenderer().invalidateLyricPointer();
+                applePressTrack = null;
+            }
             // 非 classic 样式不跑 edgeBlur 主循环，但也要把带状态停掉：
             // 否则切回 classic 的头几帧会用分钟前的旧带算 ghostT，把行错误
             // 模糊/清晰（dt 被钳 0.05 时要 5-8 帧才收敛回正确位置）。
@@ -866,6 +890,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             return;
         }
 
+        appleRenderer().invalidateLyricPointer();
+        applePressTrack = null;
         boolean lyricManualScroll = Math.abs(scrollTarget) > 0.01 || Math.abs(scrollOffset) > 0.01;
         updateLyricPositions(posY, height, lyricsWidth, displayedCurrentLyric,
                 songProgress, lyricManualScroll);
@@ -884,7 +910,6 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         if (scrollOffsetResetTimer.isDelayed(3000)) scrollTarget = 0;
         scrollOffset = Interpolations.interpolate(scrollOffset, scrollTarget, 0.25f);
 
-        double lyricRenderOffsetX = lyricViewport.left;
         double lyricsViewportTop = lyricViewport.top;
         double lyricsViewportBottom = lyricViewport.bottom();
 
@@ -900,7 +925,11 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             int renderStart = Math.max(0, qplayerGroupStart[anchorGroup] - 16);
             int renderEnd = Math.min(lines.size(), qplayerGroupEnd[anchorGroup] + 16 + 1);
             double fontHeight = FontManager.pf65bold.getHeight();
-            double lineStep = fontHeight;
+            int hoveredLine = updateClassicLyricPointer(lyricViewport, lines, renderStart, renderEnd,
+                    posX + width * .5, posY + height * .5, contentScale, lyricRise,
+                    posY + height * lyricFraction(), songProgress, mouseX, mouseY, dWheel,
+                    snapshot, lyricRevision);
+            if (hoveredLine >= 0) CursorUtils.setOverride(CursorUtils.HAND);
 
             for (int k = renderStart; k < renderEnd; k++) {
                 LyricLine lyric = lines.get(k);
@@ -917,22 +946,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                             lyric.posY + scrollOffset + lyric.height);
                 }
                 lyric.alpha = activeK;
-                boolean isHovering = isHovered(mouseX, mouseY - scrollOffset,
-                        lyricRenderOffsetX, lyric.posY, lyricsWidth, lyric.height);
                 lyric.hoveringAlpha = Interpolations.interpolate(lyric.hoveringAlpha,
-                        isHovering ? 1f : 0f, 0.2f);
-                if (isHovering) CursorUtils.setOverride(CursorUtils.HAND);
-                // 模态浮层（选词、建单等）打开时这一帧的按住不属于歌词列：点遮罩会同时把
-                // 底下的歌词行当成跳转、seek 到那一行的时刻。
-                // 点击语义在松手沿结算（tapReleaseEdge，见 onRender 开头）：按下那一下可能
-                // 只是滚动的起手，直接 seek 就是「想滑列表结果跳了进度」。
-                if (!NCMScreen.getInstance().isModalOverlayActive()
-                        && isHovering && tapReleaseEdge) {
-                    if (CloudMusic.hasPlaybackClock() && CloudMusic.seekToMillis(lyric.timestamp)) {
-                        resetLyricStatus();
-                    }
-                    scrollTarget = 0;
-                }
+                        k == hoveredLine ? 1f : 0f, 0.2f);
 
                 // 「未到歌词模糊」开启且清晰带有效时，整列由循环后的模糊/清晰两个
                 // 蒙版通路绘制，主循环只跑交互与状态；带无效（首帧）时按清晰绘制。
@@ -963,6 +978,127 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             if (lyricScissorActive) ScissorClipManager.end();
             StencilClipManager.restoreActiveClip();
             StencilClipManager.endClip();
+        }
+    }
+
+    private int updateClassicLyricPointer(LyricViewport viewport, List<LyricLine> lines,
+                                         int start, int end, double centerX, double centerY,
+                                         double scale, double rise, double anchorY, double songProgress,
+                                         double mouseX, double mouseY, int wheel,
+                                         CloudMusic.PlaybackSnapshot snapshot, long revision) {
+        var track = lyricPointerTrack(snapshot, revision);
+        if (!allowLyricPointer() || track == null) {
+            classicLyricPointer.invalidate();
+            return -1;
+        }
+        if (wheel != 0 || lyricsTouchDragging) classicLyricPointer.cancel();
+        classicLyricPointer.beginFrame(track, centerX, centerY, scale, rise,
+                viewport.left, viewport.top, viewport.width, viewport.height);
+        double fontHeight = FontManager.pf65bold.getHeight();
+        for (int k = start; k < end; k++) {
+            LyricLine lyric = lines.get(k);
+            if (lyric == null || lyric.isBreakLine) continue;
+            double rowTop = lyric.posY + scrollOffset;
+            if (rowTop + lyric.height < viewport.top - 32 || rowTop > viewport.bottom() + 32) continue;
+            double columnWidth = LyricDuetGroups.columnWidth(viewport.width, lyric.duetSlot);
+            double columnLeft = LyricDuetGroups.columnLeft(viewport.left, viewport.width, lyric.duetSlot);
+            int rows = lyric.words.isEmpty()
+                    ? lyric.wrappedRows(FontManager.pf65bold, lyric.lyric, qplayerWrapWidth(columnWidth)).length
+                    : qplayerPlacement(lyric, lyric.words, columnLeft, qplayerWrapWidth(columnWidth),
+                            LyricDuetGroups.rightAligned(lyric.duetSlot)).first.length;
+            if (rows == 0) continue;
+            double mainTextHeight = rows * fontHeight;
+            double paintedHeight = mainTextHeight;
+            if (lyric.translationText != null && !lyric.translationText.isBlank()) {
+                CFontRenderer translationFont = FontManager.pf34bold;
+                int translationRows = lyric.wrappedRows(translationFont, lyric.translationText,
+                        qplayerWrapWidth(columnWidth)).length;
+                if (translationRows > 0) {
+                    double translationBottom = (rows - 1) * fontHeight + fontHeight * .85 + 8
+                            + translationRows * translationFont.getHeight() + 4 * (translationRows - 1);
+                    paintedHeight = Math.max(paintedHeight, translationBottom);
+                }
+            }
+            float activeK = qplayerActiveK(qplayerLineToGroup[k], songProgress);
+            double rowScale = qplayerLineScale(activeK, anchorY, rowTop + mainTextHeight * .5, mainTextHeight);
+            classicLyricPointer.addRow(k, lyric.timestamp, columnLeft, rowTop, columnWidth,
+                    paintedHeight, mainTextHeight, rowScale);
+        }
+        return classicLyricPointer.hover(mouseX, mouseY);
+    }
+
+    private boolean allowLyricPointer() {
+        return !closing && !styleQuickPanel.isExpanded() && !progressBarDragging
+                && !NCMScreen.getInstance().isModalOverlayActive() && CloudMusic.hasPlaybackClock()
+                && !CloudMusic.playbackPresentation().preparing;
+    }
+
+    private static ClassicLyricPointer.Track lyricPointerTrack(CloudMusic.PlaybackSnapshot snapshot, long revision) {
+        if (snapshot.preparing || snapshot.durationMs <= 0 || snapshot.music == null
+                || !CloudMusic.lyricsMatchCurrentTrack()) return null;
+        return new ClassicLyricPointer.Track(snapshot.sessionId, snapshot.music.getStableKey(), revision);
+    }
+
+    private boolean allowAppleLyricPointer() {
+        return allowLyricPointer() && !CoverHeroTransition.isRunning() && !PlayerIslandTransition.isRunning();
+    }
+
+    private void invalidateLyricPointers() {
+        classicLyricPointer.invalidate();
+        appleRenderer().invalidateLyricPointer();
+        applePressTrack = null;
+    }
+
+    boolean pressLyricPointer(double mouseX, double mouseY) {
+        if (!allowLyricPointer()) return false;
+        var snapshot = CloudMusic.getSnapshot();
+        long revision = CloudMusic.lyricsRevision;
+        var track = lyricPointerTrack(snapshot, revision);
+        var renderer = currentStyleRenderer();
+        if (renderer instanceof AppleLyricRenderer apple && allowAppleLyricPointer() && track != null
+                && apple.pressLyric(mouseX, mouseY, snapshot, revision)) {
+            applePressTrack = track;
+            return true;
+        }
+        return renderer == null && classicLyricPointer.press(mouseX, mouseY, track);
+    }
+
+    boolean hasLyricPointerPress() {
+        return classicLyricPointer.isPressed() || appleRenderer().hasLyricPress();
+    }
+
+    void cancelLyricPointerPress() {
+        classicLyricPointer.cancel();
+        appleRenderer().cancelLyricPress();
+        applePressTrack = null;
+    }
+
+    void releaseLyricPointer(double mouseX, double mouseY) {
+        if (!allowLyricPointer()) {
+            cancelLyricPointerPress();
+            return;
+        }
+        var snapshot = CloudMusic.getSnapshot();
+        long revision = CloudMusic.lyricsRevision;
+        var track = lyricPointerTrack(snapshot, revision);
+        var renderer = currentStyleRenderer();
+        long millis = -1;
+        if (renderer instanceof AppleLyricRenderer apple && allowAppleLyricPointer()
+                && track != null && track.equals(applePressTrack)) {
+            millis = apple.releaseLyric(mouseX, mouseY, snapshot, revision);
+        } else if (renderer == null) {
+            millis = classicLyricPointer.release(mouseX, mouseY, Math.max(1, TouchSettings.DRAG_THRESHOLD_PX), track);
+        }
+        cancelLyricPointerPress();
+        seekToLyric(millis, snapshot);
+    }
+
+    private void seekToLyric(long millis, CloudMusic.PlaybackSnapshot snapshot) {
+        // Mirrored playback has no local player/session to satisfy the local seek guard.
+        // Its identity was already checked against the captured frame before dispatch.
+        if (millis >= 0 && CloudMusic.seekToMillis(millis, snapshot.player == null ? null : snapshot)) {
+            resetLyricStatus();
+            scrollTarget = 0;
         }
     }
 

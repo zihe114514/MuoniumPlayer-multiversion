@@ -6,6 +6,7 @@ import java.util.List;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.settings.HudConfig;
+import com.muoniumplayer.core.utils.cursor.CursorUtils;
 
 /**
  * 「苹果」：仿 Apple Music 全屏歌词。
@@ -156,6 +157,47 @@ final class AppleLyricRenderer extends AbstractStageLyricRenderer {
     }
 
     private final List<Row> rows = new ArrayList<Row>();
+    private final AppleLyricInteraction interaction = new AppleLyricInteraction();
+    private double pointerX = Double.NaN;
+    private double pointerY = Double.NaN;
+    private long pointerSession;
+    private long pointerRevision;
+    private boolean acceptingPointer;
+
+    void lyricPointer(double x, double y, CloudMusic.PlaybackSnapshot snapshot, long revision) {
+        pointerX = x;
+        pointerY = y;
+        pointerSession = snapshot.sessionId;
+        pointerRevision = revision;
+        acceptingPointer = true;
+    }
+
+    void invalidateLyricPointer() {
+        acceptingPointer = false;
+        pointerX = pointerY = Double.NaN;
+        interaction.invalidate();
+    }
+
+    boolean pressLyric(double x, double y, CloudMusic.PlaybackSnapshot snapshot, long revision) {
+        return interaction.press(x, y, snapshot.sessionId, revision);
+    }
+
+    boolean hasLyricPress() {
+        return interaction.isPressed();
+    }
+
+    long releaseLyric(double x, double y, CloudMusic.PlaybackSnapshot snapshot, long revision) {
+        return interaction.release(x, y, snapshot.sessionId, revision);
+    }
+
+    void cancelLyricPress() {
+        interaction.cancel();
+    }
+
+    void dragLyric(double x, double y) {
+        interaction.drag(x, y);
+    }
+
 
     private LyricLine laidOutCenter;
     private double laidOutWidth = -1;
@@ -183,6 +225,7 @@ final class AppleLyricRenderer extends AbstractStageLyricRenderer {
     private static final int METRICS_MAX_RETRIES = 40;
 
     protected void onReset() {
+        invalidateLyricPointer();
         rows.clear();
         laidOutCenter = null;
         laidOutWidth = -1;
@@ -197,6 +240,9 @@ final class AppleLyricRenderer extends AbstractStageLyricRenderer {
     }
     protected void draw(double left, double top, double width, double height,
                         float alpha, double positionMs, LyricLine currentLine, double opened) {
+        AppleLyricInteraction.Bounds viewport = new AppleLyricInteraction.Bounds(
+                left, top, left + width, top + height);
+        if (acceptingPointer) interaction.beginFrame(pointerSession, pointerRevision, viewport);
         boolean viewportChanged = tuningDirty
                 || Math.abs(width - laidOutWidth) >= 2.0
                 || Math.abs(height - laidOutHeight) >= 2.0;
@@ -290,6 +336,29 @@ final class AppleLyricRenderer extends AbstractStageLyricRenderer {
             double pivotX = row.right ? blockX + row.width : blockX;
             double pivotY = textTop + row.textHeight * .5;
 
+            double textLeft = pivotX + (blockX - pivotX) * lineScale;
+            double textRight = pivotX + (blockX + row.width - pivotX) * lineScale;
+            double visualTop = pivotY - lift + (textTop - pivotY) * lineScale;
+            double visualBottom = visualTop + row.textHeight * lineScale;
+            if (row.translation != null && translationFont != null) {
+                double transWidth = row.translationRawWidth * translationScale;
+                textLeft = Math.min(textLeft, row.right ? blockX + row.width - transWidth : blockX);
+                textRight = Math.max(textRight, row.right ? blockX + row.width : blockX + transWidth);
+                visualBottom = Math.max(visualBottom, textTop + row.translationY - lift
+                        + FullscreenLyricStage.lineHeightOf(translationFont, translationScale));
+            }
+            AppleLyricInteraction.Bounds target = new AppleLyricInteraction.Bounds(
+                    textLeft - 3.0, visualTop - 3.0, textRight + 3.0, visualBottom + 3.0).clip(viewport);
+            if (!target.visible()) continue;
+            boolean hovered = acceptingPointer && target.contains(pointerX, pointerY);
+            boolean pressed = acceptingPointer && interaction.isPressed(row.line);
+            if (acceptingPointer) interaction.add(row.line, row.line.timestamp, target);
+            if (hovered || pressed) {
+                FullscreenLyricStage.bar(target.left(), target.top(),
+                        target.right() - target.left(), target.bottom() - target.top(),
+                        5.0, litColor, alpha * (pressed ? .11 : .055));
+            }
+
             for (int t = 0; t < row.toks.size(); t++) {
                 Tok tok = row.toks.get(t);
                 drawToken(row, tok, blockX, textTop - lift, pivotX, pivotY - lift, lineScale,
@@ -311,6 +380,7 @@ final class AppleLyricRenderer extends AbstractStageLyricRenderer {
                 }
             }
         }
+        if (acceptingPointer && interaction.canHit(pointerX, pointerY)) CursorUtils.setOverride(CursorUtils.HAND);
     }
     /**
      * 画一个音节块。
