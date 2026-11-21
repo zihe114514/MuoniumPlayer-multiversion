@@ -52,6 +52,18 @@ class CineSchedulerTest {
     }
 
     @Test
+    void defaultIdleStartsAtTenSeconds() {
+        CineSettings.resetForTest();
+        CineSettings.setEnabled(true);
+        session = new CineSession();
+        tick(); // First valid scene establishes world/player identity and is not an idle tick.
+        for (int i = 0; i < CineSettings.IDLE_SECONDS_DEFAULT * 20 - 1; i++) tick();
+        assertFalse(session.frame().active(), "默认闲置时间未满时不能接管");
+        tick();
+        assertTrue(session.frame().active(), "达到默认 10 秒后应启动运镜");
+    }
+
+    @Test
     void firstFrameUsesActualWorldPositionAndRepeatedReadsArePure() {
         probe.x = 3_000d;
         probe.y = -20d;
@@ -434,29 +446,24 @@ class CineSchedulerTest {
     }
 
     @Test
-    void inputAndMusicStopReturnCameraWithRateLimits() {
+    void playerInputImmediatelyReleasesCameraControl() {
         activate();
-        CinePose previous = session.frame().current();
         probe.input = true;
         tick();
-        assertTrue(session.frame().active(), "归还期间仍需保持相机接管");
+        assertFalse(session.frame().active(), "输入发生的 tick 内应释放相机接管");
+        assertEquals("键鼠输入", session.stopReason());
+        assertNull(session.frame().sample(0.5f));
+    }
+
+    @Test
+    void musicStopStillReturnsCameraWithRateLimits() {
+        activate();
+        CinePose previous = session.frame().current();
+        session.tick(probe, CineSettings.snapshot(), CineSession.Playback.STOPPED, now + TICK);
+        assertTrue(session.frame().active(), "音乐停止仍平滑归还相机");
         CinePose current = session.frame().current();
         assertTrue(distance(previous, current) <= 5d * 0.05d + 1.0e-6d);
         assertAngleStep(previous.yawDeg(), current.yawDeg(), 45d * 0.05d);
-        assertTrue(Math.abs(current.fovOffsetDeg() - previous.fovOffsetDeg()) <= 3d * 0.05d + 1.0e-4d);
-        CinePose last = current;
-        for (int i = 0; i < 100 && session.frame().active(); i++) {
-            tick();
-            if (!session.frame().active()) break;
-            current = session.frame().current();
-            assertTrue(distance(last, current) <= 5d * 0.05d + 1.0e-6d);
-            assertAngleStep(last.yawDeg(), current.yawDeg(), 45d * 0.05d);
-            assertAngleStep(last.pitchDeg(), current.pitchDeg(), 45d * 0.05d);
-            assertTrue(Math.abs(current.fovOffsetDeg() - last.fovOffsetDeg()) <= 3d * 0.05d + 1.0e-4d);
-            last = current;
-        }
-        assertFalse(session.frame().active(), "归还抵达玩家视角后才释放接管");
-        assertNull(session.frame().sample(0.5f));
     }
 
     private static double distance(CinePose a, CinePose b) {

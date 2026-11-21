@@ -27,6 +27,8 @@ public final class CineSettings {
 
     /** 闲置秒数的合法区间。下限 5s 防误触（走路短暂停手不该进运镜）。 */
     public static final int IDLE_SECONDS_MIN = 5, IDLE_SECONDS_MAX = 3600;
+    /** 首次安装的默认闲置时长，与 HUD 首选项默认项一致。 */
+    public static final int IDLE_SECONDS_DEFAULT = 10;
     /** 镜头时长（拍数）的合法区间：1 拍 = 最快的 MV 快切，32 拍 ≈ 主歌长镜头。 */
     public static final int SHOT_BEATS_MIN = 1, SHOT_BEATS_MAX = 32;
     /** 镜头运动速度乘数区间：0 = 镜头内静止，4 = 快速移动。 */
@@ -56,12 +58,8 @@ public final class CineSettings {
     /** 测试 IO 闸：置位后 load/save 全部旁路（测试 JVM 不许碰真实工作目录的 cine.json）。 */
     static boolean testIoHooked;
     private static boolean enabled;
-    /**
-     * 播放中持续多少秒无输入后进入运镜。默认 300s —— 对齐 Ambient Camera 的
-     * idleSeconds（5..3600）：那是「屏保」语义，我们继承同一口径（卡点运镜是
-     * 同场景替代品，不是常驻运镜）；调试时改 json 即可。
-     */
-    private static int idleSeconds = 300;
+    /** 播放中持续多少秒无输入后进入运镜。 */
+    private static int idleSeconds = IDLE_SECONDS_DEFAULT;
     /** 每个镜头的基准时长（拍数）。实际时长还会被段落能量调制（副歌更快）。 */
     private static int shotBeats = 4;
     private static float speedMultiplier = 0.7f;
@@ -443,7 +441,7 @@ public final class CineSettings {
             loaded = false;
             testIoHooked = true;
             enabled = false;
-            idleSeconds = 300;
+            idleSeconds = IDLE_SECONDS_DEFAULT;
             shotBeats = 4;
             speedMultiplier = 0.7f;
             environmentShotPercent = 50;
