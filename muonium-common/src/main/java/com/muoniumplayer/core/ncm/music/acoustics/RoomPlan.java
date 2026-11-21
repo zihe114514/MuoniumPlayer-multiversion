@@ -25,6 +25,8 @@ public final class RoomPlan {
     public final float[] tapDelaySec;
     public final float[] tapGainL;
     public final float[] tapGainR;
+    /** 每条几何反射的高频幅度保留比(高频/中频),null 输入回退为 1。 */
+    public final float[] tapHighRatio;
 
     /** 距离 × 遮挡/绕射的直射增益,两种渲染后端共用。 */
     public final float directGain;
@@ -54,9 +56,9 @@ public final class RoomPlan {
                     float[] tapDelaySec, float[] tapGainL, float[] tapGainR) {
         this(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
                 decayLowSec, decayHighSec, diffusion,
-                tapDelaySec, tapGainL, tapGainR,
+                tapDelaySec, tapGainL, tapGainR, null,
                 1f, DirectPath.FC_OPEN, 0f, 0f,
-                false, 1f, 0.5f, false, 0, 0, 0);
+                false, 1f, 0.5f, false, 0, 0, 0, 0f, false, 0f);
     }
 
     public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
@@ -67,9 +69,9 @@ public final class RoomPlan {
                     float directDistanceMeters) {
         this(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
                 decayLowSec, decayHighSec, diffusion,
-                tapDelaySec, tapGainL, tapGainR,
+                tapDelaySec, tapGainL, tapGainR, null,
                 directGain, directCutoffHz, directPan, directDistanceMeters,
-                false, 1f, 0.5f, false, 0, 0, 0);
+                false, 1f, 0.5f, false, 0, 0, 0, 0f, false, directDistanceMeters);
     }
 
     public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
@@ -83,10 +85,10 @@ public final class RoomPlan {
                     double speakerX, double speakerY, double speakerZ) {
         this(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
                 decayLowSec, decayHighSec, diffusion,
-                tapDelaySec, tapGainL, tapGainR,
+                tapDelaySec, tapGainL, tapGainR, null,
                 directGain, directCutoffHz, directPan, directDistanceMeters,
                 useOpenAlReverb, reverbDecayHfRatio, reverbDiffusion,
-                hasSpeakerAnchor, speakerX, speakerY, speakerZ, 0f, false);
+                hasSpeakerAnchor, speakerX, speakerY, speakerZ, 0f, false, directDistanceMeters);
     }
 
     public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
@@ -101,10 +103,11 @@ public final class RoomPlan {
                     float transitionSec) {
         this(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
                 decayLowSec, decayHighSec, diffusion,
-                tapDelaySec, tapGainL, tapGainR,
+                tapDelaySec, tapGainL, tapGainR, null,
                 directGain, directCutoffHz, directPan, directDistanceMeters,
                 useOpenAlReverb, reverbDecayHfRatio, reverbDiffusion,
-                hasSpeakerAnchor, speakerX, speakerY, speakerZ, transitionSec, false);
+                hasSpeakerAnchor, speakerX, speakerY, speakerZ,
+                transitionSec, false, directDistanceMeters);
     }
 
     public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
@@ -119,7 +122,7 @@ public final class RoomPlan {
                     float transitionSec, boolean diffracted) {
         this(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
                 decayLowSec, decayHighSec, diffusion,
-                tapDelaySec, tapGainL, tapGainR,
+                tapDelaySec, tapGainL, tapGainR, null,
                 directGain, directCutoffHz, directPan, directDistanceMeters,
                 useOpenAlReverb, reverbDecayHfRatio, reverbDiffusion,
                 hasSpeakerAnchor, speakerX, speakerY, speakerZ,
@@ -130,6 +133,26 @@ public final class RoomPlan {
                     float predelaySec, float decaySec, float tone,
                     float decayLowSec, float decayHighSec, float diffusion,
                     float[] tapDelaySec, float[] tapGainL, float[] tapGainR,
+                    float directGain, double directCutoffHz, float directPan,
+                    float directDistanceMeters,
+                    boolean useOpenAlReverb, float reverbDecayHfRatio, float reverbDiffusion,
+                    boolean hasSpeakerAnchor,
+                    double speakerX, double speakerY, double speakerZ,
+                    float transitionSec, boolean diffracted, float directPathMeters) {
+        this(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
+                decayLowSec, decayHighSec, diffusion,
+                tapDelaySec, tapGainL, tapGainR, null,
+                directGain, directCutoffHz, directPan, directDistanceMeters,
+                useOpenAlReverb, reverbDecayHfRatio, reverbDiffusion,
+                hasSpeakerAnchor, speakerX, speakerY, speakerZ,
+                transitionSec, diffracted, directPathMeters);
+    }
+
+    /** Full plan including per-path high-band retention for early reflections. */
+    public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
+                    float predelaySec, float decaySec, float tone,
+                    float decayLowSec, float decayHighSec, float diffusion,
+                    float[] tapDelaySec, float[] tapGainL, float[] tapGainR, float[] tapHighRatio,
                     float directGain, double directCutoffHz, float directPan,
                     float directDistanceMeters,
                     boolean useOpenAlReverb, float reverbDecayHfRatio, float reverbDiffusion,
@@ -147,15 +170,21 @@ public final class RoomPlan {
         this.decayLowSec = (float) finiteClamp(decayLowSec, 0, 5.6, 0);
         this.decayHighSec = (float) finiteClamp(decayHighSec, 0, 5.6, 0);
         this.diffusion = (float) finiteClamp(diffusion, 0, 1, 1);
-        this.tapCount = Math.min(192, Math.min(length(tapDelaySec),
+        final int baseCount = Math.min(192, Math.min(length(tapDelaySec),
                 Math.min(length(tapGainL), length(tapGainR))));
+        this.tapCount = baseCount;
         this.tapDelaySec = new float[tapCount];
         this.tapGainL = new float[tapCount];
         this.tapGainR = new float[tapCount];
+        this.tapHighRatio = tapHighRatio == null ? new float[0] : new float[tapCount];
         for (int i = 0; i < tapCount; i++) {
             this.tapDelaySec[i] = (float) finiteClamp(tapDelaySec[i], 0, 0.24, 0);
             this.tapGainL[i] = (float) finiteClamp(tapGainL[i], 0, 2, 0);
             this.tapGainR[i] = (float) finiteClamp(tapGainR[i], 0, 2, 0);
+            if (tapHighRatio != null) {
+                this.tapHighRatio[i] = (float) finiteClamp(i < tapHighRatio.length
+                        ? tapHighRatio[i] : 1f, 0, 1, 1);
+            }
         }
         this.directGain = (float) finiteClamp(directGain, 0, 1, 1);
         this.directCutoffHz = finiteClamp(directCutoffHz, 200, DirectPath.FC_OPEN, DirectPath.FC_OPEN);
@@ -178,7 +207,7 @@ public final class RoomPlan {
     /** 只补过渡时长,不丢绕射标记、到达方向或路径长度。 */
     public RoomPlan withTransition(float seconds) {
         return new RoomPlan(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
-                decayLowSec, decayHighSec, diffusion, tapDelaySec, tapGainL, tapGainR,
+                decayLowSec, decayHighSec, diffusion, tapDelaySec, tapGainL, tapGainR, tapHighRatio,
                 directGain, directCutoffHz, directPan, directDistanceMeters,
                 useOpenAlReverb, reverbDecayHfRatio, reverbDiffusion,
                 hasSpeakerAnchor, speakerX, speakerY, speakerZ,

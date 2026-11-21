@@ -1,5 +1,8 @@
 package com.muoniumplayer.core.ncm.music.audio;
 
+import com.muoniumplayer.core.ncm.music.acoustics.DirectPath;
+import com.muoniumplayer.core.ncm.music.acoustics.RoomPlan;
+import com.muoniumplayer.core.ncm.music.acoustics.SceneAcoustics;
 import com.muoniumplayer.render.skija.SkijaNatives;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -75,6 +78,125 @@ class OpenAlReverbBusTest {
                 }
             }
         }
+    }
+
+    @Test
+    void sceneKeepsNativeHrtfForOversizedCallbackAndShortRemainder() throws Exception {
+        final int capacity = 192;
+        try (Fixture fixture = new Fixture(RATE, capacity, false)) {
+            final double worldOrigin = 29_999_900.0;
+            SceneAcoustics.setListenerPose(worldOrigin, 0, worldOrigin, 0, 0, 1, 0, 1, 0);
+            SceneAcoustics.applyTarget(scenePlan(1f, 1f, worldOrigin - 4, 0, worldOrigin));
+            final double[] input = new double[(capacity * 5 + 73) * 2];
+            for (int frame = 0; frame < input.length / 2; frame++) {
+                input[frame * 2] = input[frame * 2 + 1] = 0.25 * Math.sin(frame * 0.41);
+            }
+
+            primeScene();
+            final double[] large = input.clone();
+            SceneAcoustics.render(large, 2, RATE);
+            assertFalse(fixture.bus.isBroken());
+            try (Binding ignored = Binding.forBus(fixture.bus)) {
+                for (int source : sources(fixture.bus)) {
+                    assertEquals(AL10.AL_PLAYING, AL10.alGetSourcei(source, AL10.AL_SOURCE_STATE));
+                    assertEquals(1, AL10.alGetSourcei(source, AL10.AL_BUFFERS_QUEUED));
+                }
+                assertEquals(AL10.AL_NO_ERROR, AL10.alGetError());
+            }
+
+            primeScene();
+            final double[] split = new double[input.length];
+            for (int offset = 0; offset < input.length; offset += capacity * 2) {
+                final double[] block = Arrays.copyOfRange(input, offset, Math.min(input.length, offset + capacity * 2));
+                SceneAcoustics.render(block, 2, RATE);
+                System.arraycopy(block, 0, split, offset, block.length);
+            }
+            double error = 0;
+            double signalL = 0;
+            double signalR = 0;
+            // Only compare the partial last chunk, which must also use the already running HRIR.
+            for (int frame = capacity * 5; frame < input.length / 2; frame++) {
+                final double dl = large[frame * 2] - split[frame * 2];
+                final double dr = large[frame * 2 + 1] - split[frame * 2 + 1];
+                error += dl * dl + dr * dr;
+                signalL += split[frame * 2] * split[frame * 2];
+                signalR += split[frame * 2 + 1] * split[frame * 2 + 1];
+            }
+            assertTrue(signalR > 0.03 && signalR > signalL * 1.2, "MC right source must favor the right ear");
+            assertTrue(error < (signalL + signalR) * 1e-4,
+                    "oversized output must match native output in the partial chunk: " + error);
+        } finally {
+            clearScene();
+        }
+    }
+
+    @Test
+    void sceneNativePcmHasHeadroomBeforeFinalLinkedLimiter() throws Exception {
+        try (Fixture fixture = new Fixture(RATE, CAPACITY, false)) {
+            SceneAcoustics.setListenerPose(0, 0, 0, 0, 0, 1, 0, 1, 0);
+            SceneAcoustics.applyTarget(scenePlan(1f, 0.25f, 0, 0, 1));
+            final double quiet = sceneToneEnergy(0.2, false);
+            final double loud = sceneToneEnergy(1.6, false);
+            assertFalse(fixture.bus.isBroken());
+            assertTrue(quiet > 0.1);
+            assertEquals(8.0, Math.sqrt(loud / quiet), 0.1,
+                    "loud dry PCM must stay linear before the final linked limiter");
+        } finally {
+            clearScene();
+        }
+    }
+
+    @Test
+    void sceneKeepsNativeOutputForOpposedChannelsEvenWhenSidePositionsCoincide() throws Exception {
+        try (Fixture fixture = new Fixture(RATE, CAPACITY, false)) {
+            SceneAcoustics.setListenerPose(0, 0, 0, 0, 0, 1, 0, 1, 0);
+            SceneAcoustics.applyTarget(scenePlan(1f, 1f, 0, 4, 0));
+            final double inPhase = sceneToneEnergy(0.30, false);
+            final double opposed = sceneToneEnergy(0.30, true);
+            assertFalse(fixture.bus.isBroken());
+            assertTrue(inPhase > 0.1);
+            assertTrue(opposed > inPhase * 0.02 && opposed < inPhase * 0.10,
+                    "coincident side ends should collapse to an audible, centered fold");
+        } finally {
+            clearScene();
+        }
+    }
+
+    private static RoomPlan scenePlan(float gain, float dryGain, double x, double y, double z) {
+        final float distance = 4f;
+        return new RoomPlan(20000, 0, dryGain, 1, 0, 0, 0.28f, 0, 0, 1,
+                null, null, null, gain, DirectPath.FC_OPEN, 0, distance,
+                true, 1, 0.5f, true, x, y, z);
+    }
+
+    private static void primeScene() {
+        SceneAcoustics.flush();
+        SceneAcoustics.render(new double[4096 * 2], 2, RATE);
+    }
+
+    private static void clearScene() {
+        SceneAcoustics.clearTarget();
+        SceneAcoustics.setListenerPose(0, 0, 0, 0, 0, 1, 0, 1, 0);
+        SceneAcoustics.flush();
+        SceneAcoustics.render(new double[128], 2, RATE);
+    }
+
+    private static double sceneToneEnergy(double amplitude, boolean opposed) {
+        primeScene();
+        double total = 0;
+        final double[] pcm = new double[64 * 2];
+        for (int block = 0; block < 180; block++) {
+            for (int frame = 0; frame < pcm.length / 2; frame++) {
+                final double sample = amplitude * Math.sin((block * 64 + frame) * (2 * Math.PI / 32));
+                pcm[frame * 2] = sample;
+                pcm[frame * 2 + 1] = opposed ? -sample : sample;
+            }
+            SceneAcoustics.render(pcm, 2, RATE);
+            if (block >= 32) {
+                for (double value : pcm) total += value * value;
+            }
+        }
+        return total;
     }
 
     @Test
