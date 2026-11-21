@@ -1107,11 +1107,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         }
         float pad = sigma * 3 + 8;
         double y = lyric.posY + scrollOffset;
-        var area = io.github.humbleui.types.Rect.makeLTRB(
-                (float) viewport.left - pad, (float) Math.max(viewport.top - pad, y - pad),
-                (float) (viewport.left + viewport.width) + pad,
-                (float) Math.min(viewport.bottom() + pad, y + lyric.height + pad));
-        if (area.getHeight() <= 0) return;
+        var area = LyricBlurClip.layer(viewport.left, viewport.top, viewport.left + viewport.width,
+                viewport.bottom(), y, y + lyric.height, pad);
+        if (area == null) return;
         try (var paint = new io.github.humbleui.skija.Paint()) {
             paint.setImageFilter(edgeBlurFilter(sigma));
             int saved = canvas.saveLayer(area, paint);
