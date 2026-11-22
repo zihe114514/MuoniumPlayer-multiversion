@@ -168,3 +168,8 @@ error-report-*/
 /*/forge/MuoniumPlayer/
 /MuoniumPlayer/
 /NeoRaven/
+
+# ---- MuoniumChat 服务端：已迁出本仓，独立私有仓维护（不打进客户端/不开源） ----
+# 见 https://github.com/zihe114514/muonium-chat-server
+/muonium-chat-server/
+/muonium-chat-server
