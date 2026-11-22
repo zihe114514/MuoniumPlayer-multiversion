@@ -495,7 +495,7 @@ MuoniumPlayer 由**四位开发者**共同维护：心事抱抱、云杉、N0ne�
 
 贡献者：[WJiangzhi](https://github.com/WJiangzhi) —— OneConfig 冲突防护与 HUD 设置选择（[PR #31](https://github.com/zihe114514/MuoniumPlayer-multiversion/pull/31)）、ImBlocker 输入法恢复（[PR #35](https://github.com/zihe114514/MuoniumPlayer-multiversion/pull/35)）。
 
-贡献者：[LPFVG](https://github.com/LPFVG) —— 桌面歌词对齐与排版（PR #33）。
+贡献者：[LPFVG](https://github.com/LPFVG) —— 桌面歌词对齐与排版（[PR #33](https://github.com/zihe114514/MuoniumPlayer-multiversion/pull/33)）。
 
 GitHub 贡献者：[查看完整贡献者列表](https://github.com/zihe114514/MuoniumPlayer-multiversion/graphs/contributors)
 
