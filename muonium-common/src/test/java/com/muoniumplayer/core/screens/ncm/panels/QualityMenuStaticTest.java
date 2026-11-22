@@ -125,6 +125,20 @@ class QualityMenuStaticTest {
                 "收起动画期间还在收点击：已经看不清的一行能被误点中");
     }
 
+    @Test
+    @DisplayName("音质菜单提供持久化的整曲响度均衡开关")
+    void loudnessNormalizationCanBeToggledFromThePlayer() throws IOException {
+        String controls = read(CONTROLS);
+        String config = read(ProjectPaths.sourceFile(Paths.get(
+                "com", "muoniumplayer", "core", "screens", "ncm", "NCMPlayerConfig.java")));
+        assertTrue(flat(controls).contains("setClickable(qualityMenuOpen && reveal > .35)"),
+                "开关必须服从菜单展开/收起的可点击边界");
+        assertTrue(controls.contains("NCMPlayerConfig.setTrackLoudnessNormalizationEnabled(enabled)"),
+                "菜单项必须写入播放器设置");
+        assertTrue(config.contains("trackLoudnessNormalizationEnabled"),
+                "播放器开关必须持久化");
+    }
+
     private static double openMillis() throws IOException {
         return constant(read(CONTROLS), "QUALITY_OPEN_MS");
     }

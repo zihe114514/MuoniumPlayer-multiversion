@@ -403,6 +403,9 @@ public final class ConfigPaths {
      */
     public static final File AUTOMIX_PLAN_CACHE = new File(CACHE_DIR, "automix_plans");
 
+    /** Disposable per-track integrated-loudness measurements. */
+    public static final File TRACK_LOUDNESS_CACHE = new File(CACHE_DIR, "track_loudness");
+
     /**
      * 每首歌手动设置的歌词时间轴偏移（毫秒）。
      *

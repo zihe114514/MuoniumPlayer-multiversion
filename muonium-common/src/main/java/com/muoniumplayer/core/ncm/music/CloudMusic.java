@@ -4965,7 +4965,9 @@ public class CloudMusic implements SharedConstants {
                 incoming.setVocalDuckDepth(plan.incomingVocalDepth(0.0));
                 incoming.setMidGainDb(plan.incomingMidDb(0.0));
                 incoming.setHighGainDb(plan.incomingHighDb(0.0));
-                incoming.setFadeGain(plan.incomingGain(0.0));
+                incoming.setFadeGain(plan.incomingGain(0.0,
+                        outgoing.appliedTrackLoudnessGain()
+                                / Math.max(.000001f, incoming.appliedTrackLoudnessGain())));
                 try {
                     if (track.preRolled) {
                         // 自预卷起就已经以全静音发声：上面的增益线就是
@@ -5172,7 +5174,10 @@ public class CloudMusic implements SharedConstants {
          */
         private void writeTransitionFrame(AutomixFade fade, double progress) {
             if (fade.incoming != null) {
-                fade.incoming.applyAutomixFrame(fade.plan.incomingGain(progress),
+                double loudnessRatio = fade.outgoing == null ? 1.0
+                        : fade.outgoing.appliedTrackLoudnessGain()
+                                / Math.max(.000001f, fade.incoming.appliedTrackLoudnessGain());
+                fade.incoming.applyAutomixFrame(fade.plan.incomingGain(progress, loudnessRatio),
                         fade.plan.incomingBassDb(progress),
                         fade.plan.incomingVocalDepth(progress),
                         fade.plan.incomingMidDb(progress),

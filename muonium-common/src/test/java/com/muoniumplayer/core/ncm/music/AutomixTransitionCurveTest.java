@@ -54,6 +54,20 @@ class AutomixTransitionCurveTest {
     }
 
     @Test
+    void trackNormalizationRatioRemovesDuplicatedWholeTrackMatch() {
+        AutomixPlan matched = new AutomixPlan(0L, 2_000L, 0L, 1.4f,
+                false, false, 1f, false, 0L, 0f, "matched");
+        AutomixPlan neutral = new AutomixPlan(0L, 2_000L, 0L, 1f,
+                false, false, 1f, false, 0L, 0f, "neutral");
+        double outgoingToIncomingGain = 1.0 / 1.4;
+
+        for (double progress : new double[]{0.0, .25, .5, .9, 1.0}) {
+            assertEquals(neutral.incomingGain(progress),
+                    matched.incomingGain(progress, outgoingToIncomingGain), .0001f);
+        }
+    }
+
+    @Test
     void previewIsARealPlanSnapshotRatherThanAVisualOnlyCurve() {
         AutomixTransitionCurve preview = AutomixTransitionCurve.preview();
 

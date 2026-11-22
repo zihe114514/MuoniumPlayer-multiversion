@@ -109,7 +109,7 @@ final class PcmWindowReader implements AnalysisAudio {
             if (bytesPerFrame <= 0) bytesPerFrame = channels * (bitsPerSample / 8);
             if (bytesPerFrame <= 0) return null;
             boolean supported = (format == WAVE_FORMAT_PCM
-                    && (bitsPerSample == 16 || bitsPerSample == 24 || bitsPerSample == 32))
+                    && (bitsPerSample == 8 || bitsPerSample == 16 || bitsPerSample == 24 || bitsPerSample == 32))
                     || (format == WAVE_FORMAT_IEEE_FLOAT && bitsPerSample == 32);
             if (!supported) return null;
 
@@ -197,6 +197,34 @@ final class PcmWindowReader implements AnalysisAudio {
         }
     }
 
+    /** Sequentially measures the original one- or two-channel PCM without allocating the whole track. */
+    boolean scan(IntegratedLoudnessMeter meter) {
+        if (meter == null || channels < 1 || channels > 2) return false;
+        try {
+            handle.seek(dataOffset);
+            int sampleBytes = bitsPerSample / 8;
+            int framesRemaining = frames;
+            byte[] buffer = new byte[Math.max(bytesPerFrame, (COPY_CHUNK_BYTES / bytesPerFrame) * bytesPerFrame)];
+            while (framesRemaining > 0) {
+                int requestedFrames = Math.min(framesRemaining, buffer.length / bytesPerFrame);
+                int requestedBytes = requestedFrames * bytesPerFrame;
+                int read = readFully(buffer, requestedBytes);
+                if (read != requestedBytes) return false;
+                int framesRead = read / bytesPerFrame;
+                for (int frame = 0; frame < framesRead; frame++) {
+                    int base = frame * bytesPerFrame;
+                    float left = decode(buffer, base);
+                    float right = channels == 2 ? decode(buffer, base + sampleBytes) : 0f;
+                    if (!meter.acceptFrame(left, right, channels)) return false;
+                }
+                framesRemaining -= framesRead;
+            }
+            return true;
+        } catch (Throwable unavailable) {
+            return false;
+        }
+    }
+
     private int readFully(byte[] buffer, int wantBytes) throws IOException {
         int total = 0;
         while (total < wantBytes) {
@@ -209,6 +237,8 @@ final class PcmWindowReader implements AnalysisAudio {
 
     private float decode(byte[] buffer, int offset) {
         switch (bitsPerSample) {
+            case 8:
+                return ((buffer[offset] & 0xff) - 128) / 128.0f;
             case 16: {
                 int value = (buffer[offset] & 0xFF) | (buffer[offset + 1] << 8);
                 return value / 32768f;
