@@ -16,6 +16,7 @@ import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
+import com.muoniumplayer.core.rendering.ui.widgets.ThemedTextureIconWidget;
 // 图标码位表只有这一份：字体 party-icons.ttf 在 core 的资源里，FontManager 里的四档渲染器也在
 // core，唯独码位常量落在 mpparty-common —— 那份源码目录被四个版本工程直接加进 main 源码集，
 // 和 core 是同一次编译，所以这里 import 它不会引入任何构建依赖。宁可跨包 import，也不要把码位
@@ -986,6 +987,16 @@ public abstract class NcmSheet extends NCMPanel {
     protected void brandMark(final AbstractWidget<?> host, final MusicPlatform platform, final double size,
                              final String fallbackGlyph, final CFontRenderer fallbackFont,
                              final DoubleSupplier cx, final DoubleSupplier cy, final IntSupplier color) {
+        if (PlatformAppIcons.location(platform) != null) {
+            ThemedTextureIconWidget icon = PlatformAppIcons.widget(platform, fallbackGlyph, fallbackFont,
+                    0, 0, size);
+            host.addChild(icon);
+            icon.setBeforeRenderCallback(() -> {
+                icon.setColor(0xFFFFFFFF);
+                icon.setPosition(cx.getAsDouble() - size * .5, cy.getAsDouble() - size * .5);
+            });
+            return;
+        }
         if (!BrandVectorIcons.has(platform)) {
             glyph(host, fallbackGlyph, fallbackFont, cx, cy, color);
             return;

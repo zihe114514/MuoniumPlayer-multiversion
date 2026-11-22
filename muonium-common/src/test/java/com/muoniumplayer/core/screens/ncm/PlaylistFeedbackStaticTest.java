@@ -199,14 +199,29 @@ class PlaylistFeedbackStaticTest {
         MethodTree rebuild = add.method("rebuildPlaylistList");
         assertTrue(compact(rebuild).contains("if(closing||playlistList==null)return;"));
         MethodInvocationTree spinner = one(rebuild, "loading");
-        assertTrue(compact(spinner).contains("music.isKuGou()") && hasCall(spinner, "areUserPlaylistsLoading"));
+        assertTrue(compact(spinner).contains("isAccountPlaylistLoading()"));
+        String loading = compact(add.method("isAccountPlaylistLoading"));
+        assertTrue(loading.contains("music.isKuGou()") && loading.contains("KuGouMusicService.areUserPlaylistsLoading()")
+                        && loading.contains("music.isBodian()") && loading.contains("BodianMusicService.areUserPlaylistsLoading()"),
+                "The empty-list loading state must cover both account playlist services");
         assertTrue(hasCall(add.method("onInit"), "areUserPlaylistsLoaded"));
         assertTrue(hasCall(add.method("onInit"), "areUserPlaylistsLoading"));
-        MethodInvocationTree ensure = one(add.method("onInit"), "ensureUserPlaylistsAsync");
-        assertTrue(hasCall(ensure, "runOnMainThread") && branches(ensure).stream().anyMatch(branch ->
-                compact(branch.getCondition()).contains("!closing") && compact(branch.getCondition()).contains("canPresentResult()")
-                        && hasCall(branch.getThenStatement(), "rebuildPlaylistList")),
-                "Lazy completion must marshal a closing-guarded list refresh to the client thread");
+        List<MethodInvocationTree> ensures = calls(add.method("onInit")).stream()
+                .filter(call -> name(call).equals("ensureUserPlaylistsAsync")).toList();
+        assertEquals(3, ensures.size(), "酷狗、波点与 Spotify 账号歌单必须分别懒加载");
+        assertTrue(ensures.stream().anyMatch(call -> call.getMethodSelect().toString()
+                        .equals("KuGouMusicService.ensureUserPlaylistsAsync"))
+                        && ensures.stream().anyMatch(call -> call.getMethodSelect().toString()
+                        .equals("BodianMusicService.ensureUserPlaylistsAsync"))
+                        && ensures.stream().anyMatch(call -> call.getMethodSelect().toString()
+                        .equals("SpotifyMusicService.ensureUserPlaylistsAsync")),
+                "Account playlist services must be wired");
+        for (MethodInvocationTree ensure : ensures) {
+            assertTrue(hasCall(ensure, "runOnMainThread") && branches(ensure).stream().anyMatch(branch ->
+                    compact(branch.getCondition()).contains("!closing") && compact(branch.getCondition()).contains("canPresentResult()")
+                            && hasCall(branch.getThenStatement(), "rebuildPlaylistList")),
+                    "Lazy completion must marshal a closing-guarded list refresh to the client thread");
+        }
         assertFalse(hasCall(rebuild, "onInit") || hasCall(rebuild, "restart"));
     }
 

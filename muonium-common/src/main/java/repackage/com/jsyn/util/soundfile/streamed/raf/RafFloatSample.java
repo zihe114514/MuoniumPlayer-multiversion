@@ -92,6 +92,14 @@ public class RafFloatSample extends FloatSample {
     }
 
     /**
+     * 在后台为即将起播的读头播种环形缓存，并让顺序预取从该位置继续。
+     * 调用方必须保证这个样本尚未出声，或已经暂停。
+     */
+    public boolean preparePlaybackAt(int interleavedIndex) {
+        return prefetch.prepareAt(interleavedIndex);
+    }
+
+    /**
      * 单生产者环形缓存。引擎线程的稳态读路径是一次 volatile 读、两次比较、一次掩码取值
      * ——零锁、零分配、零 IO。
      *
@@ -189,6 +197,38 @@ public class RafFloatSample extends FloatSample {
         boolean isAlive() {
             Thread thread = worker;
             return thread != null && thread.isAlive();
+        }
+
+        /** 播放起点的启动余量；8 个窗口在 44.1kHz 立体声下约 371ms。 */
+        static final int PREPARED_STARTUP_SPAN = WINDOW * 8;
+
+        /** 把播放起点及其前向启动余量发布到 ring；只用于尚未出声的 deck。 */
+        boolean prepareAt(int interleavedIndex) {
+            if (interleavedIndex < 0) return false;
+            int base = interleavedIndex & ~(WINDOW - 1);
+            synchronized (SYNC) {
+                try {
+                    long cursor = base;
+                    long preparedUntil = (long) interleavedIndex + PREPARED_STARTUP_SPAN;
+                    boolean containsCue = false;
+                    while (cursor < preparedUntil) {
+                        float[] got = reader.read(cursor * reader.getSampleSizeInBytes());
+                        if (got == null || got.length == 0) break;
+                        if (interleavedIndex >= cursor && interleavedIndex < cursor + got.length) {
+                            containsCue = true;
+                        }
+                        publish(cursor, got);
+                        cursor += got.length;
+                        if (got.length < WINDOW) break;
+                    }
+                    if (!containsCue) return false;
+                    consumed = base;
+                    return true;
+                } catch (Throwable t) {
+                    logFailure(t);
+                    return false;
+                }
+            }
         }
 
         /** 引擎线程读一个采样。稳态走无锁快路径；miss 落到锁内应急读。 */

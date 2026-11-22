@@ -202,6 +202,25 @@ class RafFloatSampleTest {
         sample.cleanUp();
     }
 
+    @Test
+    void preparedPlaybackWindowStartsAtTheCueWithoutAnEmergencyRead() throws Exception {
+        Path file = temp.resolve("prepared.wav");
+        int frames = 200_000;
+        writeWav(file, frames, 2, 44100);
+        RafFloatSample sample = load(file, frames, 2);
+
+        int cue = 120_000;
+        assertTrue(sample.preparePlaybackAt(cue));
+        long slowBefore = sample.slowReadCount();
+        long end = (long) cue + RafFloatSample.PrefetchRing.PREPARED_STARTUP_SPAN;
+        for (int i = cue; i < end; i++) {
+            assertEquals(valueAt(i), (float) sample.readDouble(i), 2e-4, "prepared index " + i);
+        }
+        assertEquals(slowBefore, sample.slowReadCount(),
+                "首个 cue 窗口及 WSOLA 前瞻必须已在后台发布，播放线程不能同步 seek/read");
+        sample.cleanUp();
+    }
+
     /**
      * 生产链路穿透锁：SoundFile 的实际类型链是
      * {@code WsolaStretchSample → VocalMaterialSample → RafFloatSample}

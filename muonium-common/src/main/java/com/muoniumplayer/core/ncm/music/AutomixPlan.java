@@ -162,6 +162,12 @@ final class AutomixPlan {
         return manualQuickMix(overlapMillis, true);
     }
 
+    static AutomixPlan naturalQuickMix(long overlapMillis) {
+        return new AutomixPlan(0L, overlapMillis, 0L, 1f, false, false, 1f, false,
+                0L, 0f, "natural quick mix", null, 0f, 0f, false,
+                .42, .42, .45, false, 500.0, 0f, 0.0, false, null);
+    }
+
     static AutomixPlan manualQuickMix(long overlapMillis, boolean processing) {
         return new AutomixPlan(0L, overlapMillis, 0L, 1f, false, processing, 1f, false,
                 0L, 0f, processing ? "manual spectral mix" : "manual plain mix", null, 0f, 0f, false,
@@ -308,9 +314,20 @@ final class AutomixPlan {
      * 可闻的台阶。</p>
      */
     float incomingGain(double progress) {
+        return incomingGain(progress, 1.0);
+    }
+
+    /**
+     * Incoming gain adjusted for independent whole-track normalization on each deck.
+     * The ratio removes the part of the cached local match that the track gains already supply.
+     */
+    float incomingGain(double progress, double outgoingToIncomingTrackGain) {
         double p = clamp(progress);
         double remaining = 1.0 - p;
-        double match = 1.0 + (matchGain - 1.0) * remaining * remaining;
+        double ratio = Double.isFinite(outgoingToIncomingTrackGain) && outgoingToIncomingTrackGain > 0.0
+                ? outgoingToIncomingTrackGain : 1.0;
+        double adjustedMatch = Math.max(.65, Math.min(1.60, matchGain * ratio));
+        double match = 1.0 + (adjustedMatch - 1.0) * remaining * remaining;
         double shape = style != null && style.together > 0.0
                 ? togetherGain(p, false) : Math.sin(p * Math.PI * .5);
         return (float) (shape * match * blendHeadroom(p));

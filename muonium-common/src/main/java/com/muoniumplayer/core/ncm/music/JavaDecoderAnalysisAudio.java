@@ -94,6 +94,29 @@ final class JavaDecoderAnalysisAudio implements AnalysisAudio {
         return null;
     }
 
+    /** One-pass whole-file scan used by loudness normalization; no decoded-track-sized arrays are retained. */
+    static IntegratedLoudnessMeter.Measurement analyzeWhole(File file) {
+        if (file == null || !file.isFile()) return null;
+        String container = AudioContainerSupport.detectContainer(file);
+        try {
+            if ("mp3".equals(container)) {
+                Mp3Source source = Mp3Source.open(file);
+                if (source == null) return null;
+                IntegratedLoudnessMeter meter = new IntegratedLoudnessMeter(source.sampleRate());
+                return source.scan(meter) ? meter.finish() : null;
+            }
+            if ("flac".equals(container)) {
+                FlacSource source = FlacSource.open(file);
+                if (source == null || source.channels > 2) return null;
+                IntegratedLoudnessMeter meter = new IntegratedLoudnessMeter(source.sampleRate());
+                return source.scan(meter) ? meter.finish() : null;
+            }
+        } catch (Throwable failure) {
+            System.err.println("[Loudness] Whole-file scan failed for " + file.getName() + ": " + failure);
+        }
+        return null;
+    }
+
     @Override
     public int sampleRate() {
         return source.sampleRate();
@@ -373,6 +396,45 @@ final class JavaDecoderAnalysisAudio implements AnalysisAudio {
             }
         }
 
+        boolean scan(IntegratedLoudnessMeter meter) {
+            try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
+                raf.seek(frameOffsets[0]);
+                InputStream in = new BufferedInputStream(new RafInputStream(raf, frameOffsets[0]), 1 << 16);
+                Bitstream bitstream = null;
+                try {
+                    bitstream = new Bitstream(in);
+                    Decoder decoder = new Decoder();
+                    SampleBuffer buffer = null;
+                    int bufferChannels = 0;
+                    Header header;
+                    while ((header = bitstream.readFrame()) != null) {
+                        if (header.frequency() != sampleRate) return false;
+                        int frameChannels = header.mode() == Header.SINGLE_CHANNEL ? 1 : 2;
+                        if (buffer == null || bufferChannels != frameChannels) {
+                            buffer = new SampleBuffer(header.frequency(), frameChannels);
+                            bufferChannels = frameChannels;
+                            decoder.setOutputBuffer(buffer);
+                        }
+                        decoder.decodeFrame(header, bitstream);
+                        bitstream.closeFrame();
+                        if (!meter.acceptPcm16(buffer.getBuffer(), buffer.getBufferLength(), frameChannels)) {
+                            return false;
+                        }
+                    }
+                    return meter.finish() != null;
+                } finally {
+                    if (bitstream != null) {
+                        try {
+                            bitstream.close();
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                }
+            } catch (Throwable failure) {
+                return false;
+            }
+        }
+
         /** 不超过 startSample 的最后一个帧。索引第一项采样位置恒为 0。 */
         private int frameIndexFor(long startSample) {
             int low = 0, high = frameCount - 1, best = 0;
@@ -471,6 +533,33 @@ final class JavaDecoderAnalysisAudio implements AnalysisAudio {
                     Math.max(0L, startSample - 2L * maxBlockSize), true);
             if (viaSeek.length > 0) return viaSeek;
             return decodeWindow(startSample, want, 0L, false);
+        }
+
+        boolean scan(final IntegratedLoudnessMeter meter) {
+            if (channels < 1 || channels > 2) return false;
+            RandomFileInputStream in = null;
+            try {
+                in = new RandomFileInputStream(file);
+                FLACDecoder decoder = new FLACDecoder(in);
+                decoder.addPCMProcessor(new PCMProcessor() {
+                    @Override
+                    public void processStreamInfo(StreamInfo streamInfo) {
+                    }
+
+                    @Override
+                    public void processPCM(ByteData data) {
+                        if (!meter.acceptPcmBytes(data.getData(), data.getLen(), channels, bitsPerSample)) {
+                            throw new IllegalStateException("Unsupported FLAC PCM layout");
+                        }
+                    }
+                });
+                decoder.decode();
+                return decoder.getBadFrames() == 0 && meter.finish() != null;
+            } catch (Throwable failure) {
+                return false;
+            } finally {
+                closeQuietly(in);
+            }
         }
 
         private float[] decodeWindow(long startSample, int want, long seekTo, boolean useSeek) {

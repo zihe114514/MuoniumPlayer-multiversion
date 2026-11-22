@@ -3,6 +3,9 @@ package com.muoniumplayer.core.screens.ncm;
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.core.ncm.music.LocalMusicLibrary;
 import com.muoniumplayer.core.ncm.music.LocalPlaylistStore;
+import com.muoniumplayer.core.ncm.music.BodianMusicService;
+import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
@@ -48,6 +51,20 @@ public final class PlaylistCreateSheet extends NcmSheet {
     /** 「导入本地文件夹」的选择器在打开中；同一张建单页同一时刻只许一枚系统对话框。 */
     private boolean folderImportInFlight;
 
+    private boolean isQQCloudMode() {
+        return NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QQ
+                && NeteaseMusicService.isLoggedIn(MusicPlatform.QQ);
+    }
+
+    private boolean isBodianCloudMode() {
+        return NeteaseMusicService.getCurrentPlatform() == MusicPlatform.BODIAN
+                && NeteaseMusicService.isLoggedIn(MusicPlatform.BODIAN);
+    }
+
+    private boolean isCloudPlaylistMode() {
+        return isQQCloudMode() || isBodianCloudMode();
+    }
+
     public PlaylistCreateSheet() {
         this(null);
     }
@@ -82,14 +99,17 @@ public final class PlaylistCreateSheet extends NcmSheet {
         final Panel dialog = NcmExpressive.shell(this, 660, () -> renaming == null ? 686 : 472,
                 () -> presentation, this::dismiss);
         NcmExpressive.header(dialog, renaming == null ? PartyIcons.ALBUM : PartyIcons.TEXT_FORMAT,
-                () -> "Mu 本地歌单", () -> renaming == null ? "新建本地歌单" : "重命名本地歌单",
+                () -> isQQCloudMode() ? "QQ 音乐歌单" : isBodianCloudMode() ? "波点音乐歌单" : "Mu 本地歌单",
+                () -> renaming == null
+                        ? (isQQCloudMode() ? "新建 QQ 音乐歌单" : isBodianCloudMode() ? "新建波点音乐歌单" : "新建本地歌单")
+                        : (isQQCloudMode() ? "重命名 QQ 音乐歌单" : isBodianCloudMode() ? "重命名波点音乐歌单" : "重命名本地歌单"),
                 this::dismiss);
         final Panel content = body(dialog, () -> NcmExpressive.headerHeight(dialog) + 14,
                 () -> footerHeight(dialog));
         final ScrollPanel list = feed(content);
         nameForm = strip(list, () -> (renaming == null ? 438 : 224) + errorDetailsHeight());
         buildNameForm(nameForm);
-        if (renaming == null) buildImportEntries(nameForm);
+        if (renaming == null && !isCloudPlaylistMode()) buildImportEntries(nameForm);
 
         final Panel footer = new Panel();
         dialog.addChild(footer);
@@ -381,7 +401,23 @@ public final class PlaylistCreateSheet extends NcmSheet {
             return;
         }
         if (renaming != null) {
+            if (isQQCloudMode() && renaming.getPlatform() == MusicPlatform.QQ) {
+                renameQQ(name);
+                return;
+            }
+            if (isBodianCloudMode() && renaming.getPlatform() == MusicPlatform.BODIAN) {
+                renameBodian(name);
+                return;
+            }
             renameTo(name);
+            return;
+        }
+        if (isQQCloudMode()) {
+            createQQ(name);
+            return;
+        }
+        if (isBodianCloudMode()) {
+            createBodian(name);
             return;
         }
         final PlayList created;
@@ -398,6 +434,76 @@ public final class PlaylistCreateSheet extends NcmSheet {
         dispose();
         // 建完直接进这张单：空列表配一句提示，比让用户回到侧栏再找它一次要顺。
         NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(created));
+    }
+
+    private void createQQ(String name) {
+        try {
+            long tid = NeteaseMusicService.createQQPlaylist(name);
+            NeteaseMusicService.forceRefreshQQAccountAsync(null);
+            PlayList created = new PlayList(tid, name, "", 0, 0L, null,
+                    "QQ 音乐歌单", 0L);
+            created.setPlatform(MusicPlatform.QQ);
+            created.setPlatformPlaylistId(String.valueOf(tid));
+            DownloadDynamicIsland.showModelOperationResult("QQ 音乐歌单", "已新建「" + name + "」", true);
+            dispose();
+            NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(created));
+        } catch (Throwable failure) {
+            statusText = "QQ 歌单创建失败：" + (failure.getMessage() == null ? "未确认写入" : failure.getMessage());
+            failed = true;
+        }
+    }
+
+    private void renameQQ(String name) {
+        try {
+            boolean ok = NeteaseMusicService.renameQQPlaylist(renaming.getPlatformPlaylistId(), name);
+            if (!ok) throw new IllegalStateException("写后核对未通过");
+            NeteaseMusicService.forceRefreshQQAccountAsync(null);
+            PlayList renamed = new PlayList(renaming.getId(), name, renaming.getCoverUrl(),
+                    renaming.getCount(), renaming.getPlayCount(), renaming.getCreator(),
+                    renaming.getDescription(), renaming.getCreateTime());
+            renamed.setPlatform(MusicPlatform.QQ);
+            renamed.setPlatformPlaylistId(renaming.getPlatformPlaylistId());
+            DownloadDynamicIsland.showModelOperationResult("QQ 音乐歌单", "已改名为「" + name + "」", true);
+            dispose();
+            NCMScreen.getInstance().replaceCurrentPanel(new PlaylistPanel(renamed));
+        } catch (Throwable failure) {
+            statusText = "QQ 歌单改名失败：" + (failure.getMessage() == null ? "未确认写入" : failure.getMessage());
+            failed = true;
+        }
+    }
+
+    private void createBodian(String name) {
+        try {
+            PlayList created = BodianMusicService.createPlaylist(name);
+            if (created == null) throw new IllegalStateException("服务端未返回新歌单");
+            BodianMusicService.forceRefreshUserPlaylistsAsync(null);
+            NCMScreen.getInstance().markDirty();
+            DownloadDynamicIsland.showModelOperationResult("波点音乐歌单", "已新建「" + name + "」", true);
+            dispose();
+            NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(created));
+        } catch (Throwable failure) {
+            statusText = "波点歌单创建失败：" + (failure.getMessage() == null ? "未确认写入" : failure.getMessage());
+            failed = true;
+        }
+    }
+
+    private void renameBodian(String name) {
+        try {
+            boolean ok = BodianMusicService.renamePlaylist(renaming.getPlatformPlaylistId(), name);
+            if (!ok) throw new IllegalStateException("服务端未确认改名");
+            BodianMusicService.forceRefreshUserPlaylistsAsync(null);
+            PlayList renamed = new PlayList(renaming.getId(), name, renaming.getCoverUrl(),
+                    renaming.getCount(), renaming.getPlayCount(), renaming.getCreator(),
+                    renaming.getDescription(), renaming.getCreateTime());
+            renamed.setPlatform(MusicPlatform.BODIAN);
+            renamed.setPlatformPlaylistId(renaming.getPlatformPlaylistId());
+            DownloadDynamicIsland.showModelOperationResult("波点音乐歌单", "已改名为「" + name + "」", true);
+            dispose();
+            NCMScreen.getInstance().replaceCurrentPanel(new PlaylistPanel(renamed));
+        } catch (Throwable failure) {
+            statusText = "波点歌单改名失败：" + (failure.getMessage() == null ? "未确认写入" : failure.getMessage());
+            failed = true;
+        }
     }
 
     /**

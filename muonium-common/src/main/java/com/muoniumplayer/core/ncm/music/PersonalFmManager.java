@@ -134,6 +134,7 @@ public final class PersonalFmManager {
      * 一行可看，剩下大半屏是空的。上限只是防一手长时间挂机把它撑大，取数那一侧并不用它。</p>
      */
     private static volatile List<Music> history = Collections.emptyList();
+    private static volatile int qqRadarPage = 1;
     private static final int HISTORY_LIMIT = 20;
     /** 已经接进活队列、但还没播到的下一首；播到它时由 {@link #noteFmTrackStarted(Music)} 清掉。 */
     private static volatile Music prefetchedNext;
@@ -178,6 +179,7 @@ public final class PersonalFmManager {
         currentBatch = Collections.emptyList();
         history = Collections.emptyList();
         prefetchedNext = null;
+        if (platform == MusicPlatform.QQ) qqRadarPage = 1;
         status = platform == MusicPlatform.QISHUI ? "进入后获取汽水发现流推荐" : "进入后获取 1 首私人 FM 推荐";
         // 让新平台的 FM 页首次打开时重新拉一次（旧的「已经拉过」标记属于旧平台）。
         INITIAL_REQUEST_ISSUED.set(false);
@@ -345,7 +347,15 @@ public final class PersonalFmManager {
             requestQishuiBatch(startPlaybackAfterLoad);
             return;
         }
-        if (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L) {
+        MusicPlatform platform = NeteaseMusicService.getCurrentPlatform();
+        if (platform == MusicPlatform.QQ && !NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)) {
+            status = "QQ 私人 FM 需要先登录 QQ 音乐";
+            LOADING.set(false);
+            notifyUi();
+            return;
+        }
+        if (platform != MusicPlatform.QQ
+                && (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L)) {
             status = "私人 FM 需要登录网易云账号";
             LOADING.set(false);
             notifyUi();
@@ -480,6 +490,16 @@ public final class PersonalFmManager {
      * 解析行为日后慢慢分叉。
      */
     private static List<Music> fetchRecommendations() throws Exception {
+        if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QQ) {
+            if (!NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)) {
+                throw new IllegalStateException("QQ 私人 FM 需要先登录 QQ 音乐");
+            }
+            int page = qqRadarPage;
+            List<Music> loaded = NeteaseMusicService.getQQPersonalFm(page);
+            if (loaded.isEmpty()) throw new IllegalStateException("QQ 雷达没有返回可播放曲目");
+            qqRadarPage = page >= 100 ? 1 : page + 1;
+            return loaded.subList(0, Math.min(BATCH_SIZE, loaded.size()));
+        }
         if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QISHUI) {
             List<Music> loaded = QishuiMusicService.discoverFeedTracks(BATCH_SIZE, playedFeedback(),
                     getSelectedQishuiMode());

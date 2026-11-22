@@ -164,6 +164,7 @@ public class SynthesisEngine implements Synthesizer {
     // private int numOutputChannels;
     // private int numInputChannels;
     private final CopyOnWriteArrayList<Runnable> audioTasks = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<Runnable> completedBufferTasks = new CopyOnWriteArrayList<>();
     private double mOutputLatency;
     private double mInputLatency;
     /** 精确对应于-96 dB的分数。*/
@@ -465,6 +466,9 @@ public class SynthesisEngine implements Synthesizer {
         }
         processOutput();
         observeOutput();
+        for (Runnable task : completedBufferTasks) {
+            task.run();
+        }
     }
 
     @Override
@@ -678,6 +682,14 @@ public class SynthesisEngine implements Synthesizer {
     @Override
     public void addAudioTask(Runnable blockTask) {
         audioTasks.add(blockTask);
+    }
+
+    public void addCompletedBufferTask(Runnable task) {
+        completedBufferTasks.add(task);
+    }
+
+    public void removeCompletedBufferTask(Runnable task) {
+        completedBufferTasks.remove(task);
     }
 
     @Override

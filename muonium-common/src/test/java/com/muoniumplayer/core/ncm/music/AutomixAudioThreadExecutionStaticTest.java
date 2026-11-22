@@ -190,6 +190,43 @@ class AutomixAudioThreadExecutionStaticTest {
         }
     }
 
+    @Test
+    @DisplayName("重复预备先停旧读头并跨过音频缓冲边界，再改写流式 ring")
+    void rearmingRenderedDeckWaitsForAudioBoundaryBeforeReseeding() throws IOException {
+        String audioPlayer = read(music("AudioPlayer.java"));
+        String prepare = body(audioPlayer, "public void prepareStart(float millis)");
+
+        int stop = prepare.indexOf("this.player.stop()");
+        int barrier = prepare.indexOf("Engine.awaitAudioBlocks(2, 500L)");
+        int cue = prepare.indexOf("float cued = cueTo(millis)");
+        assertTrue(stop >= 0 && barrier > stop && cue > barrier,
+                "已渲染 deck 必须先停、等待两个音频缓冲，再 cue 和重填 ring");
+        assertTrue(prepare.contains("if (this.hasStartedPlayback)"),
+                "只有已被音频线程消费的 deck 才需等待停稳边界");
+
+        String engine = read(repackage("processing", "sound", "Engine.java"));
+        String await = body(engine, "public static boolean awaitAudioBlocks(int blocks, long timeoutMillis)");
+        assertTrue(await.contains("completed.await("));
+        assertTrue(await.contains("synth.addCompletedBufferTask(barrier)"));
+        assertTrue(await.contains("synth.removeCompletedBufferTask(barrier)"));
+        String synthesis = new String(Files.readAllBytes(JAVA.resolve(Paths.get(
+                "repackage", "com", "jsyn", "engine", "SynthesisEngine.java"))), StandardCharsets.UTF_8);
+        assertTrue(body(synthesis, "public void generateNextBuffer()").contains("for (Runnable task : completedBufferTasks)"),
+                "屏障必须在整块混合和输出观察之后触发");
+    }
+
+    @Test
+    @DisplayName("预卷在后台预填 cue 环形缓存，音频线程首读不做同步读盘")
+    void preparedDeckSeedsItsStreamedPlaybackWindow() throws IOException {
+        String audioPlayer = read(music("AudioPlayer.java"));
+        String prepare = body(audioPlayer, "private void primeStreamWindow(float millis)");
+
+        assertTrue(prepare.contains("preparePlaybackWindowAt((int) index)"),
+                "流式 deck 的 cue 窗口必须预填到自己的 ring，而不能只依赖 OS 页缓存");
+        assertTrue(prepare.contains("primeWindowAt((int) index)"),
+                "非 RAF 读取器仍保留原有的页缓存预热回退");
+    }
+
     /** 握手的通道侧。 */
     @Test
     @DisplayName("AudioPlayer 的音频线程帧用直写路径推四组参数与速度音高")
@@ -197,8 +234,8 @@ class AutomixAudioThreadExecutionStaticTest {
         String player = read(music("AudioPlayer.java"));
         String frame = body(player, "void applyAutomixFrame(float fade, float bassDb, float vocalDepth, float midDb, float highDb)");
 
-        assertTrue(frame.contains("this.player.setAmplitudeNow(this.volume * this.fadeGain)"),
-                "振幅必须直写，否则交叉淡化会晚一块生效");
+        assertTrue(frame.contains("this.player.setAmplitudeNow(effectiveAmp())"),
+                "振幅必须直写，并包含 deck 的曲目增益，否则交叉淡化会晚一块生效");
         assertTrue(frame.contains("chain.setTargetsNow("),
                 "四个 DSP 目标必须一次性发布");
         String speed = body(player, "private void applySpeedAndPitchNow(float tempo, float pitch)");

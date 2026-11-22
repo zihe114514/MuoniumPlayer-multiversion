@@ -34,7 +34,7 @@ public final class EffectsPaint implements AutoCloseable {
         this.palette = java.util.Objects.requireNonNull(palette, "palette");
     }
 
-    public enum Icon { PRESETS, EQ, EFFECTS, ROOM, AMBIENT, CLOSE, BACK, CHECK, PLUS, IMPORT,
+    public enum Icon { PRESETS, EQ, EFFECTS, ROOM, AMBIENT, LOUDNESS, CLOSE, BACK, CHECK, PLUS, IMPORT,
         REFRESH, COPY, DELETE, UNDO, REDO, POWER, SEARCH, CHEVRON, WATER, RAIN, SAVE }
 
     private final Paint fill = new Paint().setAntiAlias(true);
@@ -264,6 +264,13 @@ public final class EffectsPaint implements AutoCloseable {
                     segment(canvas, 12, 3, 12, 13, color); segment(canvas, 12, 3, 17, 5, color);
                     circle(canvas, 8.5, 14, 3.3, color); segment(canvas, 2, 4, 5, 4, color);
                     segment(canvas, 3.5, 2.5, 3.5, 5.5, color);
+                }
+                case LOUDNESS -> {
+                    double[] heights = {7, 12, 17, 12, 7};
+                    for (int i = 0; i < heights.length; i++) {
+                        double height = heights[i];
+                        round(canvas, new Box(2 + i * 4, 10 - height * .5, 2.4, height), 1.2, color);
+                    }
                 }
                 case IMPORT -> {
                     segment(canvas, 10, 2, 10, 12, color); segment(canvas, 6, 8, 10, 12, color);

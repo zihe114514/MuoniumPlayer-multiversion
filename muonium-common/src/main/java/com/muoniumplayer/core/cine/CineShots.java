@@ -3,7 +3,8 @@ package com.muoniumplayer.core.cine;
 /** Camera composition presets and deterministic selection math. */
 public final class CineShots {
 
-    enum Style { ORBIT, PERSON, LANDSCAPE, PAN, SKY, LOW, TOP_DOWN, CAVE, DOLLY_IN, DOLLY_OUT }
+    enum Style { ORBIT, PERSON, LANDSCAPE, PAN, SKY, LOW, TOP_DOWN, CAVE, DOLLY_IN, DOLLY_OUT,
+        CRANE_UP, CRANE_DOWN, TRUCK, SPIRAL_IN, SPIRAL_OUT }
     enum Domain { ANY, OVERWORLD, NATURE, FOREST, RIVER, OCEAN, MOUNTAIN, DAY, NIGHT, DAWN, DUSK,
         NETHER, CRIMSON, WARPED, BASALT, SOUL_SAND, END, CAVE, MOB }
 
@@ -88,7 +89,19 @@ public final class CineShots {
         CAVE_FLOOR_DRIFT(0f, Style.LOW, 4d, 0.35d, 180d, 10d, 0.2d, 0d, 0f, Domain.CAVE),
         CAVE_CEILING_ARC(1f, Style.TOP_DOWN, 4.2d, 6.5d, 30d, 7d, 3.5d, 0d, 0f, Domain.CAVE),
         CAVE_GLOW_POCKET(-1f, Style.CAVE, 3.5d, 1.8d, 125d, 8d, 2.2d, -90d, 0f, Domain.CAVE),
-        CAVE_DEPTH_REVEAL(1.5f, Style.PAN, 6d, 2.5d, 180d, 18d, 3d, 0d, 30f, Domain.CAVE);
+        CAVE_DEPTH_REVEAL(1.5f, Style.PAN, 6d, 2.5d, 180d, 18d, 3d, 0d, 30f, Domain.CAVE),
+        PLAYER_CRANE_ASCENT(1.5f, Style.CRANE_UP, 7d, 1.1d, 180d, 0d, 1.25d, 0d, 0f, Domain.ANY),
+        PLAYER_CRANE_DESCENT(1f, Style.CRANE_DOWN, 8d, 5.5d, 0d, 0d, 1.2d, 0d, 0f, Domain.ANY),
+        PLAYER_TRUCK_LEFT(0.5f, Style.TRUCK, 5.2d, 2.4d, 0d, 0d, 1.2d, 1d, 0f, Domain.ANY),
+        PLAYER_TRUCK_RIGHT(0.5f, Style.TRUCK, 5.2d, 2.4d, 0d, 0d, 1.2d, -1d, 0f, Domain.ANY),
+        PLAYER_SPIRAL_IN(-1f, Style.SPIRAL_IN, 8d, 3.1d, 180d, 0d, 1.25d, 0d, 0f, Domain.ANY),
+        PLAYER_SPIRAL_OUT(1f, Style.SPIRAL_OUT, 3.5d, 1.8d, 0d, 0d, 1.25d, 0d, 0f, Domain.ANY),
+        ENV_CRANE_RISE(2f, Style.CRANE_UP, 11d, 1.2d, 180d, 30d, 4d, 0d, 0f, Domain.NATURE),
+        ENV_TRUCK_LEFT(1.5f, Style.TRUCK, 9d, 4d, 180d, 28d, 4d, -1d, 0f, Domain.NATURE),
+        ENV_TRUCK_RIGHT(1.5f, Style.TRUCK, 9d, 4d, 180d, 28d, 4d, 1d, 0f, Domain.NATURE),
+        NETHER_SPIRAL_RIDGE(2f, Style.SPIRAL_IN, 12d, 5d, 180d, 30d, 5d, 0d, 0f, Domain.NETHER),
+        END_SPIRAL_VOID(2f, Style.SPIRAL_OUT, 8d, 4d, 180d, 26d, 2d, 0d, 0f, Domain.END),
+        CAVE_SPIRAL_CHAMBER(0.5f, Style.SPIRAL_IN, 8d, 3.5d, 180d, 12d, 3.5d, 0d, 0f, Domain.CAVE);
 
         final float fovOffset;
         final float rollDegrees;
@@ -114,7 +127,7 @@ public final class CineShots {
             this.focusDistance = focusDistance;
             this.focusHeight = focusHeight;
             this.focusAngle = focusAngle;
-            this.sweepDegrees = style == Style.PAN ? focusAngle : 0d;
+            this.sweepDegrees = style == Style.PAN || style == Style.TRUCK ? focusAngle : 0d;
         }
     }
 

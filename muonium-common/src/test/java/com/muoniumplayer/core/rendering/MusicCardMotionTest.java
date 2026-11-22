@@ -239,6 +239,18 @@ class MusicCardMotionTest {
     }
 
     @Test
+    void restoredMemoryKeepsTheIdleCapsuleRowWithoutChangingOrdinaryPauseTimeout() {
+        assertTrue(MusicCapsuleCard.rowContentActive(true, 1L, 60_000L, true),
+                "a matching startup resume point keeps its remembered track visible");
+        assertFalse(MusicCapsuleCard.rowContentActive(false, 0L, 60_000L, true),
+                "resume memory cannot create a row without a remembered track");
+        assertFalse(MusicCapsuleCard.rowContentActive(true, 1L, 60_000L, false),
+                "ordinary paused playback still expires after the existing hold window");
+        assertTrue(MusicCapsuleCard.rowContentActive(true, 59_999L, 60_000L, false),
+                "ordinary pause remains visible before its timeout");
+    }
+
+    @Test
     void musicRowNeverSwallowsDownloadCompletionOrNotice() {
         assertTrue(MusicCardMotion.showCapsuleRow(false, false, false, false, false, true));
         assertTrue(MusicCardMotion.showCapsuleRow(true, false, false, false, false, false));

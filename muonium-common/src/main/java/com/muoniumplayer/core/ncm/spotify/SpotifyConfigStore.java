@@ -34,10 +34,8 @@ public final class SpotifyConfigStore {
     /**
      * 授权要申请的 scopes。
      *
-     * <p>曲库全是「读」：搜与播是匿名的元数据能力，登录换来的只有本人曲库
-     * （歌单、喜欢的歌、账号展示资料）。写回曲库的操作不做，所以不申请
-     * {@code playlist-modify-*} / {@code user-library-modify} —— scope 越少，
-     * 用户在授权页上看到的警告越小。</p>
+     * <p>账号能力包括本人曲库读取，以及显式添加到喜欢列表/本人歌单。修改权限只用于
+     * 用户在「收藏音乐」弹窗中主动提交的操作；不申请创建/删除歌单等更宽权限。</p>
      *
      * <p>末尾两条是「客户端控制」（Spotify Connect）的入场券：{@code user-read-playback-state}
      * 读当前播放状态与设备列表，{@code user-modify-playback-state} 发播放/暂停/切歌/seek/音量
@@ -49,7 +47,11 @@ public final class SpotifyConfigStore {
             "user-read-private",
             "playlist-read-private",
             "playlist-read-collaborative",
+            "playlist-modify-private",
+            "playlist-modify-public",
             "user-library-read",
+            "user-library-modify",
+            "user-read-recently-played",
             "user-top-read",
             "user-read-playback-state",
             "user-modify-playback-state",

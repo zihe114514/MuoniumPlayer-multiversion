@@ -3,8 +3,10 @@ package com.muoniumplayer.core.screens.ncm.panels;
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.BodianMusicService;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.PlaybackPresentation;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
@@ -394,7 +396,8 @@ public class PlaylistPanel extends NCMPanel {
             this.addChild(btnRename);
             btnRename.setBeforeRenderCallback(() -> {
                 boolean renamable = playList != null
-                        && (playList.isLocalPlaylist() || ownQishuiCloudPlaylist());
+                        && (playList.isLocalPlaylist() || ownQishuiCloudPlaylist()
+                        || ownQQPlaylist() || ownBodianCloudPlaylist());
                 btnRename.setBounds(57, 17);
                 // 与「收藏歌单」同槽互斥（两者都挂在本格），锚点读共享槽而不是上一颗的实际位置：
                 // 收藏格这帧 hidden 时它的坐标仍在续写链，读槽保证本格位置稳定。
@@ -414,7 +417,7 @@ public class PlaylistPanel extends NCMPanel {
                 return true;
             });
 
-            // 汽水自建云歌单才有「删除歌单」：真删上游，虚拟单（每日推荐/电台）与别家歌单不配。
+            // 云端自建歌单才有删除：虚拟单、收藏单与别家歌单不配。
             RoundedButtonWidget btnDeleteCloud = new RoundedButtonWidget("删除歌单", FontManager.pf16bold);
             btnDeleteCloud.setGlassPlate(GlassLook.Surface.PLAYER)
                     .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
@@ -426,21 +429,27 @@ public class PlaylistPanel extends NCMPanel {
                 // 危险动作的红色与表单层的 BAD_COLOR(NcmSheet) 同值：全界面的「删除红」就一种。
                 btnDeleteCloud.setColor(0xF1767D);
                 btnDeleteCloud.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-                btnDeleteCloud.setHidden(!ownQishuiCloudPlaylist());
+                btnDeleteCloud.setHidden(!(ownQishuiCloudPlaylist() || ownQQPlaylist() || ownBodianCloudPlaylist()));
             });
             btnDeleteCloud.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-                if (mouseButton != 0 || !ownQishuiCloudPlaylist()) return false;
+                if (mouseButton != 0 || !(ownQishuiCloudPlaylist() || ownQQPlaylist() || ownBodianCloudPlaylist())) return false;
                 NCMScreen.getInstance().openConfirmation(
                         "删除云歌单？",
-                        "「" + playList.getName() + "」将从你的汽水账号中删除，客户端同步消失，不可恢复。",
+                        "「" + playList.getName() + "」将从你的账号中删除，客户端同步消失，不可恢复。",
                         "删除",
                         () -> MultiThreadingUtil.runAsync(() -> {
-                            boolean ok = QishuiMusicService.deleteCloudPlaylist(
-                                    playList.getPlatformPlaylistId());
+                            boolean qq = ownQQPlaylist();
+                            boolean bodian = ownBodianCloudPlaylist();
+                            boolean ok = bodian
+                                    ? com.muoniumplayer.core.ncm.music.BodianMusicService.deletePlaylist(
+                                            playList.getPlatformPlaylistId())
+                                    : qq ? NeteaseMusicService.deleteQQPlaylist(playList.getPlatformPlaylistId())
+                                    : QishuiMusicService.deleteCloudPlaylist(playList.getPlatformPlaylistId());
                             MultiThreadingUtil.runOnMainThread(() -> {
-                                DownloadDynamicIsland.showModelOperationResult("汽水云歌单",
+                                DownloadDynamicIsland.showModelOperationResult(bodian ? "波点音乐歌单"
+                                                : qq ? "QQ 音乐歌单" : "汽水云歌单",
                                         ok ? "已删除「" + playList.getName() + "」"
-                                                : "删除失败：签名后端没通或上游拒绝",
+                                                : "删除失败：上游未确认写入",
                                         ok);
                                 if (ok) {
                                     NCMScreen.getInstance().markDirty();
@@ -477,8 +486,8 @@ public class PlaylistPanel extends NCMPanel {
                         // 它的位置（它的回调不再跑，那里停的是上一次的值），只能按各自的可见条件判。
                         if (canToggleSubscription) {
                             searchAnchorX = btnSubscribe.getRelativeX() + btnSubscribe.getWidth();
-                        } else if (ownQishuiCloudPlaylist()) {
-                            // 汽水自建单：重命名 + 删除两颗并排，搜索框锚在删除那颗后面。
+                        } else if (ownQishuiCloudPlaylist() || ownQQPlaylist() || ownBodianCloudPlaylist()) {
+                            // 云端自建单：重命名 + 删除两颗并排，搜索框锚在删除那颗后面。
                             searchAnchorX = btnDeleteCloud.getRelativeX() + btnDeleteCloud.getWidth();
                         } else if (playList != null && playList.isLocalPlaylist()) {
                             searchAnchorX = btnRename.getRelativeX() + btnRename.getWidth();
@@ -836,6 +845,10 @@ public class PlaylistPanel extends NCMPanel {
             return KuGouMusicService.isLoggedIn()
                     && KuGouMusicService.listIdOf(playList.getPlatformPlaylistId()).isEmpty();
         }
+        if (playList.getPlatform() == MusicPlatform.BODIAN) {
+            return NeteaseMusicService.isLoggedIn(MusicPlatform.BODIAN)
+                    && !ownBodianCloudPlaylist();
+        }
         if (playList.getPlatform() != MusicPlatform.NETEASE) {
             return false;
         }
@@ -854,6 +867,23 @@ public class PlaylistPanel extends NCMPanel {
                 && playList.getPlatform() == MusicPlatform.QISHUI
                 && playList.getPlatformPlaylistId() != null
                 && playList.getPlatformPlaylistId().startsWith("acct:");
+    }
+
+    private boolean ownQQPlaylist() {
+        return playList != null
+                && playList.getPlatform() == MusicPlatform.QQ
+                && playList.getPlatformPlaylistId() != null
+                && playList.getPlatformPlaylistId().matches("[1-9][0-9]{0,18}")
+                && NeteaseMusicService.isLoggedIn(MusicPlatform.QQ);
+    }
+
+    private boolean ownBodianCloudPlaylist() {
+        return playList != null
+                && playList.getPlatform() == MusicPlatform.BODIAN
+                && playList.getPlatformPlaylistId() != null
+                && playList.getPlatformPlaylistId().startsWith("pl-5-")
+                && !BodianMusicService.isVirtualPlaylistId(playList.getPlatformPlaylistId())
+                && NeteaseMusicService.isLoggedIn(MusicPlatform.BODIAN);
     }
 
     // 转子的实现已提到 PanelLoadingWidget：主页、发现页、导航等待遮罩用的是同一个控件。

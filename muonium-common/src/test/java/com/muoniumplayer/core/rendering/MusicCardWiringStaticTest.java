@@ -107,6 +107,25 @@ class MusicCardWiringStaticTest {
     }
 
     @Test
+    void restoredPlaybackMemoryKeepsTheMusicCapsuleRowVisibleWithoutStartingAudio() throws Exception {
+        String card = read("core/rendering/MusicCapsuleCard.java");
+        String cloud = read("core/ncm/music/CloudMusic.java");
+        int rowState = card.indexOf("static boolean rowContentActive(boolean hasMusic");
+        int rowStateEnd = card.indexOf("public static double progressFraction(", rowState);
+        assertTrue(rowState >= 0 && rowStateEnd > rowState);
+        assertTrue(card.substring(rowState, rowStateEnd).contains("restoredMemoryActive"));
+        assertTrue(card.substring(rowState, rowStateEnd).contains("PAUSE_TIMEOUT_MILLIS"));
+        assertTrue(cloud.contains("public static boolean hasRestoredPlaybackMemory()"));
+        int restore = cloud.indexOf("private static void restoreLastSession()");
+        int nextMethod = cloud.indexOf("private static String getCookieFromFileOrOptions()", restore);
+        assertTrue(restore >= 0 && nextMethod > restore);
+        String restoreBody = cloud.substring(restore, nextMethod);
+        assertTrue(restoreBody.contains("currentlyPlaying = queue.get(index)"));
+        assertTrue(restoreBody.contains("pendingResume.set(resume)"));
+        assertFalse(restoreBody.contains("startNewPlayThread"), "remembered display must not auto-start playback");
+    }
+
+    @Test
     void selectedMusicCapsuleKeepsItsSurfaceWhenNoSongRowExists() throws Exception {
         String island = read("core/rendering/DownloadDynamicIsland.java");
         int musicSurface = island.indexOf("if (musicCapsule && !capsuleRow)", island.indexOf("private void drawIsland("));

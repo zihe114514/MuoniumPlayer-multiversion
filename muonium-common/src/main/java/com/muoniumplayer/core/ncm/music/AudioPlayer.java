@@ -7,6 +7,7 @@ import repackage.com.jsyn.devices.AudioDeviceManager;
 import repackage.com.jsyn.devices.javasound.JavaSoundAudioDevice;
 import repackage.com.jsyn.exceptions.ChannelMismatchException;
 import repackage.processing.sound.AutomixDeckChain;
+import repackage.processing.sound.Engine;
 import repackage.processing.sound.SoundFile;
 import com.muoniumplayer.core.ncm.music.audio.OpenALAudioDevice;
 import com.muoniumplayer.core.viper.ViperRuntime;
@@ -48,6 +49,12 @@ public class AudioPlayer {
      * 
      */
     private volatile float fadeGain = 1.0f;
+    /** Measured per-track gain and its peak bound are owned by this deck, including automix decks. */
+    private volatile float measuredTrackGain = 1.0f;
+    private volatile float measuredSamplePeak = 1.0f;
+    private volatile TrackGainRamp trackGainRamp;
+    private final Runnable trackGainRampTask = this::advanceTrackGainRamp;
+    private volatile boolean trackGainRampTaskRegistered;
 
     /**
      * 挂在这一路 deck 自己信号链路上的 automix 处理链（低搁架 + 人声频带抵消）。
@@ -95,6 +102,8 @@ public class AudioPlayer {
 
     /** 由 {@link #prepareStart(float)} 设置：读头已定位、搁架已接入、窗口已预热。 */
     private volatile boolean prepared;
+    /** A previously rendered deck must quiesce before its streamed ring is reseeded. */
+    private volatile boolean hasStartedPlayback;
 
     /**
      * 「这一路 deck 已经被要求播放」这一意图，在 {@link #play()} 排队的那一刻同步置位。
@@ -127,6 +136,9 @@ public class AudioPlayer {
         this.sourceFile = file;
         this.setListeners();
         this.closed = false;
+        Engine.addAudioTask(trackGainRampTask);
+        trackGainRampTaskRegistered = true;
+        TrackLoudnessNormalization.register(this);
     }
 
     public void setAudio(File file) {
@@ -144,6 +156,7 @@ public class AudioPlayer {
         this.closed = false;
         this.replacementStopped = false;
         this.prepared = false;
+        this.hasStartedPlayback = false;
         // 新曲目还没有被要求播放。此刻 deck 上挂的是上一首的播放意图，
         // 留着它会让界面在新曲真正起播之前就报告「正在播放」——正是本次要修的那个错。
         // 新曲目已真正起播——正是本次改动所要修正的那种不匹配。
@@ -160,7 +173,11 @@ public class AudioPlayer {
         // 活动播放器。那时 setAudio() 换上新曲，effectiveAmp() = volume * 0 —— 下载正常、
         // 解码正常、进度条正常走，就是一点声音都没有，而且不报任何错。
         this.fadeGain = 1.0f;
+        this.measuredTrackGain = 1.0f;
+        this.measuredSamplePeak = 1.0f;
+        this.trackGainRamp = null;
         this.sourceFile = file;
+        TrackLoudnessNormalization.trackChanged(this, file);
         dispose(previous);
     }
 
@@ -179,6 +196,7 @@ public class AudioPlayer {
         // 暂停/播放键被反复点按时叠出的第二层、第三层音就是这么来的。
         if (this.player.isPlaying()) {
             this.playRequested = true;
+            this.hasStartedPlayback = true;
             return;
         }
 
@@ -194,6 +212,7 @@ public class AudioPlayer {
             this.player.amp(effectiveAmp());
             this.player.play();
             this.player.amp(effectiveAmp());
+            this.hasStartedPlayback = true;
         } catch (ChannelMismatchException mismatch) {
             // 为声道变化保留 CloudMusic 里既有的重试路径。
             this.playRequested = false;
@@ -257,6 +276,7 @@ public class AudioPlayer {
             // 先接链的话，淡化中进来的 deck 会完全不经滤波地播放——
             // 两首曲子都保留完整低频，接缝处就会咚地撞一下。
             attachAutomixChain();
+            this.hasStartedPlayback = true;
             this.player.play();
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
@@ -282,7 +302,13 @@ public class AudioPlayer {
      */
     public void prepareStart(float millis) {
         if (!isUsable()) return;
+        this.prepared = false;
         try {
+            if (this.hasStartedPlayback) {
+                this.playRequested = false;
+                this.player.stop();
+                if (!Engine.awaitAudioBlocks(2, 500L)) return;
+            }
             finished = false;
             this.player.amp(0.0f);
             float cued = cueTo(millis);
@@ -314,6 +340,7 @@ public class AudioPlayer {
         try {
             this.player.amp(effectiveAmp());
             attachAutomixChain();   // 幂等；这条链通常从 prepareStart() 起就一直活着。
+            this.hasStartedPlayback = true;
             this.player.play();
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
@@ -346,11 +373,9 @@ public class AudioPlayer {
      * 把流式窗口拉到给定位置，让首次读取不发生在音频回调内部。
      * 一个采样就够了：读头会在被请求的下标周围填满一整个窗口。
      *
-     * <p>走 {@link SoundFile#primeWindowAt} 的预热旁路——读到的窗口被丢弃，
-     * 预热的是 OS 页缓存，<b>不经过</b>环形缓存：这个位置通常在几分钟后的未来，
-     * 若把它路由进实时读路径，会把 ring 的锚点拖离正在出声的播放位置，
-     * 引擎线程从此逐采样 miss、逐样本进锁同步读盘（开启智能混音即持续掉帧的
-     * 那个回归）。本方法只该在<b>未出声</b>的 deck 上调，且只调一次。</p>
+     * <p>走 {@link SoundFile#preparePlaybackWindowAt} 的预备路径：只允许从未被音频线程消费过的 deck
+     * 将 cue 周围的 PCM 发布到自己的环形缓存，并为首次 WSOLA 前瞻保留约 370ms。曾播放过的 deck
+     * 必须先通过 Engine.awaitAudioBlocks 确认停止边界，再重新定位并预填。</p>
      */
     private void primeStreamWindow(float millis) {
         try {
@@ -364,7 +389,9 @@ public class AudioPlayer {
             if (frame > frames - 1L) frame = frames - 1L;
             long index = frame * channels;
             if (index > Integer.MAX_VALUE - channels) return;
-            this.player.primeWindowAt((int) index);
+            if (!this.player.preparePlaybackWindowAt((int) index)) {
+                this.player.primeWindowAt((int) index);
+            }
         } catch (RuntimeException ignored) {
             // 预热只是优化；拒绝预热的解码器仍能正常播放。
         }
@@ -392,7 +419,7 @@ public class AudioPlayer {
         this.midGainDb = Float.isFinite(midDb) ? Math.max(-12f, Math.min(3f, midDb)) : 0f;
         this.highGainDb = Float.isFinite(highDb) ? Math.max(-12f, Math.min(3f, highDb)) : 0f;
         if (!isUsable()) return;
-        this.player.setAmplitudeNow(this.volume * this.fadeGain);
+        this.player.setAmplitudeNow(effectiveAmp());
         AutomixDeckChain chain = this.automixChain;
         if (chain != null) chain.setTargetsNow(this.bassGainDb, routeVocalDepth(this.vocalDuckDepth),
                 this.midGainDb, this.highGainDb);
@@ -763,9 +790,113 @@ public class AudioPlayer {
 
     /** 交给引擎的有效振幅：持久化音量乘以交叉淡化增益。 */
     private float effectiveAmp() {
-        float amp = this.volume * this.fadeGain;
-        if (Float.isNaN(amp) || Float.isInfinite(amp)) return 0.0f;
-        return Math.max(0.0f, Math.min(1.0f, amp));
+        float amp = this.volume * this.fadeGain * trackGainNow(System.nanoTime());
+        float peak = TrackLoudnessNormalization.isEnabled() ? this.measuredSamplePeak : 1.0f;
+        return clampAmp(amp, amplitudeCeiling(peak));
+    }
+
+    private static float amplitudeCeiling(float samplePeak) {
+        return Float.isFinite(samplePeak) && samplePeak > 1.0f ? 1.0f / samplePeak : 1.0f;
+    }
+
+    private static float clampAmp(float amplitude, float ceiling) {
+        if (!Float.isFinite(amplitude)) return 0.0f;
+        return Math.max(0.0f, Math.min(ceiling, amplitude));
+    }
+
+    void applyLoudnessMeasurement(File expectedFile, TrackLoudnessNormalization.Measurement measurement) {
+        if (measurement == null || expectedFile == null || closed || !expectedFile.equals(sourceFile)) return;
+        this.measuredSamplePeak = Math.max(1e-6f, measurement.samplePeak);
+        this.measuredTrackGain = TrackLoudnessNormalization.gainFor(
+                measurement.integratedLufs, this.measuredSamplePeak);
+        refreshTrackLoudnessGain();
+    }
+
+    void refreshTrackLoudnessGain() {
+        retargetTrackGain(TrackLoudnessNormalization.isEnabled() ? measuredTrackGain : 1.0f);
+    }
+
+    float appliedTrackLoudnessGain() {
+        float peak = TrackLoudnessNormalization.isEnabled() ? this.measuredSamplePeak : 1.0f;
+        return effectiveNormalizationRatio(this.volume * this.fadeGain,
+                trackGainNow(System.nanoTime()), peak);
+    }
+
+    static float effectiveNormalizationRatio(float baseAmplitude, float normalizationGain, float samplePeak) {
+        float ceiling = amplitudeCeiling(samplePeak);
+        float base = clampAmp(baseAmplitude, ceiling);
+        if (base <= 1e-6f) return normalizationGain;
+        float normalized = clampAmp(baseAmplitude * normalizationGain, ceiling);
+        return normalized / base;
+    }
+
+    boolean isClosed() {
+        return closed;
+    }
+
+    private synchronized void retargetTrackGain(float target) {
+        if (!Float.isFinite(target) || target <= 0f) target = 1.0f;
+        long now = System.nanoTime();
+        float current = trackGainNow(now);
+        if (Math.abs(current - target) < 1e-5f) {
+            trackGainRamp = TrackGainRamp.steady(target);
+            return;
+        }
+        trackGainRamp = new TrackGainRamp(current, target, now);
+    }
+
+    private void advanceTrackGainRamp() {
+        TrackGainRamp ramp = trackGainRamp;
+        if (ramp == null || !ramp.isActive()) return;
+        long now = System.nanoTime();
+        float value = ramp.value(now);
+        if (trackGainRamp != ramp) return;
+        if (now - ramp.startedAtNanos >= TrackGainRamp.DURATION_NANOS) {
+            trackGainRamp = TrackGainRamp.steady(ramp.to);
+        }
+        if (Math.abs(value - ramp.from) > 1e-5f && isUsable()) {
+            try {
+                this.player.setAmplitudeNow(effectiveAmp());
+            } catch (RuntimeException ignored) {
+            }
+        }
+    }
+
+    private float trackGainNow(long nowNanos) {
+        TrackGainRamp ramp = trackGainRamp;
+        return ramp == null ? 1.0f : ramp.value(nowNanos);
+    }
+
+    private static final class TrackGainRamp {
+        private static final long DURATION_NANOS = 350_000_000L;
+
+        final float from;
+        final float to;
+        final long startedAtNanos;
+
+        TrackGainRamp(float from, float to, long startedAtNanos) {
+            this.from = from;
+            this.to = to;
+            this.startedAtNanos = startedAtNanos;
+        }
+
+        static TrackGainRamp steady(float value) {
+            return new TrackGainRamp(value, value, 0L);
+        }
+
+        boolean isActive() {
+            return Math.abs(from - to) >= 1e-5f;
+        }
+
+        float value(long nowNanos) {
+            if (!isActive()) return to;
+            double progress = Math.min(1.0, Math.max(0.0,
+                    (nowNanos - startedAtNanos) / (double) DURATION_NANOS));
+            double eased = progress * progress * (3.0 - 2.0 * progress);
+            double fromDb = 20.0 * Math.log10(from);
+            double toDb = 20.0 * Math.log10(to);
+            return (float) Math.pow(10.0, (fromDb + (toDb - fromDb) * eased) / 20.0);
+        }
     }
 
     private void applyAmp() {
@@ -799,6 +930,12 @@ public class AudioPlayer {
     public synchronized void close() {
         if (closed) return;
         closed = true;
+        TrackLoudnessNormalization.unregister(this);
+        trackGainRamp = null;
+        if (trackGainRampTaskRegistered) {
+            trackGainRampTaskRegistered = false;
+            Engine.removeAudioTask(trackGainRampTask);
+        }
         this.playRequested = false;
         releaseAutomixChain();
         dispose(this.player);

@@ -20,7 +20,7 @@ final class AudioCacheFiles {
     }
 
     /**
-     * AAC/M4A 解码出的 WAV 边车的落点。
+     * 压缩音源解码出的 WAV 边车的落点。
      *
      * <p>下载缓存里的文件边车就落在缓存目录旁边（同目录、同名 + {@code .decoded.wav}），
      * 与往常一致。<b>本地音乐文件</b>（用户磁盘上的原文件，见 {@code LocalMusicLibrary}）
@@ -51,6 +51,10 @@ final class AudioCacheFiles {
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    static boolean isManagedCacheFile(File file) {
+        return file != null && isManagedCacheDirectory(file.getParentFile());
     }
 
     private static String stableSidecarKey(File sourceFile) {

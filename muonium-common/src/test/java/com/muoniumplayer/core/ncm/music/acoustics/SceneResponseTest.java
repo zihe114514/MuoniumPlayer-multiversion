@@ -25,6 +25,8 @@ class SceneResponseTest {
             @Override public boolean submerged() { return submerged; }
             @Override public boolean openSky() { return openSky; }
             @Override public float enclosure() { return enclosure; }
+            @Override public float lateEnclosure() { return enclosure; }
+            @Override public float escapeFraction() { return 0f; }
             @Override public float precipitation() { return precipitation; }
             @Override public float firstHitMeanMeters() { return firstHit; }
             @Override public float bounceSegmentMeanMeters() { return segment; }
@@ -98,6 +100,60 @@ class SceneResponseTest {
         assertEquals(0f, r.wet, 1e-6);
     }
 
+    private static ListenerSample withLateField(ListenerSample base, float late, float escape) {
+        return new ListenerSample() {
+            @Override public boolean submerged() { return base.submerged(); }
+            @Override public boolean openSky() { return base.openSky(); }
+            @Override public float enclosure() { return base.enclosure(); }
+            @Override public float lateEnclosure() { return late; }
+            @Override public float escapeFraction() { return escape; }
+            @Override public float precipitation() { return base.precipitation(); }
+            @Override public float firstHitMeanMeters() { return base.firstHitMeanMeters(); }
+            @Override public float bounceSegmentMeanMeters() { return base.bounceSegmentMeanMeters(); }
+            @Override public float meanReflectivity() { return base.meanReflectivity(); }
+            @Override public float reachableFraction() { return base.reachableFraction(); }
+            @Override public int tapCount() { return base.tapCount(); }
+            @Override public float[] tapDelaysSec() { return base.tapDelaysSec(); }
+            @Override public float[] tapGains() { return base.tapGains(); }
+            @Override public float[] tapHighRatios() { return base.tapHighRatios(); }
+            @Override public float[] tapPans() { return base.tapPans(); }
+            @Override public EnergyField bandHistogram() { return base.bandHistogram(); }
+            @Override public float[] bandReflectivities() { return base.bandReflectivities(); }
+            @Override public boolean hasDirectSource() { return base.hasDirectSource(); }
+            @Override public float directDistanceMeters() { return base.directDistanceMeters(); }
+            @Override public float directOcclusion() { return base.directOcclusion(); }
+            @Override public float directPan() { return base.directPan(); }
+            @Override public boolean hasDiffraction() { return base.hasDiffraction(); }
+            @Override public float diffractionPathMeters() { return base.diffractionPathMeters(); }
+            @Override public float diffractionExcessMeters() { return base.diffractionExcessMeters(); }
+            @Override public float diffractionBendDegrees() { return base.diffractionBendDegrees(); }
+            @Override public float diffractionPan() { return base.diffractionPan(); }
+            @Override public double diffractionEdgeX() { return base.diffractionEdgeX(); }
+            @Override public double diffractionEdgeY() { return base.diffractionEdgeY(); }
+            @Override public double diffractionEdgeZ() { return base.diffractionEdgeZ(); }
+            @Override public double speakerX() { return base.speakerX(); }
+            @Override public double speakerY() { return base.speakerY(); }
+            @Override public double speakerZ() { return base.speakerZ(); }
+        };
+    }
+
+    @Test
+    @DisplayName("旷野的硬地面保留早期回声,但逃逸的声能不激发混响尾")
+    void reflectiveGroundDoesNotBecomeAReverberantRoom() {
+        final ListenerSample ground = withLateField(
+                sample(false, true, 0.55f, 0f, 5f, 6f, 1.48f, 0.8f,
+                        new float[] {0.018f, 0.031f}, new float[] {0.28f, 0.13f},
+                        new float[] {-0.4f, 0.2f}),
+                0f, 0.98f);
+        final RoomPlan plan = SceneResponse.respond(ground, 1f);
+        assertEquals(0f, plan.wet, 1e-6f, "没有晚期围合就不应有 FDN 湿声");
+        assertTrue(plan.tapCount > 0, "可见且可达的地面反射仍应保留为早期反射");
+        assertTrue(plan.decaySec < 0.2f, "逃逸率应缩短单面反射的表观尾长: " + plan.decaySec);
+
+        final RoomPlan enclosed = SceneResponse.respond(withLateField(ground, 0.95f, 0f), 1f);
+        assertTrue(enclosed.wet > 0.2f, "封闭房间仍应启用扩散尾: " + enclosed.wet);
+    }
+
     @Test
     @DisplayName("小木屋:湿声中等可闻、衰减短、预延迟毫秒级、抽头齐备且定标")
     void smallRoomGetsShortTailAndTaps() {
@@ -168,6 +224,7 @@ class SceneResponseTest {
             @Override public int tapCount() { return base.tapCount(); }
             @Override public float[] tapDelaysSec() { return base.tapDelaysSec(); }
             @Override public float[] tapGains() { return base.tapGains(); }
+            @Override public float[] tapHighRatios() { return base.tapHighRatios(); }
             @Override public float[] tapPans() { return base.tapPans(); }
             @Override public EnergyField bandHistogram() { return base.bandHistogram(); }
             @Override public float[] bandReflectivities() { return bands; }
@@ -302,6 +359,7 @@ class SceneResponseTest {
             @Override public int tapCount() { return base.tapCount(); }
             @Override public float[] tapDelaysSec() { return base.tapDelaysSec(); }
             @Override public float[] tapGains() { return base.tapGains(); }
+            @Override public float[] tapHighRatios() { return base.tapHighRatios(); }
             @Override public float[] tapPans() { return base.tapPans(); }
             @Override public EnergyField bandHistogram() { return base.bandHistogram(); }
             @Override public float[] bandReflectivities() { return base.bandReflectivities(); }
@@ -384,7 +442,8 @@ class SceneResponseTest {
     void directSourceFillsDirectChain() {
         RoomPlan near = SceneResponse.respond(withSource(stoneCave(), 4f), 1f);
         RoomPlan far = SceneResponse.respond(withSource(stoneCave(), 96f), 1f);
-        assertEquals(1f, near.directGain, 1e-3f, "8m 内直达全增益");
+        assertEquals(DirectPath.distanceAttenuation(4f), near.directGain, 1e-3f,
+                "4m 音箱应呈现近场距离层次");
         assertTrue(far.directGain < 0.05f, "96m 直达 ≈ −42dB: " + far.directGain);
         assertTrue(near.hasSpeakerAnchor);
         // 路线定稿:自研射线链出湿声,总线只做直射 HRTF —— RoomPlan 仍然

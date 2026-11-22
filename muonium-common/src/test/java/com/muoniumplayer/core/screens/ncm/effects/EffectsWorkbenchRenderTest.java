@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class EffectsWorkbenchRenderTest {
 
     private static final long FRAME_TIME = 10_000_000_000L;
-    private static final String[] PAGES = {"PRESETS", "EQ", "EFFECTS", "ACOUSTICS", "AMBIENT"};
+    private static final String[] PAGES = {"PRESETS", "EQ", "LOUDNESS", "EFFECTS", "ACOUSTICS", "AMBIENT"};
     private static final HostSize[] HOSTS = {
             new HostSize(1000, 650), new HostSize(928, 508), new HostSize(560, 430),
             new HostSize(360, 430), new HostSize(900, 270)
@@ -412,7 +412,7 @@ class EffectsWorkbenchRenderTest {
         Method apply = EffectsWorkbench.class.getDeclaredMethod("applyPalette", EffectsPalette.class);
         apply.setAccessible(true);
         for (int i = 0; i < palettes.length; i++) {
-            for (String page : new String[]{"PRESETS", "EQ", "EFFECTS", "ACOUSTICS", "AMBIENT"}) {
+            for (String page : new String[]{"PRESETS", "EQ", "LOUDNESS", "EFFECTS", "ACOUSTICS", "AMBIENT"}) {
                 EffectsWorkbench workbench = fixture(928, 508, page);
                 try {
                     apply.invoke(workbench, palettes[i]);
@@ -466,7 +466,7 @@ class EffectsWorkbenchRenderTest {
 
     @Test
     void renderAllMajorPagesAtWideAndCompactWidths() throws Exception {
-        for (String page : new String[]{"PRESETS", "EQ", "EFFECTS", "ACOUSTICS", "AMBIENT"}) {
+        for (String page : new String[]{"PRESETS", "EQ", "LOUDNESS", "EFFECTS", "ACOUSTICS", "AMBIENT"}) {
             for (int width : new int[]{1000, 560, 360}) {
                 int height = width == 360 ? 560 : 670;
                 EffectsWorkbench workbench = fixture(width, height, page);
@@ -474,6 +474,16 @@ class EffectsWorkbenchRenderTest {
                 finally { workbench.onHostClosed(); }
             }
         }
+    }
+
+    @Test
+    void loudnessPageExposesItsIndependentMasterToggle() throws Exception {
+        EffectsWorkbench workbench = fixture(928, 508, "LOUDNESS");
+        try {
+            render(workbench, 960, 540, null);
+            List<?> hits = (List<?>) field(EffectsWorkbench.class, "hits").get(workbench);
+            assertNotNull(findHit(hits, "page.master"), "曲目响度页应提供独立的开关入口");
+        } finally { workbench.onHostClosed(); }
     }
 
     @Test

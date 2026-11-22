@@ -23,8 +23,8 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * 世界声源的独立 OpenAL Soft loopback 总线。
  *
- * <p>直射输入为 M 和交错的 (+S, -S)，由上游统一完成增益、低通和传播延迟。
- * M 使用中心 mono source；S 的两个声道分别送入音箱中心两侧的 mono source。
+ * <p>直射输入为中心信号和交错的 (+S, -S)，由上游统一完成增益、低通和传播延迟。
+ * S 的两个声道分别送入音箱中心两侧的 mono source。
  * stereo source 默认不定位，而强制定位的 stereo source 会在非零距离合成 mono，
  * 都不能用来保留定位后的 S。三条源均关闭 AL 距离/空气衰减，避免重复扣减。</p>
  *
@@ -62,6 +62,7 @@ public final class OpenAlReverbBus implements AutoCloseable {
     private int auxSlot;
     private float sendGain;
     private boolean effectAttached;
+    private boolean directOnlyConfigured = true;
     private int[][] bufferIds = new int[SOURCE_COUNT][0];
     private int[][] freeBuffers = new int[SOURCE_COUNT][0];
     private final int[] freeCounts = new int[SOURCE_COUNT];
@@ -130,6 +131,10 @@ public final class OpenAlReverbBus implements AutoCloseable {
 
     public int sampleRate() {
         return sampleRate;
+    }
+
+    public int frameCapacity() {
+        return framesPerBuffer;
     }
 
     public boolean isBroken() {
@@ -280,17 +285,21 @@ public final class OpenAlReverbBus implements AutoCloseable {
             return;
         }
         try {
-            float g = finiteGain(gain);
-            EXTEfx.alFilterf(reverbSendFilter, EXTEfx.AL_LOWPASS_GAIN, g);
-            AL11.alSource3i(source, EXTEfx.AL_AUXILIARY_SEND_FILTER, auxSlot, 0, reverbSendFilter);
-            sendGain = g;
-            updateEffectAttachment();
+            directOnlyConfigured = false;
+            setSendGainLocked(gain);
             checkAl("setSendGain");
         } catch (Throwable t) {
             broken("setSendGain", t);
         } finally {
             unbind();
         }
+    }
+
+    private void setSendGainLocked(float gain) {
+        sendGain = finiteGain(gain);
+        EXTEfx.alFilterf(reverbSendFilter, EXTEfx.AL_LOWPASS_GAIN, sendGain);
+        AL11.alSource3i(source, EXTEfx.AL_AUXILIARY_SEND_FILTER, auxSlot, 0, reverbSendFilter);
+        updateEffectAttachment();
     }
 
     /**
@@ -302,19 +311,24 @@ public final class OpenAlReverbBus implements AutoCloseable {
             return;
         }
         try {
+            directOnlyConfigured = false;
             AL10.alSource3f(source, AL10.AL_POSITION,
                     (float) (x - listenerX), (float) (y - listenerY), (float) (z - listenerZ));
-            EXTEfx.alFilterf(directFilter, EXTEfx.AL_LOWPASS_GAIN, finiteGain(directGain));
-            EXTEfx.alFilterf(directFilter, EXTEfx.AL_LOWPASS_GAINHF, finiteGain(directHf));
-            // EFX filter 是复制到 source 的参数，改 filter 后必须重新挂给每条路。
-            for (int s : sources) {
-                AL10.alSourcei(s, EXTEfx.AL_DIRECT_FILTER, directFilter);
-            }
+            setDirectFilterLocked(directGain, directHf);
             checkAl("setSourcePose");
         } catch (Throwable t) {
             broken("setSourcePose", t);
         } finally {
             unbind();
+        }
+    }
+
+    private void setDirectFilterLocked(float gain, float hf) {
+        EXTEfx.alFilterf(directFilter, EXTEfx.AL_LOWPASS_GAIN, finiteGain(gain));
+        EXTEfx.alFilterf(directFilter, EXTEfx.AL_LOWPASS_GAINHF, finiteGain(hf));
+        // EFX copies filter properties to the source on assignment.
+        for (int s : sources) {
+            AL10.alSourcei(s, EXTEfx.AL_DIRECT_FILTER, directFilter);
         }
     }
 
@@ -386,21 +400,20 @@ public final class OpenAlReverbBus implements AutoCloseable {
             listenerX = ex;
             listenerY = ey;
             listenerZ = ez;
-            listenerOrientation[0] = fx;
-            listenerOrientation[1] = fy;
-            listenerOrientation[2] = fz;
-            listenerOrientation[3] = ux;
-            listenerOrientation[4] = uy;
-            listenerOrientation[5] = uz;
-            // 在 double 中先以听者为原点,避免大世界坐标的 float 量化吞掉侧源间距。
-            AL10.alListener3f(AL10.AL_POSITION, 0f, 0f, 0f);
-            AL10.alListenerfv(AL10.AL_ORIENTATION, listenerOrientation);
+            setOrientationLocked(fx, fy, fz, ux, uy, uz);
             checkAl("setListener");
         } catch (Throwable t) {
             broken("setListener", t);
         } finally {
             unbind();
         }
+    }
+
+    private void setOrientationLocked(float fx, float fy, float fz, float ux, float uy, float uz) {
+        listenerOrientation[0] = fx; listenerOrientation[1] = fy; listenerOrientation[2] = fz;
+        listenerOrientation[3] = ux; listenerOrientation[4] = uy; listenerOrientation[5] = uz;
+        AL10.alListener3f(AL10.AL_POSITION, 0f, 0f, 0f);
+        AL10.alListenerfv(AL10.AL_ORIENTATION, listenerOrientation);
     }
 
     /** 兼容入口：衰减由上游独占，参数不再开启 AL 的第二份距离衰减。 */
@@ -439,10 +452,7 @@ public final class OpenAlReverbBus implements AutoCloseable {
             final double relativeX = x - listenerX;
             final double relativeY = y - listenerY;
             final double relativeZ = z - listenerZ;
-            AL10.alSource3f(sideLeftSource, AL10.AL_POSITION,
-                    (float) (relativeX + ox), (float) relativeY, (float) (relativeZ + oz));
-            AL10.alSource3f(sideRightSource, AL10.AL_POSITION,
-                    (float) (relativeX - ox), (float) relativeY, (float) (relativeZ - oz));
+            setSidePositionsLocked(relativeX, relativeY, relativeZ, ox, oz);
             checkAl("setSidePose");
         } catch (Throwable t) {
             broken("setSidePose", t);
@@ -451,21 +461,33 @@ public final class OpenAlReverbBus implements AutoCloseable {
         }
     }
 
+    private void setSidePositionsLocked(double x, double y, double z, double offsetX, double offsetZ) {
+        AL10.alSource3f(sideLeftSource, AL10.AL_POSITION,
+                (float) (x + offsetX), (float) y, (float) (z + offsetZ));
+        AL10.alSource3f(sideRightSource, AL10.AL_POSITION,
+                (float) (x - offsetX), (float) y, (float) (z - offsetZ));
+    }
+
     /** 两条 S 路同一幅度比例；上游已处理宽度/增益时传 1。 */
     public void setSideGain(float gain) {
         if (broken || !bind()) {
             return;
         }
         try {
-            float g = finiteGain(gain);
-            AL10.alSourcef(sideLeftSource, AL10.AL_GAIN, g);
-            AL10.alSourcef(sideRightSource, AL10.AL_GAIN, g);
+            directOnlyConfigured = false;
+            setSideGainLocked(gain);
             checkAl("setSideGain");
         } catch (Throwable t) {
             broken("setSideGain", t);
         } finally {
             unbind();
         }
+    }
+
+    private void setSideGainLocked(float gain) {
+        final float g = finiteGain(gain);
+        AL10.alSourcef(sideLeftSource, AL10.AL_GAIN, g);
+        AL10.alSourcef(sideRightSource, AL10.AL_GAIN, g);
     }
 
     /** 兼容旧调用；复用大数组的调用方必须改用带真实 frames 的重载。 */
@@ -481,6 +503,21 @@ public final class OpenAlReverbBus implements AutoCloseable {
      * 避免每块重启清 HRIR 历史；固定增加一采样帧延迟，无后续排队增长。
      */
     public void render(short[] monoIn, short[] sideStereoIn, float[] outLR, int frames) {
+        renderBlock(monoIn, sideStereoIn, outLR, frames, false,
+                0, 0, 0, 0, 0, 0f, 0f, 0f, 0f, 0f, 0f);
+    }
+
+    /** Already propagated direct PCM and world axes, relative to the listener in double precision. */
+    public void renderDirect(double x, double y, double z, double offsetX, double offsetZ,
+                             float fx, float fy, float fz, float ux, float uy, float uz,
+                             short[] monoIn, short[] sideStereoIn, float[] outLR, int frames) {
+        renderBlock(monoIn, sideStereoIn, outLR, frames, true,
+                x, y, z, offsetX, offsetZ, fx, fy, fz, ux, uy, uz);
+    }
+
+    private void renderBlock(short[] monoIn, short[] sideStereoIn, float[] outLR, int frames,
+                             boolean direct, double x, double y, double z, double offsetX, double offsetZ,
+                             float fx, float fy, float fz, float ux, float uy, float uz) {
         if (frames < 0 || frames > framesPerBuffer || monoIn == null || monoIn.length < frames
                 || outLR == null || outLR.length / 2 < frames
                 || (sideStereoIn != null && sideStereoIn.length / 2 < frames)) {
@@ -495,6 +532,22 @@ public final class OpenAlReverbBus implements AutoCloseable {
             return;
         }
         try {
+            if (direct) {
+                if (!directOnlyConfigured) {
+                    // Compatibility setters must not add a second gain, filter or wet path.
+                    setDirectFilterLocked(1f, 1f);
+                    setSideGainLocked(1f);
+                    setSendGainLocked(0f);
+                    if (started) {
+                        flushLocked();
+                    }
+                    directOnlyConfigured = true;
+                }
+                setOrientationLocked(fx, fy, fz, ux, uy, uz);
+                AL10.alSource3f(source, AL10.AL_POSITION, (float) x, (float) y, (float) z);
+                setSidePositionsLocked(x, y, z, offsetX, offsetZ);
+                checkAl("direct pose");
+            }
             if (started) {
                 for (int s : sources) {
                     if (AL10.alGetSourcei(s, AL10.AL_SOURCE_STATE) != AL10.AL_PLAYING) {

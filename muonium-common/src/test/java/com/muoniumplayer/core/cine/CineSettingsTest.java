@@ -24,7 +24,7 @@ class CineSettingsTest {
     @Test
     void 默认值() {
         assertFalse(CineSettings.isEnabled(), "总开关默认关（新装用户零打扰）");
-        assertEquals(300, CineSettings.idleSeconds(), "对齐 Ambient Camera 的 idleSeconds 默认 300");
+        assertEquals(CineSettings.IDLE_SECONDS_DEFAULT, CineSettings.idleSeconds());
         assertEquals(4, CineSettings.shotBeats());
         assertEquals(0.7f, CineSettings.speedMultiplier(), 1.0e-6f, "对齐 Ambient Camera 的 cameraSpeed 默认 0.7");
         assertEquals(50, CineSettings.environmentShotPercent());
@@ -70,6 +70,20 @@ class CineSettingsTest {
                 "NaN 钳到下限,不能让运镜状态机中毒");
     }
 
+    @Test
+    void 追踪柔度钳制并写入快照() {
+        assertEquals(0.8f, CineSettings.trackingSoftness(), 1.0e-6f);
+        assertEquals(0.5f, CineSettings.nextTrackingSoftness(0.3f), 1.0e-6f);
+        assertEquals(0.8f, CineSettings.nextTrackingSoftness(0.5f), 1.0e-6f);
+        assertEquals(1.2f, CineSettings.nextTrackingSoftness(0.8f), 1.0e-6f);
+        assertEquals(2f, CineSettings.nextTrackingSoftness(1.2f), 1.0e-6f);
+        assertEquals(0.3f, CineSettings.nextTrackingSoftness(2f), 1.0e-6f);
+        assertEquals(0.5f, CineSettings.nextTrackingSoftness(0.1f), 1.0e-6f);
+        CineSettings.setTrackingSoftness(Float.NaN);
+        assertEquals(CineSettings.SOFTNESS_MIN, CineSettings.trackingSoftness(), 1.0e-6f);
+        CineSettings.setTrackingSoftness(1.2f);
+        assertEquals(1.2f, CineSettings.snapshot().trackingSoftness(), 1.0e-6f);
+    }
     @Test
     void 环境镜头比例钳制() {
         CineSettings.setEnvironmentShotPercent(-10);

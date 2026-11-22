@@ -87,6 +87,19 @@ public final class SpotifyAuthStore {
                     && hasGrantedScope("user-modify-playback-state");
         }
 
+        public boolean hasPlaylistModifyScopes() {
+            return hasGrantedScope("playlist-modify-private")
+                    && hasGrantedScope("playlist-modify-public");
+        }
+
+        public boolean hasLibraryModifyScope() {
+            return hasGrantedScope("user-library-modify");
+        }
+
+        public boolean hasRecentPlaybackScope() {
+            return hasGrantedScope("user-read-recently-played");
+        }
+
         private boolean hasGrantedScope(String wanted) {
             if (scope.isEmpty()) return false;
             for (String granted : scope.split("\\s+")) {

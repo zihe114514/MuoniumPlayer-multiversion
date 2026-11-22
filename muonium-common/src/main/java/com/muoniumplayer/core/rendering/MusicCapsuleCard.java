@@ -389,8 +389,14 @@ public final class MusicCapsuleCard implements SharedRenderingConstants {
     }
 
     public static boolean rowContentActive() {
-        return frameSnapshot.music != null && (pausedSinceMs == 0L
-                || System.currentTimeMillis() - pausedSinceMs < PAUSE_TIMEOUT_MILLIS);
+        return rowContentActive(frameSnapshot.music != null, pausedSinceMs, System.currentTimeMillis(),
+                CloudMusic.hasRestoredPlaybackMemory());
+    }
+
+    static boolean rowContentActive(boolean hasMusic, long pausedSinceMillis, long nowMillis,
+                                    boolean restoredMemoryActive) {
+        return hasMusic && (restoredMemoryActive || pausedSinceMillis == 0L
+                || nowMillis - pausedSinceMillis < PAUSE_TIMEOUT_MILLIS);
     }
 
     public static double progressFraction(CloudMusic.PlaybackSnapshot snapshot) {
@@ -1110,6 +1116,8 @@ public final class MusicCapsuleCard implements SharedRenderingConstants {
     private void drawPlatform(MusicPlatform source, float alpha) {
         double x = MusicCardLayout.BADGE_X;
         double size = MusicCardLayout.BADGE_SIZE;
+        if (AppStoreBrandIcons.drawCentered(source, x + size * .5, COVER_Y + size * .5,
+                size - 8.0, RenderSystem.reAlpha(0xFFFFFFFF, alpha))) return;
         int brand = source.getBrandColor();
         boolean dark = source == MusicPlatform.QISHUI || source == MusicPlatform.SPOTIFY;
         roundedRect(x, COVER_Y, size, size, 7.0, RenderSystem.reAlpha(dark ? 0x050607 : brand, alpha * .97f));
@@ -1124,6 +1132,7 @@ public final class MusicCapsuleCard implements SharedRenderingConstants {
             case KUGOU: glyph = MusicBrandIcons.KUGOU_MONOGRAM; break;
             case BILIBILI: glyph = MusicBrandIcons.BILIBILI_MONOGRAM; break;
             case QISHUI: glyph = MusicBrandIcons.QISHUI_MONOGRAM; break;
+            case BODIAN: glyph = "点"; break;
             case SPOTIFY: glyph = MusicBrandIcons.SPOTIFY_MONOGRAM; break;
             case APPLE: glyph = MusicBrandIcons.APPLE_MONOGRAM; break;
             case LOCAL: glyph = "♪"; break;

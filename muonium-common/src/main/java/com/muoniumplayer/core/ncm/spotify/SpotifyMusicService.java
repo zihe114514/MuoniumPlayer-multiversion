@@ -3,15 +3,19 @@ package com.muoniumplayer.core.ncm.spotify;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Spotify 的宿主适配层：Web API 的原始 JSON ↔ 播放器的 {@code Music}/{@code PlayList}。
@@ -33,6 +37,7 @@ public final class SpotifyMusicService {
     public static final String LIKED_PLAYLIST_ID = "liked";
     /** 专辑当歌单卡片时的前缀（与酷狗的 {@code album:} 约定一致）。 */
     public static final String ALBUM_PREFIX = "album:";
+    private static final Pattern SPOTIFY_ID = Pattern.compile("[A-Za-z0-9]{1,128}");
 
     /** 搜索结果的总量上限（UI 一次搜索期望拿到的行数）。 */
     public static final int SEARCH_LIMIT_MAX = 50;
@@ -69,6 +74,13 @@ public final class SpotifyMusicService {
         public String coverUrl = "";
         public int trackCount;
         public String owner = "";
+        public boolean editable;
+    }
+
+    public static final class SpotifyWritePermissionException extends IOException {
+        SpotifyWritePermissionException(String message) {
+            super(message);
+        }
     }
 
     // ── 搜索 / 内容 ─────────────────────────────────────────────────────────
@@ -197,12 +209,27 @@ public final class SpotifyMusicService {
     private static final Object PLAYLIST_LOCK = new Object();
     private static final long PLAYLIST_RETRY_DELAY_MS = 15_000L;
     private static volatile java.util.List<PlayList> userPlaylistsSnapshot = Collections.emptyList();
+    private static volatile Set<String> writablePlaylistIds = Collections.emptySet();
+    private static final Set<String> likedTrackIds = Collections.synchronizedSet(new HashSet<>());
+    private static volatile boolean likedTrackIdsLoaded;
     private static volatile boolean userPlaylistsLoaded;
     private static volatile boolean userPlaylistsLoading;
     private static volatile long userPlaylistsLastAttempt;
 
     public static java.util.List<PlayList> getUserPlaylistsSnapshot() {
         return new ArrayList<>(userPlaylistsSnapshot);
+    }
+
+    /** Only the liked-songs virtual collection and playlists this account may edit. */
+    public static java.util.List<PlayList> getWritableUserPlaylistsSnapshot() {
+        List<PlayList> out = new ArrayList<>();
+        Set<String> writable = writablePlaylistIds;
+        for (PlayList playlist : userPlaylistsSnapshot) {
+            if (playlist == null || playlist.getPlatform() != com.muoniumplayer.core.ncm.music.MusicPlatform.SPOTIFY) continue;
+            String id = playlist.getPlatformPlaylistId();
+            if (LIKED_PLAYLIST_ID.equals(id) || writable.contains(id)) out.add(playlist);
+        }
+        return out;
     }
 
     public static boolean areUserPlaylistsLoaded() {
@@ -256,10 +283,21 @@ public final class SpotifyMusicService {
     /** 强制重拉账号歌单（侧栏刷新按钮用）。结果在后台线程落快照。 */
     public static void refreshUserPlaylists() {
         List<PlayList> cards = new ArrayList<>();
+        Set<String> writable = new HashSet<>();
+        try {
+            JsonObject me = SpotifyWebApiClient.getJson("/me", null);
+            SpotifyAuthStore.updateProfile(text(me, "display_name"), text(me, "id"),
+                    firstImageUrl(me.getAsJsonArray("images")));
+        } catch (IOException | SpotifyWebApiClient.SpotifyApiException throwable) {
+            logFailure("账号资料", throwable);
+        }
         Playlist liked = likedPlaylistCard();
         if (liked != null) {
             PlayList card = toPlayListCard(liked);
-            if (card != null) cards.add(card);
+            if (card != null) {
+                cards.add(card);
+                writable.add(LIKED_PLAYLIST_ID);
+            }
         }
         int offset = 0;
         while (offset < 500) {
@@ -278,16 +316,184 @@ public final class SpotifyMusicService {
             for (Playlist playlist : page) {
                 PlayList card = toPlayListCard(playlist);
                 if (card != null) cards.add(card);
+                if (playlist.editable) writable.add(playlist.id);
             }
             offset += page.size();
         }
         userPlaylistsSnapshot = cards;
+        writablePlaylistIds = Collections.unmodifiableSet(writable);
         userPlaylistsLoaded = true;
+        refreshLikedTrackIds();
     }
 
     private static void clearPlaylistCache() {
         userPlaylistsSnapshot = Collections.emptyList();
+        writablePlaylistIds = Collections.emptySet();
+        likedTrackIds.clear();
+        likedTrackIdsLoaded = false;
         userPlaylistsLoaded = false;
+    }
+
+    /** Refreshes the local like snapshot used by the per-row heart without doing network I/O per frame. */
+    public static void refreshLikedTrackIds() {
+        if (!isLoggedIn()) {
+            likedTrackIds.clear();
+            likedTrackIdsLoaded = false;
+            return;
+        }
+        try {
+            List<Track> tracks = likedTracks(2000);
+            Set<String> ids = new HashSet<>();
+            for (Track track : tracks) {
+                if (track != null && !track.id.isEmpty()) ids.add(track.id);
+            }
+            likedTrackIds.clear();
+            likedTrackIds.addAll(ids);
+            likedTrackIdsLoaded = true;
+        } catch (IOException | SpotifyWebApiClient.SpotifyApiException failure) {
+            logFailure("喜欢的歌曲状态", failure);
+        }
+    }
+
+    public static boolean isTrackLiked(String trackId) {
+        String id = trackId == null ? "" : trackId.trim();
+        if (id.isEmpty() || !isLoggedIn()) return false;
+        if (!likedTrackIdsLoaded) refreshLikedTrackIds();
+        return likedTrackIds.contains(id);
+    }
+
+    public static void noteTrackLikedLocal(String trackId, boolean liked) {
+        if (trackId == null || trackId.trim().isEmpty()) return;
+        if (liked) likedTrackIds.add(trackId.trim());
+        else likedTrackIds.remove(trackId.trim());
+        likedTrackIdsLoaded = true;
+    }
+
+    /** Official library writeback used by the shared LikeButton. */
+    public static boolean setTrackLiked(String trackId, boolean liked) {
+        String id = trackId == null ? "" : trackId.trim();
+        if (!SPOTIFY_ID.matcher(id).matches()) return false;
+        if (!SpotifyAuthStore.snapshot().hasLibraryModifyScope()) return false;
+        try {
+            Map<String, String> query = new LinkedHashMap<>();
+            query.put("ids", id);
+            if (liked) SpotifyWebApiClient.putMutation("/me/tracks", query);
+            else SpotifyWebApiClient.deleteMutation("/me/tracks", query);
+            noteTrackLikedLocal(id, liked);
+            return true;
+        } catch (IOException | SpotifyWebApiClient.SpotifyApiException failure) {
+            logFailure(liked ? "收藏 Spotify 曲目" : "取消收藏 Spotify 曲目", failure);
+            return false;
+        }
+    }
+
+    /** Account shelves for the home page: liked songs, top tracks and recent plays. */
+    public static List<PlayList> accountHomeShelves() {
+        if (!isLoggedIn()) return Collections.emptyList();
+        LinkedHashMap<String, Track> feed = new LinkedHashMap<>();
+        List<Track> liked = Collections.emptyList();
+        try {
+            liked = likedTracks(50);
+        } catch (IOException | SpotifyWebApiClient.SpotifyApiException failure) {
+            logFailure("Spotify 喜欢的歌曲", failure);
+        }
+        try {
+            Map<String, String> topQuery = mapOf("limit", "50");
+            topQuery.put("time_range", "medium_term");
+            JsonObject topTracks = SpotifyWebApiClient.getJson("/me/top/tracks", topQuery);
+            List<Track> top = new ArrayList<>();
+            readTracksInto(top, topTracks == null ? null : topTracks.getAsJsonArray("items"));
+            mergeTracks(feed, top);
+        } catch (IOException | SpotifyWebApiClient.SpotifyApiException failure) {
+            logFailure("Spotify 热门歌曲", failure);
+        }
+        mergeTracks(feed, liked);
+        try {
+            JsonObject recentlyPlayed = SpotifyWebApiClient.getJson(
+                    "/me/player/recently-played", mapOf("limit", "50"));
+            List<Track> recentTracks = new ArrayList<>();
+            readTracksInto(recentTracks, recentlyPlayed == null ? null : recentlyPlayed.getAsJsonArray("items"));
+            mergeTracks(feed, recentTracks);
+        } catch (IOException | SpotifyWebApiClient.SpotifyApiException failure) {
+            logFailure("Spotify 最近播放", failure);
+        }
+        List<PlayList> shelves = new ArrayList<>();
+        addTrackShelf(shelves, "spotify-for-you", "为你精选歌曲", new ArrayList<>(feed.values()));
+        return shelves;
+    }
+
+    private static void mergeTracks(Map<String, Track> destination, List<Track> tracks) {
+        if (tracks == null) return;
+        for (Track track : tracks) {
+            if (track != null && !track.id.isEmpty()) destination.putIfAbsent(track.id, track);
+            if (destination.size() >= 100) return;
+        }
+    }
+
+    private static void addTrackShelf(List<PlayList> shelves, String id, String title, List<Track> tracks) {
+        if (tracks == null || tracks.isEmpty()) return;
+        List<Music> songs = new ArrayList<>();
+        for (Track track : tracks) {
+            Music song = Music.fromSpotifyTrack(track);
+            if (song != null) songs.add(song);
+        }
+        if (songs.isEmpty()) return;
+        PlayList shelf = new PlayList(stableId(id), title, songs.get(0).getCoverUrl(256), songs.size(),
+                0L, null, "Spotify", 0L);
+        shelf.setPlatform(com.muoniumplayer.core.ncm.music.MusicPlatform.SPOTIFY);
+        shelf.setPlatformPlaylistId(id);
+        shelf.setSearchMode(true);
+        shelf.setMusics(new java.util.concurrent.CopyOnWriteArrayList<>(songs));
+        shelf.setMusicsQueried(true);
+        shelf.setMusicsLoaded(true);
+        shelves.add(shelf);
+    }
+
+    private static Map<String, String> mapOf(String key, String value) {
+        Map<String, String> map = new LinkedHashMap<>();
+        map.put(key, value);
+        return map;
+    }
+
+    /** Adds one Spotify track to the liked collection or an account-editable playlist. */
+    public static void addTrackToPlaylist(String playlistId, String trackId) throws IOException {
+        String target = playlistId == null ? "" : playlistId.trim();
+        String track = trackId == null ? "" : trackId.trim();
+        if (!SPOTIFY_ID.matcher(track).matches()) {
+            throw new IllegalArgumentException("Invalid Spotify track id");
+        }
+        if (LIKED_PLAYLIST_ID.equals(target)) {
+            if (!SpotifyAuthStore.snapshot().hasLibraryModifyScope()) {
+                throw new SpotifyWritePermissionException("missing user-library-modify scope");
+            }
+            Map<String, String> query = new LinkedHashMap<>();
+            query.put("uris", "spotify:track:" + track);
+            SpotifyWebApiClient.putMutation("/me/library", query);
+            return;
+        }
+        if (!SPOTIFY_ID.matcher(target).matches() || !writablePlaylistIds.contains(target)) {
+            throw new IllegalArgumentException("Spotify playlist is not an editable account playlist");
+        }
+        if (!SpotifyAuthStore.snapshot().hasPlaylistModifyScopes()) {
+            throw new SpotifyWritePermissionException("missing playlist-modify scope");
+        }
+        JsonArray uris = new JsonArray();
+        uris.add("spotify:track:" + track);
+        JsonObject body = new JsonObject();
+        body.add("uris", uris);
+        SpotifyWebApiClient.postJson("/playlists/" + target + "/items", null, body);
+    }
+
+    static void setWritablePlaylistIdsForTest(String... ids) {
+        Set<String> writable = new HashSet<>();
+        if (ids != null) Collections.addAll(writable, ids);
+        writablePlaylistIds = Collections.unmodifiableSet(writable);
+    }
+
+    static void clearForTest() {
+        clearPlaylistCache();
+        userPlaylistsLoading = false;
+        userPlaylistsLastAttempt = 0L;
     }
 
     public static boolean isLoggedIn() {
@@ -311,8 +517,14 @@ public final class SpotifyMusicService {
         if (session.isReauthRequired() && !session.canRefresh()) return "凭据已失效，请重新授权";
         if (session.isReauthRequired()) return "凭据疑似过期，稍后会自动重试；失败请重新授权";
         if (!session.loggedIn) return "未登录：粘贴 Client ID 并完成浏览器授权后，可浏览本人歌单与喜欢的歌";
-        return "已登录：" + (session.accountName.isEmpty() ? "Spotify 账号" : session.accountName)
+        String status = "已登录：" + (session.accountName.isEmpty() ? "Spotify 账号" : session.accountName)
                 + " · 播放始终由跨平台换源匹配";
+        if (!session.hasPlaylistModifyScopes() || !session.hasLibraryModifyScope()) {
+            status += " · 添加到歌单需重新授权";
+        } else if (!session.hasRecentPlaybackScope()) {
+            status += " · 主页最近播放需重新授权";
+        }
+        return status;
     }
 
     /** 退出登录：清凭据与账号歌单快照；Connect 镜像（若在接管）一并断开。 */
@@ -539,7 +751,10 @@ public final class SpotifyMusicService {
             card.trackCount = playlistTrackCount(object);
             card.coverUrl = firstImageUrl(object.getAsJsonArray("images"));
             if (object.has("owner") && object.get("owner").isJsonObject()) {
-                card.owner = text(object.getAsJsonObject("owner"), "display_name");
+                JsonObject owner = object.getAsJsonObject("owner");
+                card.owner = text(owner, "display_name");
+                String accountId = SpotifyAuthStore.snapshot().accountId;
+                card.editable = !accountId.isEmpty() && accountId.equals(text(owner, "id"));
             }
             out.add(card);
         }

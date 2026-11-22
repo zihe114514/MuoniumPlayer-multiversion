@@ -7,22 +7,25 @@ package com.muoniumplayer.core.ncm.music.acoustics;
  * <p>全部静态纯函数,零状态 —— 可单测、可在采样线程调。公式出处(全网检索
  * 定稿):</p>
  * <ul>
- *   <li><b>距离衰减</b> = Steam Audio inverse 模型 {@code 1/(1+(d/ref−1)²)}
- *       (ref 内全增益,之外平滑下滑,边界无爆点);</li>
+ *   <li><b>距离衰减</b>:近场平滑降幅,8m 后延续 inverse 形状,让几格内的移动
+ *       也能听出距离,又不在边界突然改变响度;</li>
  *   <li><b>遮挡低通</b> = sonicether/Sound-Physics 的指数式
  *       {@code fcRatio = exp(−遮挡×3)}:实心方块遮挡量 1.0、非实心 0.15,
  *       一块实心墙 ≈ fc 1kHz,两块 ≈ 200Hz —— 穿墙的「闷」;</li>
  *   <li><b>空气吸收</b>:近场全带宽,中远距温和减少高频,不把无遮挡的远声
  *       压成墙后的闷响;与反射抽头共用同一条曲线。</li>
- *   <li><b>声像</b> = 等功率律,与 {@link SceneResponse} 抽头同款;M/S 域
- *       实现:中置与宽度分量共用传播衰减与滤波,围绕同一声源方向分配;
- *       pan=0、满增益、无遮挡且零距离时恒等,无声源零染色。</li>
+ *   <li><b>声像</b>:等功率律保留给反射及未提供锚点的计划;音箱的 Java
+ *       降级用球头耳间时差和近似的方向棚架,不是测量 HRIR。</li>
  * </ul>
  */
 public final class DirectPath {
 
-    /** 距离衰减的参考距离(米):以内全增益。 */
+    private static final double NEAR_FULL_GAIN_METERS = 1.0;
     private static final double ATTEN_REF_METERS = 8.0;
+    private static final double ATTEN_AT_REF = 0.60;
+    private static final double HEAD_RADIUS_OVER_SOUND_SPEED = 0.0875 / 343.0;
+    static final double MAX_EAR_DELAY_SEC = HEAD_RADIUS_OVER_SOUND_SPEED * (Math.PI / 2.0 + 1.0);
+    public static final double SPEAKER_HALF_WIDTH_METERS = 0.35;
     /** 遮挡→截止的衰减率(Sound Physics 同款):一块实心墙 fc 降到 ≈1kHz。 */
     private static final double OCCLUSION_RATE = 3.0;
     /** 非实心材料每单位遮挡的增益衰减(dB):0.15(单层玻璃/树叶)≈ −0.9dB,
@@ -54,15 +57,26 @@ public final class DirectPath {
     }
 
     /**
-     * 距离衰减:ref(8m)内 1.0,之外 {@code 1/(1+(d/ref−1)²)}。
-     * 8m=1.0、24m≈0.20、48m≈0.038、96m≈0.008(≈−42dB)。
+     * 音箱的距离增益 (幅度):1m 内为 1,平滑过渡到 8m 的 0.60 (−4.4dB)。
+     * 之后保留原有远场的相对落差;这是游戏定标,不再叠加后端距离衰减。
      */
     public static double distanceAttenuation(double meters) {
-        if (!(meters >= 0.0) || Double.isNaN(meters)) {
+        if (!(meters >= 0.0)) {
             return 0.0;
         }
+        if (meters < ATTEN_REF_METERS) {
+            final double t = Math.max(0.0, (meters - NEAR_FULL_GAIN_METERS)
+                    / (ATTEN_REF_METERS - NEAR_FULL_GAIN_METERS));
+            return 1.0 - (1.0 - ATTEN_AT_REF) * t * t * (3.0 - 2.0 * t);
+        }
         final double over = Math.max(0.0, meters / ATTEN_REF_METERS - 1.0);
-        return 1.0 / (1.0 + over * over);
+        return ATTEN_AT_REF / (1.0 + over * over);
+    }
+
+    /** 球头的 Woodworth 时差近似;正值表示右耳先到,lateral 为单位源方向在右轴的投影。 */
+    static double earDelaySeconds(double lateral) {
+        final double p = Math.max(-1.0, Math.min(1.0, lateral));
+        return HEAD_RADIUS_OVER_SOUND_SPEED * (Math.asin(p) + p);
     }
 
     /**
@@ -315,7 +329,7 @@ public final class DirectPath {
     /** 点声源的有限宽度:两条立体声通路围绕同一到达方向,不留头锁定 side。 */
     public static double sourceHalfWidthRadians(double meters) {
         final double distance = Double.isFinite(meters) ? Math.max(0.25, meters) : 0.25;
-        return Math.atan2(0.35, distance);
+        return Math.atan2(SPEAKER_HALF_WIDTH_METERS, distance);
     }
 
     private static final double AIR_FREE = 8.0;

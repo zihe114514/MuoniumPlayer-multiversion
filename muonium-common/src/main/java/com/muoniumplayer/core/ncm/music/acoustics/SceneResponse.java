@@ -71,6 +71,7 @@ public final class SceneResponse {
         float[] tapDelay = EMPTY;
         float[] tapGainL = EMPTY;
         float[] tapGainR = EMPTY;
+        float[] tapHighRatio = EMPTY;
 
         final float enclosure = clamp01(sample.enclosure());
         final float firstHit = sample.firstHitMeanMeters();
@@ -102,16 +103,24 @@ public final class SceneResponse {
             // 抬到 0.485,与木头(0.6)几乎同尾,材质的吸音差异被抹平
             // (实机:羊毛房测不出吸音感)。现在有真实直方图校验,解析式
             // 忠实于材质;极短尾由 RT60_MIN_SEC 下限保底,不会「死寂」。
-            final double perBounce = Math.min(DECAY_ENERGY_MAX,
-                    Math.max(DECAY_ENERGY_MIN, rho));
+            // 逃逸率是能量泄漏项:每次命中后有 esc 的声能飞向开阔、不再回来,
+            // 有效每弹保留 = ρ × (1 − esc)。石头院子 ρ 再高,泄漏也把尾巴压短。
+            final float late = clamp01(sample.lateEnclosure());
+            final double esc = clamp01(sample.escapeFraction());
+            final double reflectivityEnergy = Math.max(0.02,
+                    Math.min(DECAY_ENERGY_MAX, rho));
+            final double perBounce = Math.max(DECAY_ENERGY_MIN,
+                    reflectivityEnergy * (1.0 - ESCAPE_LEAK * esc));
             final double bouncesToSilence = Math.log(1e-6) / Math.log(perBounce);
-            // 围合度调制尾长:敞开空间的声能从开敞面逃逸,「混响时间」物理上
+            // 晚期围合度调制尾长:敞开空间的声能从开敞面逃逸,「混响时间」物理上
             // 与封闭面积比强相关 —— 院子只有 30% 方向有墙却给 5.5s 的大厅尾
-            // 是不符实际的(实机 review 发现)。0.3 围合 ≈ ×0.58,全封闭 ×1。
-            final double enclosureDecayFactor = 0.4 + 0.6 * enclosure;
-            decay = (float) Math.max(RT60_MIN_SEC,
+            // 是不符实际的(实机 review 发现)。用「逃逸前反复弹射」的占比而不是
+            // 首命中占比:脚下的地面只给一次反射,不算围合。
+            final double enclosureDecayFactor = 0.4 + 0.6 * late;
+            final double parsedDecay = Math.max(RT60_MIN_SEC,
                     Math.min(RT60_MAX_SEC, bouncesToSilence * segment / SPEED_OF_SOUND
                             * enclosureDecayFactor));
+            decay = (float) parsedDecay;
 
             // ---- 逐频带 T60:直方图拟合优先,解析式兜底 ----
             // 拟合值必须与解析式互相校验:射线弹数/射程有物理上限(4 弹 × 28m
@@ -126,9 +135,8 @@ public final class SceneResponse {
             final float lowScale = AcousticsDebugTuning.lowDecayScale(Float.NaN) * AcousticsDebugTuning.decayScale(Float.NaN);
             final float midScale = AcousticsDebugTuning.decayScale(Float.NaN);
             final HistogramEstimator.Result hist = HistogramEstimator.estimate(sample.bandHistogram());
-            if (hist != null && hist.decayMidSec > 0.0) {
-                // 拟合值同样乘围合因子:露天场地的直方图尾(能量逃逸前的
-                // 回声)不该按封闭房间解读。
+            if (late >= LATE_GATE_LOW && hist != null && hist.decayMidSec > 0.0) {
+                // 拟合值同样乘晚期围合因子:露天场地的稀疏回声不能按房间 T60 解释。
                 decay = clampDecay(Math.max(decay, hist.decayMidSec * enclosureDecayFactor)
                         * (Float.isNaN(midScale) ? 1f : midScale));
                 if (hist.decayLowSec > 0.0) {
@@ -168,14 +176,16 @@ public final class SceneResponse {
 
             // 世界声源的湿声随直线距离稀释。反射由独立的源信号激励,不再
             // 复用已衰减的直射;这里也不保留远距固定8%的贴脸混响地板。
-            wet = (float) Math.min(WET_CEIL, enclosure
+            // 湿声(扩散尾)量由晚期围合度决定:旷野里只有地板/孤墙的单次回声,
+            // 属于早期反射,不进 FDN 尾。
+            wet = (float) Math.min(WET_CEIL, lateWetGate(late)
                     * (WET_BASE + WET_REACH_SPAN * reach)
                     * wetMaterialFactor(rho)
                     * MUSIC_WET_BOOST
                     * AcousticsDebugTuning.wetBoost(1f));
             // 有房间时保留可闻的扩散尾;旷野仍严格保持静息。
             if (!sample.hasDirectSource()) {
-                wet = Math.max(wet, ROOM_WET_FLOOR * enclosure);
+                wet = Math.max(wet, ROOM_WET_FLOOR * lateWetGate(late));
             }
             // 世界声源的湿声随直线距离稀释,但扩散场不能像直射声一样按平方律快速消失。
             // 保留距离差异,同时让放置在远处的音箱仍有可闻的房间反射。
@@ -204,9 +214,13 @@ public final class SceneResponse {
                 tapDelay = new float[tapCount];
                 tapGainL = new float[tapCount];
                 tapGainR = new float[tapCount];
+                tapHighRatio = new float[tapCount];
                 float maxGain = 0f;
                 for (int i = 0; i < tapCount; i++) {
                     tapDelay[i] = sample.tapDelaysSec()[picked[i]];
+                    tapHighRatio[i] = sample.tapHighRatios() != null
+                            && picked[i] < sample.tapHighRatios().length
+                            ? clamp01(sample.tapHighRatios()[picked[i]]) : 1f;
                     maxGain = Math.max(maxGain, sample.tapGains()[picked[i]]);
                 }
                 // 归一撤销(材质区分的根本修复):raw gain = √ρ×2/path 已经
@@ -214,7 +228,10 @@ public final class SceneResponse {
                 // maxGain 归一把每房最强抽头都抬/压到同一档 —— 「吸音房回声
                 // 轻」被归一抹平,材质只剩湿声一路有差异。现在:上限夹取
                 // (单条过响防爆音)代替归一,材质差原样保留。
-                final float norm = 1f;
+                // 旷野里只有地板/孤墙的零星抽头,4~10ms 的单条强反射会在音乐上
+                // 叠出梳状着色(发硬):按晚期围合度把抽头整体收敛到 ER_OPEN_FLOOR,
+                // 房间里满量。材质差仍原样保留(同一倍率作用于所有抽头)。
+                final float norm = ER_OPEN_FLOOR + (1f - ER_OPEN_FLOOR) * lateWetGate(late);
                 // 总能量约束:密集房间可达数百条反射,128 条相近能量的抽头同时
                 // 叠加,单耳瞬时和可达最强条的 10-20 倍 —— DJ 音乐满幅输入下
                 // ER 通路自身就能超 1.0 削波。把「单耳幅度和」约束到
@@ -315,7 +332,7 @@ public final class SceneResponse {
         return new RoomPlan(Math.pow(10.0, logBand), wet, loudFinal * duck, loudFinal,
                 predelay, decay, NEUTRAL_TONE + (tone - NEUTRAL_TONE) * s,
                 decayLow, decayHigh, diffusion,
-                tapDelay, tapGainL, tapGainR,
+                tapDelay, tapGainL, tapGainR, tapHighRatio,
                 directGain, directCutoff, directPan, directDist,
                 useEax, reverbHfRatio, reverbDiff,
                 sample.hasDirectSource(), arrivalX, arrivalY, arrivalZ,
@@ -442,6 +459,24 @@ public final class SceneResponse {
         return Math.min(1.0, 0.18 + 0.82 * Math.pow(rhoN, 1.8));
     }
     private static final float WET_CEIL = 0.95f;
+
+    /** 逃逸率对每弹保留的折扣强度:ρ_eff = ρ × (1 − 0.85×逃逸率)。 */
+    private static final double ESCAPE_LEAK = 0.85;
+    /** 旷野(晚期围合≈0)时早期反射抽头保留的比例。 */
+    private static final float ER_OPEN_FLOOR = 0.3f;
+    /** 晚期围合度低于此值不产生扩散尾(旷野只有单次回声)。 */
+    private static final float LATE_GATE_LOW = 0.04f;
+    /** 晚期围合度达到此值时扩散尾满量。 */
+    private static final float LATE_GATE_HIGH = 0.45f;
+
+    /**
+     * 扩散尾的围合门:smoothstep(LOW→HIGH)。旷野(≈0)完全关闭,半开敞的院子/
+     * 洞口给部分量,封闭空间满量;平滑过渡避免走过洞口时混响量突跳。
+     */
+    private static float lateWetGate(float late) {
+        final float t = clamp01((late - LATE_GATE_LOW) / (LATE_GATE_HIGH - LATE_GATE_LOW));
+        return t * t * (3f - 2f * t);
+    }
 
     private static final float ROOM_WET_FLOOR = 0.10f;
     /** 音乐专属:干声满幅立体声会掩蔽世界音效量级的湿声,整体抬高(实测教训)。 */

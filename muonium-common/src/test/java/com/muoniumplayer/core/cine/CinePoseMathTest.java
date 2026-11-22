@@ -100,6 +100,37 @@ class CinePoseMathTest {
     }
 
     @Test
+    void mobPositionInterpolationAndLeadStayFiniteAndBounded() {
+        CineDirector.MobSample mob = new CineDirector.MobSample(7, 0d, 64d, 0d,
+                1d, 65d, 0d, 1.8f);
+        CineDirector.Vec3Holder middle = CineSession.predictedMobPosition(mob, 0.5d, 0d);
+        assertEquals(0.5d, middle.x(), 1.0e-9d);
+        assertEquals(64.5d, middle.y(), 1.0e-9d);
+        CineDirector.Vec3Holder lead = CineSession.predictedMobPosition(mob, 1d, 0.1d);
+        double leadDx = lead.x() - mob.x();
+        double leadDy = lead.y() - mob.y();
+        assertEquals(0.5303300858899107d, leadDx, 1.0e-9d);
+        assertEquals(0.5303300858899107d, leadDy, 1.0e-9d);
+        assertEquals(0.75d, Math.hypot(leadDx, leadDy), 1.0e-9d,
+                "预测向量的总长度最多补 0.75 格");
+        CineDirector.MobSample fast = new CineDirector.MobSample(8, 0d, 0d, 0d,
+                100d, 0d, 0d, 1.8f);
+        CineDirector.Vec3Holder capped = CineSession.predictedMobPosition(fast, 1d, 1d);
+        assertEquals(100.75d, capped.x(), 1.0e-9d, "运动预测必须受 0.75 格上限约束");
+        assertTrue(CineSession.predictedMobPosition(fast, Double.NaN, Double.NaN).x() == 100d);
+    }
+
+    @Test
+    void trackingSoftnessAndOrbitRadiusHaveStableResponses() {
+        assertEquals(1d, CineSession.trackingResponseScale(0.8d), 1.0e-9d);
+        assertTrue(CineSession.trackingResponseScale(0.4d) > 1d);
+        assertTrue(CineSession.trackingResponseScale(1.6d) < 1d);
+        assertEquals(0.5d, CineSession.trackingResponseScale(Double.NaN), 1.0e-9d);
+        double normal = CineSession.orbitRateDegreesPerSecond(4.9d);
+        assertTrue(CineSession.orbitRateDegreesPerSecond(15d) < normal);
+        assertTrue(CineSession.orbitRateDegreesPerSecond(1d) > normal);
+    }
+    @Test
     void randRange可复现且在区间内() {
         double a = CineShots.randRange(42L, 1, 3d, 8d);
         double b = CineShots.randRange(42L, 1, 3d, 8d);

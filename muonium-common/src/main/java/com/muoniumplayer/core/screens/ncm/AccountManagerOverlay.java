@@ -7,6 +7,8 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.OptionsUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.BilibiliMusicService;
+import com.muoniumplayer.core.ncm.music.BodianMusicService;
+import com.muoniumplayer.core.ncm.music.BodianSessionStore;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
@@ -72,6 +74,7 @@ public class AccountManagerOverlay extends NcmSheet {
     private static final Location KUGOU_QR = Location.of("muonium/textures/account/kugou_qr.png");
     private static final Location QISHUI_QR = Location.of("muonium/textures/account/qishui_qr.png");
     private static final Location BILIBILI_QR = Location.of("muonium/textures/account/bilibili_qr.png");
+    private static final Location BODIAN_QR = Location.of("muonium/textures/account/bodian_qr.png");
 
     /** 页眉占掉的高度：图标盘 / 返回键 34 见方 + 上下留白，标题与副标题都在这一段里。 */
     private static final double HEADER_H = 64.0;
@@ -240,12 +243,12 @@ public class AccountManagerOverlay extends NcmSheet {
         final ScrollPanel feed = feed(body);
         // 开头让出几像素：格子悬停时绕着自己中心长，第一行贴着滚动区上边的话会被硬裁切掉圆角。
         strip(feed, LEAD);
-        // 3 + 2 + 1 三行：Apple 加入后六个平台凑成 3-2-1 的阶梯（下一行收一列整体居中，
+        // 3 + 3 + 1 三行：Apple 与波点加入后七个平台收成阶梯，
         // 两两共用一根中轴，视觉上仍是对称的）—— 与其硬凑 3×2 的满格矩阵留两个窟窿，
         // 不如让每行都比上一行少一格，收尾自然。
         final MusicPlatform[][] rows = {
                 {MusicPlatform.NETEASE, MusicPlatform.QQ, MusicPlatform.KUGOU},
-                {MusicPlatform.QISHUI, MusicPlatform.BILIBILI},
+                {MusicPlatform.QISHUI, MusicPlatform.BILIBILI, MusicPlatform.BODIAN},
                 {MusicPlatform.APPLE}};
         int slot = 0;
         for (int r = 0; r < rows.length; r++) {
@@ -618,6 +621,9 @@ public class AccountManagerOverlay extends NcmSheet {
         } else if (platform == MusicPlatform.QISHUI) {
             // 存号器与主按钮并排；缺外部工具且已登录时再并进「导入新的 Cookie」。
             footerRows = qishuiCookieOnly && loggedIn ? 2 : 1;
+        } else if (platform == MusicPlatform.BODIAN) {
+            footerRows = !loggedIn && !addAccountByQr && !BodianMusicService.getSavedAccounts().isEmpty()
+                    ? 2 : 1;
         } else {
             footerRows = 1;
         }
@@ -643,8 +649,10 @@ public class AccountManagerOverlay extends NcmSheet {
         // 直接进 lambda 就不是 effectively final 了。这里先定格成常量再捕获。
         final double sheetContent = content;
         final Panel dialog = sheet(468, () -> HEADER_H + sheetContent + footer);
-        detailHeader(dialog, addAccountByQr ? this::showSavedQishuiAccounts : this::showOverview, platform,
-                () -> addAccountByQr ? "扫码添加汽水账号" : platform.getDisplayName() + "账号",
+        detailHeader(dialog, addAccountByQr
+                        ? platform == MusicPlatform.BODIAN ? this::showSavedBodianAccounts : this::showSavedQishuiAccounts
+                        : this::showOverview, platform,
+                () -> addAccountByQr ? "扫码添加" + platform.getDisplayName() + "账号" : platform.getDisplayName() + "账号",
                 () -> addAccountByQr ? "扫码成功后自动回到已保存账号"
                         : loggedIn ? "本地已保存这个账号的登录凭据"
                         : qishuiCookieOnly ? "未找到外部取码工具 · 可改用 Cookie 登录"
@@ -687,6 +695,8 @@ public class AccountManagerOverlay extends NcmSheet {
             paired = !loggedIn;
         } else if (platform == MusicPlatform.KUGOU || platform == MusicPlatform.QISHUI) {
             paired = true;
+        } else if (platform == MusicPlatform.BODIAN) {
+            paired = loggedIn && !addAccountByQr;
         } else {
             paired = false;
         }
@@ -729,12 +739,25 @@ public class AccountManagerOverlay extends NcmSheet {
             }
             kuGouPrivUrlAction(dialog, loggedIn ? 0 : 1, loggedIn);
         }
+        if (!addAccountByQr && platform == MusicPlatform.BODIAN) {
+            final String savedLabel = "已保存账号（" + BodianMusicService.getSavedAccounts().size() + "）";
+            if (loggedIn) {
+                footerHalfButton(dialog, 0, true, () -> PartyIcons.GROUP, () -> savedLabel,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                        this::showSavedBodianAccounts);
+            } else if (!BodianMusicService.getSavedAccounts().isEmpty()) {
+                footerButton(dialog, 1, () -> PartyIcons.GROUP, () -> savedLabel,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                        this::showSavedBodianAccounts);
+            }
+        }
 
         // 网易云与 B 站都只有一条扫码链路，进页面就直接取码。QQ 必须先定下走 QQ 还是微信，
         // 否则会拿 QQ 的码去问微信的状态；酷狗要先看清选的是哪个身份（两种客户端签两种凭证）。
         // 汽水只有在外部取码工具在位时才会走到 qrVisible，所以可以直接进这一条。
         if ((platform == MusicPlatform.NETEASE || platform == MusicPlatform.KUGOU
-                || platform == MusicPlatform.BILIBILI || platform == MusicPlatform.QISHUI) && qrVisible) {
+                || platform == MusicPlatform.BILIBILI || platform == MusicPlatform.QISHUI
+                || platform == MusicPlatform.BODIAN) && qrVisible) {
             startQrLogin(platform, token, addAccountByQr);
         }
         if (platform == MusicPlatform.NETEASE && loggedIn && !addAccountByQr) {
@@ -1893,6 +1916,92 @@ public class AccountManagerOverlay extends NcmSheet {
 
     // ════════════════════════════ 三级页：已保存账号 ════════════════════════════
 
+    private void showSavedBodianAccounts() {
+        final long token = pageGeneration.incrementAndGet();
+        detailPlatform = MusicPlatform.BODIAN;
+        requestRunning = false;
+        statusText = "点一行验证并切换；移除只删除本地快捷记录";
+        statusTone = 0;
+        beginPage();
+
+        final List<BodianSessionStore.Account> accounts = BodianMusicService.getSavedAccounts();
+        final double listHeight = accounts.isEmpty()
+                ? 84.0 : Math.min(accounts.size() * SAVED_ROW, 4 * SAVED_ROW);
+        final double content = SECTION_GAP + listHeight + SECTION_GAP;
+        final double footer = FOOTER_TOP_GAP + DETAIL_BUTTON_H + SECTION_GAP + STATUS_BLOCK;
+        final Panel dialog = sheet(468, () -> HEADER_H + content + footer);
+        detailHeader(dialog, back(() -> showDetail(MusicPlatform.BODIAN)), MusicPlatform.BODIAN,
+                () -> "波点音乐已保存账号", () -> "本地切换 · 最多保存 8 个");
+
+        final Panel body = body(dialog, () -> HEADER_H, () -> footer);
+        final ScrollPanel feed = feed(body);
+        strip(feed, SECTION_GAP);
+        if (accounts.isEmpty()) {
+            emptyState(strip(feed, 84.0));
+        } else {
+            final Location avatarLocation = Location.of("muonium/textures/account/bodian_avatar.png");
+            for (int i = 0; i < accounts.size(); i++) {
+                final BodianSessionStore.Account account = accounts.get(i);
+                savedAccountRow(strip(feed, SAVED_ROW), i, BodianSessionStore.isActive(account),
+                        MusicPlatform.BODIAN, account.getDisplayName(), account.getMeta(),
+                        account.avatarUrl, avatarLocation,
+                        () -> switchBodianAccount(account, token),
+                        () -> removeBodianAccount(account));
+            }
+        }
+        strip(feed, SECTION_GAP);
+
+        final RoundedButtonWidget add = action(dialog, () -> PartyIcons.PERSON_ADD, () -> "扫码添加账号",
+                FontManager.pf12bold, () -> 0xFFFFFF, () -> {
+                    if (!requestRunning) showDetail(MusicPlatform.BODIAN, true);
+                });
+        add.setRadius(6.0);
+        add.setBeforeRenderCallback(() -> {
+            add.setClickable(footerGate() > .5);
+            add.setAlpha((float) footerGate());
+            add.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), DETAIL_BUTTON_H);
+            add.setPosition(PAD + CARD_INSET, dialog.getHeight() - STATUS_BLOCK - SECTION_GAP
+                    - DETAIL_BUTTON_H);
+            add.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF,
+                    add.isHovering() ? .16 : 0.0));
+        });
+        tip(veil(dialog, this::footerGate), this::statusGlyph, () -> statusText, this::statusColor,
+                () -> dialog.getHeight() - STATUS_BLOCK);
+    }
+
+    private void switchBodianAccount(final BodianSessionStore.Account account, final long token) {
+        requestRunning = true;
+        statusText = "正在验证并切换波点账号…";
+        statusTone = 3;
+        MultiThreadingUtil.runAsync(() -> {
+            boolean success = BodianMusicService.switchAccount(account);
+            MultiThreadingUtil.runOnMainThread(() -> {
+                requestRunning = false;
+                if (!isCurrent(MusicPlatform.BODIAN, token)) return;
+                if (!success) {
+                    statusText = "切换失败：凭据可能已过期";
+                    statusTone = 2;
+                    return;
+                }
+                NCMScreen.getInstance().markDirty();
+                showDetail(MusicPlatform.BODIAN);
+            });
+        });
+    }
+
+    private void removeBodianAccount(final BodianSessionStore.Account account) {
+        NCMScreen screen = NCMScreen.getInstance();
+        if (screen == null) return;
+        screen.openConfirmation("移除波点已保存账号",
+                "只从本地列表移除「" + account.getDisplayName() + "」，不会退出当前账号。",
+                "移除", () -> {
+                    BodianMusicService.removeSavedAccount(account);
+                    showSavedBodianAccounts();
+                    statusText = "已移除「" + account.getDisplayName() + "」";
+                    statusTone = 1;
+                });
+    }
+
     private void showSavedQishuiAccounts() {
         final long token = pageGeneration.incrementAndGet();
         detailPlatform = MusicPlatform.QISHUI;
@@ -2394,8 +2503,10 @@ public class AccountManagerOverlay extends NcmSheet {
                         MultiThreadingUtil.runOnMainThread(() -> {
                             if (!isCurrent(platform, token)) return;
                             NCMScreen.getInstance().markDirty();
-                    if (addAccountByQr && (platform == MusicPlatform.NETEASE || platform == MusicPlatform.QISHUI)) {
+                    if (addAccountByQr && (platform == MusicPlatform.NETEASE
+                            || platform == MusicPlatform.QISHUI || platform == MusicPlatform.BODIAN)) {
                         if (platform == MusicPlatform.NETEASE) showSavedNeteaseAccounts();
+                        else if (platform == MusicPlatform.BODIAN) showSavedBodianAccounts();
                         else showSavedQishuiAccounts();
                     } else {
                         showOverview();
@@ -2557,6 +2668,7 @@ public class AccountManagerOverlay extends NcmSheet {
         if (platform == MusicPlatform.KUGOU) return KUGOU_QR;
         if (platform == MusicPlatform.QISHUI) return QISHUI_QR;
         if (platform == MusicPlatform.BILIBILI) return BILIBILI_QR;
+        if (platform == MusicPlatform.BODIAN) return BODIAN_QR;
         return platform == MusicPlatform.QQ ? QQ_QR : NETEASE_QR;
     }
 
@@ -2575,6 +2687,7 @@ public class AccountManagerOverlay extends NcmSheet {
         }
         if (platform == MusicPlatform.QISHUI) return "抖音 App";
         if (platform == MusicPlatform.BILIBILI) return "哔哩哔哩 App";
+        if (platform == MusicPlatform.BODIAN) return "波点音乐 App";
         if (platform == MusicPlatform.QQ) return "手机 QQ";
         return "网易云音乐客户端";
     }
@@ -2593,6 +2706,10 @@ public class AccountManagerOverlay extends NcmSheet {
         if (platform == MusicPlatform.BILIBILI) {
             String uid = BilibiliMusicService.getAccountId();
             if (!uid.isEmpty()) return "B 站 UID " + uid;
+        }
+        if (platform == MusicPlatform.BODIAN) {
+            String uid = BodianMusicService.getAccountId();
+            if (!uid.isEmpty()) return "波点 UID " + uid;
         }
         if (platform == MusicPlatform.KUGOU) {
             // 身份<b>跟着凭证走，不跟着选择器走</b>：一台机器上两种客户端的账号都可能登过，
@@ -2617,6 +2734,9 @@ public class AccountManagerOverlay extends NcmSheet {
     }
 
     private boolean isAccountVip(MusicPlatform platform) {
+        if (platform == MusicPlatform.BODIAN) {
+            return NeteaseMusicService.isLoggedIn(platform) && BodianMusicService.isVipAccount();
+        }
         if (platform == MusicPlatform.QISHUI) {
             return NeteaseMusicService.isLoggedIn(platform) && QishuiMusicService.isVipAccount();
         }
@@ -2661,6 +2781,7 @@ public class AccountManagerOverlay extends NcmSheet {
         if (platform == MusicPlatform.KUGOU) return MusicBrandIcons.KUGOU_MONOGRAM;
         if (platform == MusicPlatform.QISHUI) return MusicBrandIcons.QISHUI_MONOGRAM;
         if (platform == MusicPlatform.BILIBILI) return MusicBrandIcons.BILIBILI_MONOGRAM;
+        if (platform == MusicPlatform.BODIAN) return "点";
         if (platform == MusicPlatform.APPLE) return MusicBrandIcons.APPLE_MONOGRAM;
         return platform == MusicPlatform.QQ ? MusicBrandIcons.QQ_MUSIC : MusicBrandIcons.NETEASE_CLOUD_MUSIC;
     }
@@ -2675,7 +2796,7 @@ public class AccountManagerOverlay extends NcmSheet {
      */
     private static CFontRenderer brandFont(MusicPlatform platform) {
         if (platform == MusicPlatform.KUGOU || platform == MusicPlatform.QISHUI
-                || platform == MusicPlatform.BILIBILI) return FontManager.pf34bold;
+                || platform == MusicPlatform.BILIBILI || platform == MusicPlatform.BODIAN) return FontManager.pf34bold;
         return platform == MusicPlatform.QQ ? FontManager.qqMusicIcon68 : FontManager.musicBrand52;
     }
 

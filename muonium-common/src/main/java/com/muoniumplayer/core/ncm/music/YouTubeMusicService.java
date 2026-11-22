@@ -47,6 +47,8 @@ public final class YouTubeMusicService {
     private static final String USER_AGENT =
             "com.google.android.youtube/20.10.38 (Linux; U; Android 15) gzip";
     private static final String SEARCH_VIDEO_PARAMS = "EgIQAQ%3D%3D";
+    private static final Set<String> likedTrackIds = java.util.Collections.synchronizedSet(new HashSet<>());
+    private static volatile boolean likedTrackIdsLoaded;
     private static final int MAX_BYTES = 4 * 1024 * 1024;
     /**
      * 元数据响应的上限。{@link #MAX_BYTES} 是按「搜索 / 取流」那种小响应定的，
@@ -688,6 +690,7 @@ public final class YouTubeMusicService {
     static String normalizePlaylistId(String rawInput) {
         String text = rawInput == null ? "" : rawInput.trim();
         if (text.isEmpty()) return "";
+        if ("LM".equalsIgnoreCase(text)) return "LM";
         java.util.regex.Matcher query = java.util.regex.Pattern
                 .compile("[?&#]list=([A-Za-z0-9_-]{8,})").matcher(text);
         if (query.find()) return stripListPrefix(query.group(1));
@@ -719,7 +722,7 @@ public final class YouTubeMusicService {
         int declared = 0;
         try {
             JsonObject body = new JsonObject();
-            body.addProperty("browseId", PLAYLIST_PREFIX + id);
+            body.addProperty("browseId", "LM".equals(id) ? "LM" : PLAYLIST_PREFIX + id);
             String continuation = null;
             for (int page = 0; page < MAX_PAGES; page++) {
                 JsonObject response = continuation == null
@@ -930,6 +933,117 @@ public final class YouTubeMusicService {
             System.err.println("[Music/YouTube] Account info failed: " + describe(throwable));
             return null;
         }
+    }
+
+    /**
+     * Login-only library shelves. YouTube Music exposes these through the web library browse tabs;
+     * anonymous search/playback remains independent of this method.
+     */
+    public static List<com.muoniumplayer.core.ncm.music.dto.PlayList> getAccountPlaylists(int limit) {
+        if (!YouTubeSessionStore.isLoggedIn()) return java.util.Collections.emptyList();
+        int cap = Math.max(1, Math.min(100, limit));
+        List<com.muoniumplayer.core.ncm.music.dto.PlayList> result = new ArrayList<>();
+        try {
+            JsonObject body = new JsonObject();
+            body.addProperty("browseId", "FEmusic_liked_playlists");
+            JsonObject response = postMusic("browse", body, MUSIC_CLIENT_NAME);
+            List<JsonObject> cards = new ArrayList<>();
+            collectRenderers(response, "musicTwoRowItemRenderer", cards);
+            Set<String> seen = new HashSet<>();
+            for (JsonObject card : cards) {
+                String id = browseIdFrom(card);
+                if (id.startsWith("VL")) id = id.substring(2);
+                if (id.isEmpty() || "LM".equals(id) || !seen.add(id)) continue;
+                String name = text(card, "title");
+                String cover = largestThumbnail(array(object(card, "thumbnail"), "thumbnails"));
+                if (name.isEmpty()) continue;
+                com.muoniumplayer.core.ncm.music.dto.PlayList playlist = new com.muoniumplayer.core.ncm.music.dto.PlayList(
+                        stablePlaylistId(id), name, cover, Math.max(0, digitsOf(text(card, "subtitle"))),
+                        0L, null, "YouTube Music", 0L);
+                playlist.setPlatform(MusicPlatform.YOUTUBE);
+                playlist.setPlatformPlaylistId(id);
+                result.add(playlist);
+                if (result.size() >= cap) break;
+            }
+        } catch (Throwable throwable) {
+            System.err.println("[Music/YouTube] Account playlists failed: " + describe(throwable));
+        }
+        return result;
+    }
+
+    /**
+     * Personalized radio songs for the home page. Liked tracks are only seeds; account playlists
+     * themselves stay in the account sidebar and are never merged into home recommendations.
+     */
+    public static List<Track> accountRecommendations(int limit) {
+        if (!YouTubeSessionStore.isLoggedIn()) return java.util.Collections.emptyList();
+        int cap = Math.max(1, Math.min(100, limit));
+        Playlist liked = getPlaylist("LM", 100);
+        if (liked == null || liked.tracks.isEmpty()) return java.util.Collections.emptyList();
+        likedTrackIds.clear();
+        for (Track track : liked.tracks) likedTrackIds.add(track.videoId);
+        likedTrackIdsLoaded = true;
+
+        List<Track> result = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        int radioCount = Math.min(3, liked.tracks.size());
+        for (int radio = 0; radio < radioCount && result.size() < cap; radio++) {
+            int seedIndex = radioCount == 1 ? 0 : radio * (liked.tracks.size() - 1) / (radioCount - 1);
+            Track seed = liked.tracks.get(seedIndex);
+            for (Track track : getRadio(seed.videoId, Math.min(50, cap - result.size()))) {
+                if (track != null && seen.add(track.videoId)) result.add(track);
+                if (result.size() >= cap) break;
+            }
+        }
+        return result;
+    }
+
+    public static boolean isTrackLiked(String videoId) {
+        if (videoId == null || videoId.trim().isEmpty()) return false;
+        return likedTrackIdsLoaded && likedTrackIds.contains(videoId.trim());
+    }
+
+    public static void noteTrackLikedLocal(String videoId, boolean liked) {
+        if (videoId == null || videoId.trim().isEmpty()) return;
+        if (liked) likedTrackIds.add(videoId.trim());
+        else likedTrackIds.remove(videoId.trim());
+        likedTrackIdsLoaded = true;
+    }
+
+    /** Authenticated like/unlike action used by the common heart button. */
+    public static boolean setTrackLiked(String videoId, boolean liked) {
+        if (!YouTubeSessionStore.isLoggedIn() || videoId == null || videoId.trim().isEmpty()) return false;
+        try {
+            JsonObject target = new JsonObject();
+            target.addProperty("videoId", videoId.trim());
+            JsonObject body = new JsonObject();
+            body.add("target", target);
+            postMusic(liked ? "like/like" : "like/removelike", body, MUSIC_CLIENT_NAME);
+            noteTrackLikedLocal(videoId, liked);
+            return true;
+        } catch (Throwable throwable) {
+            System.err.println("[Music/YouTube] Like update failed: " + describe(throwable));
+            return false;
+        }
+    }
+
+    private static String browseIdFrom(JsonObject renderer) {
+        List<JsonObject> endpoints = new ArrayList<>();
+        collectRenderers(renderer, "browseEndpoint", endpoints);
+        for (JsonObject endpoint : endpoints) {
+            String id = string(endpoint, "browseId");
+            if (!id.isEmpty()) return id;
+        }
+        return "";
+    }
+
+    private static long stablePlaylistId(String id) {
+        long hash = 0xcbf29ce484222325L;
+        for (byte value : id.getBytes(StandardCharsets.UTF_8)) {
+            hash ^= value & 0xff;
+            hash *= 0x100000001b3L;
+        }
+        return hash;
     }
 
     // ──────────────────────────── 响应解析小工具 ────────────────────────────

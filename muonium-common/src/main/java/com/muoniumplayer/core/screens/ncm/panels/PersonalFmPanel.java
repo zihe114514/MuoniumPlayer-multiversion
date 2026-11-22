@@ -177,8 +177,10 @@ public final class PersonalFmPanel extends NCMPanel {
      * 是「建树事实」，渲染一律读它，不再现场问全局平台。</p>
      */
     private boolean treeQishui;
+    private boolean treeQQ;
     /** 上一棵树的平台类型（跨实例记），用来认出「平台切了、树还是旧的那棵」并把展开进度归零。 */
     private static boolean lastTreeQishui;
+    private static boolean lastTreeQQ;
     private static boolean lastTreeKnown;
 
     /** 上一次各组的选中是哪一枚；变了才去把那一枚留在视口里。 */
@@ -222,11 +224,13 @@ public final class PersonalFmPanel extends NCMPanel {
     public void onInit() {
         this.reentering = isReenter();
         this.treeQishui = qishuiFm();
+        this.treeQQ = qqFm();
         this.healRequestNanos = 0L;
         // 平台换了、面板没换：旧树（另一平台的组数与标签）不能按新平台继续渲染，展开进度也从
         // 零起 —— 否则切到汽水时还端着网易云「收起」的进度，五组行会停在透明态。
-        if (!lastTreeKnown || lastTreeQishui != this.treeQishui) {
+        if (!lastTreeKnown || lastTreeQishui != this.treeQishui || lastTreeQQ != this.treeQQ) {
             lastTreeQishui = this.treeQishui;
+            lastTreeQQ = this.treeQQ;
             lastTreeKnown = true;
             sceneReveal = 0.0;
             this.reentering = true;
@@ -274,7 +278,8 @@ public final class PersonalFmPanel extends NCMPanel {
 
         // 标题与副标题先装配：右边那两颗按钮要读它本帧的真实位置来对齐，而子组件是按列表
         // 顺序正序渲染的，排在后面的回调才量得到前面那一格。
-        LabelWidget title = new LabelWidget(this.treeQishui ? "发现流 FM" : "私人 FM", FontManager.pf25bold);
+        LabelWidget title = new LabelWidget(this.treeQishui ? "发现流 FM"
+                : this.treeQQ ? "QQ 私人 FM" : "私人 FM", FontManager.pf25bold);
         addChild(title);
         title.setClickable(false);
         title.setBeforeRenderCallback(() -> title
@@ -336,7 +341,8 @@ public final class PersonalFmPanel extends NCMPanel {
     private boolean isHeroStale(Music current) {
         // 指纹要含「哪个源的哪个栏目」:汽水的栏目标是 qishuiModeKey,网易云的是 Mode+子模式。
         // 少了平台这一段,从汽水切回网易云时指纹可能恰好相同,hero 就不会交骨架重新落位。
-        String selection = (this.treeQishui ? "qishui|" + PersonalFmManager.qishuiSelectionLabel() + "|"
+        String selection = (this.treeQQ ? "qq|" : this.treeQishui
+                ? "qishui|" + PersonalFmManager.qishuiSelectionLabel() + "|"
                 + PersonalFmManager.getSelectedQishuiMode().sceneModeId
                 : "netease|" + PersonalFmManager.getSelectedMode() + "|" + PersonalFmManager.getSelectedSubMode());
         if (current != null) {
@@ -414,7 +420,7 @@ public final class PersonalFmPanel extends NCMPanel {
     private void addModeRow() {
         // 汽水没有这套六模式的体系——它有自己真实的听歌模式(见 addSceneRows 的汽水分支),
         // 网易云的枚举在这棵树上一个都不该出现。判据是装配时冻结的树类型,不是现场的平台。
-        if (this.treeQishui) return;
+        if (this.treeQishui || this.treeQQ) return;
 
         final SegmentControl.Spec spec = new SegmentControl.Spec();
         spec.y = MODE_TOP;
@@ -493,6 +499,7 @@ public final class PersonalFmPanel extends NCMPanel {
      * 因为淡出的是那个已经被丢掉的实例。所以这四行连视口带控件一起留着，只重挂不改建。</p>
      */
     private void addSceneRows() {
+        if (this.treeQQ) return;
         if (this.treeQishui) {
             // 汽水分组平铺:常用(推荐/熟悉/新鲜)+ 心情 + 生活场景 + 风格流派 + 语言地区。
             // 只复用 SegmentControl 这个 UI 控件,行/滑块/滚动全是汽水自己的状态,
@@ -800,6 +807,10 @@ public final class PersonalFmPanel extends NCMPanel {
         return NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QISHUI;
     }
 
+    private static boolean qqFm() {
+        return NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QQ;
+    }
+
     /**
      * 汽水听歌模式的分组平铺:每组一行横向滚(与网易云场景区同形态),组名在行首。
      * 分类按模式真实语义手工归(上游只给一个平铺的「场景音乐」大块,没有子类):
@@ -928,6 +939,7 @@ public final class PersonalFmPanel extends NCMPanel {
     private double sceneHeight() {
         // 高度按这一棵树实际建了几行算:汽水的组是「解析出来够两枚才建」,空组不占位,
         // 所以不能按组数乘,得按 builtRows;网易云四组固定全建。
+        if (this.treeQQ) return 0.0;
         if (this.treeQishui) return SCENE_ROW * this.qishuiBuiltRows * sceneReveal;
         return SCENE_ROW * SCENE_GROUP_LABELS.length * sceneReveal;
     }
@@ -949,7 +961,7 @@ public final class PersonalFmPanel extends NCMPanel {
         // 汽水的听歌模式行常驻(没有网易云那种「场景推荐才展开」的两态)。判据是树类型:
         // 这棵是汽水树时,就算平台已经被切走,它也该按汽水的方式把行收好/展开完再走。
         boolean wanted = this.treeQishui
-                || PersonalFmManager.getSelectedMode() == PersonalFmManager.Mode.SCENE_RCMD;
+                || (!this.treeQQ && PersonalFmManager.getSelectedMode() == PersonalFmManager.Mode.SCENE_RCMD);
         double target = wanted ? 1.0 : 0.0;
         double step = this.lastFrameMs / Math.max(1.0, SCENE_MILLIS / SheetClock.speed());
         if (sceneReveal < target) {
@@ -968,7 +980,7 @@ public final class PersonalFmPanel extends NCMPanel {
      * 那一次请求丢了,一秒后还得能再排一次 —— 否则这一页就永远停在「新平台旧树」上。</p>
      */
     private void healPlatformDrift() {
-        if (this.treeQishui == qishuiFm()) return;
+        if (this.treeQishui == qishuiFm() && this.treeQQ == qqFm()) return;
         final long now = System.nanoTime();
         if (this.healRequestNanos != 0L && (now - this.healRequestNanos) / 1_000_000.0 < 1000.0) return;
         this.healRequestNanos = now;

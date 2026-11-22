@@ -99,6 +99,7 @@ public final class ConfigPaths {
      * 发给每一个 CDN 请求反而是多余的暴露面。</p>
      */
     public static final File YOUTUBE_AUTH = new File(AUTH_ROOT, "youtube_auth.json");
+    public static final File YOUTUBE_BROWSER_PROFILE = new File(AUTH_ROOT, "youtube-browser-profile");
     /** Automix（无缝曲目交接）偏好设置。 */
     public static final File GD_SOURCE = new File(CONFIG_DIRECTORY, "gd_source.json");
 
@@ -120,6 +121,9 @@ public final class ConfigPaths {
     public static final File QISHUI_AUTH = new File(AUTH_ROOT, "qishui_auth.json");
     /** 汽水已保存账号列表；与当前活动会话分开，切换失败不会覆盖现账号。 */
     public static final File QISHUI_ACCOUNTS = new File(AUTH_ROOT, "qishui_accounts.json");
+
+    /** 波点音乐的设备身份、活动会话与本地记住的账号。 */
+    public static final File BODIAN_AUTH = new File(AUTH_ROOT, "bodian_auth.json");
 
     /**
      * Spotify 的本机配置：用户自备的 Client ID 与市场代码。
@@ -402,6 +406,9 @@ public final class ConfigPaths {
      * 一起听房间里轮流点歌、同一首歌在不同房间里被放）时，重复推理纯属白烧 CPU。</p>
      */
     public static final File AUTOMIX_PLAN_CACHE = new File(CACHE_DIR, "automix_plans");
+
+    /** Disposable per-track integrated-loudness measurements. */
+    public static final File TRACK_LOUDNESS_CACHE = new File(CACHE_DIR, "track_loudness");
 
     /**
      * 每首歌手动设置的歌词时间轴偏移（毫秒）。

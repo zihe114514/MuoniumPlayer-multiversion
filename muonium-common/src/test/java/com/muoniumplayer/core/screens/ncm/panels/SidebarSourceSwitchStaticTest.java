@@ -15,6 +15,12 @@ class SidebarSourceSwitchStaticTest {
             "com", "muoniumplayer", "core", "screens", "ncm", "MusicSourceOverlay.java"));
     private static final Path SCREEN = ProjectPaths.sourceFile(Paths.get(
             "com", "muoniumplayer", "core", "screens", "ncm", "NCMScreen.java"));
+    private static final Path SHEET = ProjectPaths.sourceFile(Paths.get(
+            "com", "muoniumplayer", "core", "screens", "ncm", "NcmSheet.java"));
+    private static final Path PLAYER_CARD = ProjectPaths.sourceFile(Paths.get(
+            "com", "muoniumplayer", "core", "rendering", "MusicCapsuleCard.java"));
+    private static final Path ONBOARDING = ProjectPaths.sourceFile(Paths.get(
+            "com", "muoniumplayer", "core", "screens", "onboarding", "OnboardingUi.java"));
 
     @Test
     void rebuildingSidebarReusesSearchWidgetAndKeepsSourceContext() throws Exception {
@@ -59,6 +65,32 @@ class SidebarSourceSwitchStaticTest {
         assertTrue(nav.contains("this.previousSections.clear()"));
         assertTrue(nav.contains("this.retirementLayer.getChildren().remove(section.widget)"));
         assertTrue(nav.contains("setTransformations(null)"));
+    }
+
+    @Test
+    void appStoreBrandIconsAreUsedAndBodianFollowsQq() throws Exception {
+        String source = read(SOURCE);
+        int firstRow = source.indexOf("gridRow(feed, 0");
+        int secondRow = source.indexOf("gridRow(feed, 1", firstRow);
+        assertTrue(firstRow >= 0 && secondRow > firstRow);
+        String row = source.substring(firstRow, secondRow);
+        int qq = row.indexOf("MusicPlatform.QQ");
+        int bodian = row.indexOf("MusicPlatform.BODIAN");
+        assertTrue(qq >= 0 && bodian > qq, "波点入口应紧跟在 QQ 音乐后面");
+        String appIcons = read(ProjectPaths.sourceFile(Paths.get(
+                "com", "muoniumplayer", "core", "rendering", "AppStoreBrandIcons.java")));
+        assertTrue(appIcons.contains("/muonium/textures/brands/qqmusic.jpg")
+                        && appIcons.contains("/muonium/textures/brands/bodian.jpg")
+                        && source.contains("brandMark(disc, platform"),
+                "QQ 与波点的 App Store 品牌图标必须接入音源选择格");
+        assertTrue(read(SHEET).contains("PlatformAppIcons.widget(platform"),
+                "账号与品牌底盘必须复用 App Store 图标组件");
+        assertTrue(read(NAV).contains("AppStoreBrandIcons.widget(this.platform"),
+                "侧栏来源按钮必须使用 App Store 图标");
+        assertTrue(read(PLAYER_CARD).contains("AppStoreBrandIcons.drawCentered(source"),
+                "播放胶囊平台徽标必须使用 App Store 图标");
+        assertTrue(read(ONBOARDING).contains("AppStoreBrandIcons.drawCentered(platform"),
+                "引导界面平台标识必须使用 App Store 图标");
     }
 
     private static String read(Path path) throws Exception {

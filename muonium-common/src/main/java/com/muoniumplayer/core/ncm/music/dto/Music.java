@@ -14,6 +14,7 @@ import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.Quality;
 import com.muoniumplayer.core.ncm.music.BilibiliMusicService;
+import com.muoniumplayer.core.ncm.music.BodianMusicService;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.YouTubeMusicService;
 import com.muoniumplayer.core.utils.Location;
@@ -535,6 +536,39 @@ public class Music {
         return music;
     }
 
+    /** 构建一条波点音乐曲目；sourceId 保留波点原始数字 ID，稳定键按来源隔离。 */
+    public static Music fromBodianTrack(BodianMusicService.Track track) {
+        if (track == null || nonNull(track.id).trim().isEmpty()) return null;
+        String trackId = nonNull(track.id).trim();
+        long stableId = stableLong("bodian:" + trackId);
+        List<Artist> artistList = new ArrayList<>();
+        String artist = nonNull(track.artist);
+        if (!artist.trim().isEmpty()) {
+            for (String artistName : artist.split("\s*/\s*")) {
+                if (artistName.trim().isEmpty()) continue;
+                artistList.add(new Artist(stableLong("bodian:artist:" + artistName.trim()),
+                        artistName.trim(), Collections.emptyList(), Collections.emptyList()));
+            }
+        }
+        if (artistList.isEmpty()) {
+            artistList.add(new Artist(0L, "Unknown", Collections.emptyList(), Collections.emptyList()));
+        }
+        String albumName = nonNull(track.album);
+        String cover = nonNull(track.coverUrl);
+        Album album = new Album(stableLong("bodian:album:" + albumName), albumName, cover,
+                Collections.emptyList());
+        Music music = new Music(nonNull(track.title), nonNull(track.title), "", stableId,
+                artistList, Collections.emptyList(), album, track.durationMillis, 0L, 0L,
+                Collections.emptyList());
+        music.source = MusicPlatform.BODIAN;
+        music.sourceId = trackId;
+        music.sourceMid = trackId;
+        music.externalCoverUrl = cover;
+        music.foreignCover = !cover.isEmpty();
+        music.vip = track.vip;
+        return music;
+    }
+
     /** 构建一条 Bilibili 搜索结果。BVID 加页码是稳定的源 key。 */
     public static Music fromBilibiliTrack(BilibiliMusicService.Track track) {
         if (track == null) return null;
@@ -914,6 +948,10 @@ public class Music {
         return getSource() == MusicPlatform.QISHUI;
     }
 
+    public boolean isBodian() {
+        return getSource() == MusicPlatform.BODIAN;
+    }
+
     public boolean isKuGou() {
         return getSource() == MusicPlatform.KUGOU;
     }
@@ -1187,6 +1225,9 @@ public class Music {
         }
         if (isQishui()) {
             return resolveQishuiPlayUrl();
+        }
+        if (isBodian()) {
+            return resolveBodianPlayUrl();
         }
         if (isGd()) {
             return resolveGdPlayUrl();
@@ -1618,6 +1659,17 @@ public class Music {
         }, "Qishui Music", GD_PLAY_URL_RESOLVE_TIMEOUT_SECONDS);
     }
 
+    private Tuple<String, String> resolveBodianPlayUrl() {
+        final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
+        BodianMusicService.ResolveResult result = resolveValueWithTimeout(
+                () -> BodianMusicService.getSongUrl(getSourceId(), requestedQuality),
+                "Bodian Music", GD_PLAY_URL_RESOLVE_TIMEOUT_SECONDS);
+        if (result == null) return null;
+        playbackQuality = detectSourcePlaybackQuality(result.format, requestedQuality);
+        considerHighestQuality(result.format, result.bitrate);
+        return normalizePlayUrl(new Tuple<>(result.url, result.format));
+    }
+
     private Tuple<String, String> resolveBilibiliPlayUrl() {
         final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
         final String requestedSourceId = getSourceId();
@@ -1956,11 +2008,19 @@ public class Music {
      */
     public void setLike(boolean like) {
         if (isNetease()) CloudMusicApi.like(this.id, like);
+        else if (isQQ()) {
+            if (!com.muoniumplayer.core.ncm.music.NeteaseMusicService.setQQLike(this, like)) {
+                throw new IllegalStateException("QQ 音乐未确认收藏状态变更");
+            }
+        }
         else if (isKuGou()) {
             com.muoniumplayer.core.ncm.music.KuGouMusicService.setLike(this, like);
         }
         else if (isQishui()) {
             com.muoniumplayer.core.ncm.music.QishuiMusicService.setTrackLiked(getSourceId(), like);
+        }
+        else if (isBodian()) {
+            com.muoniumplayer.core.ncm.music.BodianMusicService.setTrackLiked(getSourceId(), like);
         }
     }
 

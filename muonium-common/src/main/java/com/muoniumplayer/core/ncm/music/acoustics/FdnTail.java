@@ -1,91 +1,62 @@
 package com.muoniumplayer.core.ncm.music.acoustics;
 
+import java.util.Arrays;
+
 /**
- * 晚期混响尾:8×8 反馈延迟网络(FDN),替换 Freeverb。
- *
- * <p>拓扑照 Faust {@code zita_rev_fdn}(zita-rev1 的文档化版本):8 条互质环路
- * (总延迟 125~257ms,环内每线一个全通梳,系数 ±0.6 交替),8×8 Hadamard
- * 反馈矩阵蝶形混合(免乘法,行正交 ⇒ 通道最大去相关);mono 输入按 zita 的
- * 0.3 注入量进全部 8 线,双耳输出各取 4 条交错线 —— 去相关由网络结构给出,
- * 不再靠 Freeverb 时代的耳间 +23 样本错位。</p>
- *
- * <h2>逐频带阻尼:能量直方图的落地端</h2>
- * <p>每环阻尼滤波器按 OpenAL Soft {@code T60Filter::calcCoeffs} 的同一数学:
- * 环路长度 L、三频带 T60 各自给出环路增益
- * g(band) = 10<sup>−3·L/(T60(band)·SR)</sup>,中频是基准 mfGain,低/高频以
- * 相对增益 Glf/Ghf 表达,用「低通 + 高通」的一阶对实现双 shelf:</p>
- * <pre>  out = mfGain · ( x + (Glf−1)·lp250(x) + (Ghf−1)·hp5000(x) )</pre>
- * <p>低于 250Hz 总增益 = mfGain·Glf(低频带 T60),高于 5kHz = mfGain·Ghf,
- * 中间 = mfGain —— 直方图拟合出的三段衰减逐带驱动网络,这就是 Jot
- * 分析/综合框架的最简实现。</p>
- *
- * <h2>实时纪律</h2>
- * <ul>
- *   <li>稳态零分配:延迟线/全通/滤波状态全部预分配;参数每缓冲整定(exp 若干,
- *       无 pow/三角缓存问题)。</li>
- *   <li>延迟读位走小数偏移 + 线性插值(与 SceneAcoustics 梳线同款防沙沙读法),
- *       深度压到 ±1.5 样 —— FDN 模态密度高,不需要大摆动。</li>
- *   <li>staynormal 防非规格化浮点:信号衰到 1e-20 之下前永远差一点,不触发
- *       CPU 的 denormal 惩罚路径。</li>
- * </ul>
+ * 晚期混响尾:源于 Faust {@code zita_rev_fdn} 的八线反馈延迟网络。
+ * 主延迟 125~257ms,环内各有一个全通梳和三带 T60 阻尼,反馈用单位化
+ * Hadamard 蝶形。短输入全通与带符号的注入/读出填密第一批回声,
+ * 不增加固定预延迟。延迟线/滤波状态预分配,调制在缓冲间连续,逐样本无三角函数。
  */
 final class FdnTail {
 
     /** 环路数:8 = 2³,Hadamard 蝶形免乘法的前提。 */
     static final int LINES = 8;
 
-    /** 环路总延迟(秒,zita 原表):长度互质错开,整体冲激响应周期最大化。 */
+    /** 主延迟(秒,zita 原表),不包括环路全通。 */
     private static final double[] LOOP_DELAYS_SEC = {
             0.153129, 0.210389, 0.127837, 0.256891, 0.174713, 0.192303, 0.125000, 0.219991};
     /** 全通梳前馈延迟(秒,zita 原表)。 */
     private static final double[] AP_DELAYS_SEC = {
             0.020346, 0.024421, 0.031604, 0.027333, 0.022904, 0.029291, 0.013458, 0.019123};
-    /** 全通梳系数:±0.6 交替(zita 原值)。 */
-    private static final double[] AP_COEFF = {0.6, -0.6, 0.6, -0.6, 0.6, -0.6, 0.6, -0.6};
-    /** 数值地板:反馈里永远留一点,防 denormal。 */
+    /** 数值地板:反馈与输入全通的延迟里留一点,防 denormal。 */
     private static final float STAY_NORMAL = 1e-20f;
-    /** 输入注入量:高回授下动态余量的来源。0.3 是 zita 原值;实测湿/干能量
-     *  比只有 0.206(−7dB,真实大厅混响场应与直达声同量级),提到 0.45 让
-     *  尾部进入强混响区间(网络内稳态能量 ×2.25,RMS ×1.5)。 */
-    private static final double INPUT_GAIN = 0.45;
+    private static final float INPUT_GAIN = 0.45f;
 
     /** 双 shelf 拐点(Hz):EAX 惯例 LFReference/HFReference。 */
     private static final double LOW_XOVER_HZ = 250.0;
     private static final double HIGH_XOVER_HZ = 5000.0;
 
     /** 调制:小数读位的缓冲余量 / 摆动半幅 / 速率。 */
-    private static final int MOD_MARGIN = 8;
+    private static final int MOD_CENTER = 4;
     private static final double MOD_DEPTH = 1.5;
     /** 低扩散(离散回声)场景的额外调制深度(样点):打散残留周期性。 */
     private static final double MOD_DIFFUSION_EXTRA = 2.5;
     private static final double MOD_MASTER_HZ = 0.24;
+    private static final double MOD_DEPTH_TAU_SEC = 0.025;
+    private static final double TAU = 2.0 * Math.PI;
     private static final double[] MOD_SPEED = {0.61, 0.83, 0.53, 0.97, 0.71, 0.59, 0.89, 0.47};
 
     /** Hadamard 正交缩放 1/√8。 */
     private static final float HADAMARD_SCALE = 0.35355339059327373f;
-    /** 双耳输出各取 4 条交错线(下标):等能量 + 去相关;右耳 = 全集减左耳。 */
-    private static final int[] EAR_LINES_L = {0, 3, 5, 6};
+    /** 注入极性(低位对应线 0),奇偶两组各有两个正、两个负,不改变输入能量。 */
+    private static final int INPUT_NEGATIVE = 0b1000_1101;
 
     // ---- 延迟线与状态(采样率变化时重建) ----
     private final float[][] buf = new float[LINES][];
     private final int[] pos = new int[LINES];
-    /** 各线基准延迟(样点)与本缓冲调制偏移(含 MOD_MARGIN/2 中心偏置)。 */
     private final int[] baseDelay = new int[LINES];
-    private final float[] modOffset = new float[LINES];
-    /** 全通梳缓冲/读位(定长)与延迟(样本)。 */
-    private final float[][] apBuf = new float[LINES][];
-    private final int[] apPos = new int[LINES];
-    private final int[] apDelay = new int[LINES];
-    /** 环路长度(秒):增益公式的 L。 */
-    private final double[] loopSec = new double[LINES];
+    private final AllPass[] loopDiffusers = new AllPass[LINES];
+    private final float[] mixed = new float[LINES];
+    /** 每线 T60 增益指数的分子(-3 ln(10) × 环路秒数)。 */
+    private final double[] decayFactor = new double[LINES];
 
-    /** 阻尼滤波状态:每线低通一个状态(低 shelf 用)、一个状态(高 shelf 用)。 */
+    /** 串联的低/高搁架,各一个梯形积分低通状态。 */
     private final double[] lpLo = new double[LINES];
     private final double[] lpHi = new double[LINES];
-    /** 每缓冲整定的增益:midGain 基准环增益,relLow/relHigh 相对增益。 */
-    private final double[] midGain = new double[LINES];
-    private final double[] relLow = new double[LINES];
-    private final double[] relHigh = new double[LINES];
+    private final double[] lowDelta = new double[LINES];
+    private final double[] highGain = new double[LINES];
+    private final double[] midMinusHigh = new double[LINES];
     private double coefLo, coefHi;
 
     /** 输入高通(220Hz 二阶 Butterworth):DJ 底鼓不进尾网络。 */
@@ -95,14 +66,23 @@ final class FdnTail {
     private double hpfX1, hpfX2, hpfY1, hpfY2;
     /** 右耳独立 HPF 状态(立体声尾:两耳各过一份高通)。 */
     private double hpfX1R, hpfX2R, hpfY1R, hpfY2R;
-    /** 立体声去相关:side 差量的互质延迟线(7ms @ 最大 48k=336 样)。 */
+    /** 保留原有 side 差量延迟,不推迟 mid。 */
     private static final double SIDE_DELAY_SEC = 0.007;
     private float[] sideBuf = new float[1];
     private int sidePos;
+    private final AllPass inputL1 = new AllPass(0.64f);
+    private final AllPass inputL2 = new AllPass(-0.64f);
+    private final AllPass inputR1 = new AllPass(-0.64f);
+    private final AllPass inputR2 = new AllPass(0.64f);
 
-    private double modPhase;
-    /** 扩散度 0..1(计划侧交付;调制深度随它反相变化,内部一阶平滑)。 */
-    private double diffusion = 1.0;
+    private final double[] modPhase = new double[LINES];
+    private final float[] modFrom = new float[LINES];
+    private final float[] modDelta = new float[LINES];
+    private int modFrame, modFrames;
+    private float modInvFrames;
+    private double modDepth = MOD_DEPTH;
+    private double modDepthTarget = MOD_DEPTH;
+    private double modDepthStep;
     private int ownedRate = -1;
     /** 上次整定的 T60(秒):差异过小则跳过重算。 */
     private double tunedLow = -1.0;
@@ -110,13 +90,17 @@ final class FdnTail {
     private double tunedHigh = -1.0;
 
     FdnTail() {
+        for (int i = 0; i < LINES; i++) {
+            loopDiffusers[i] = new AllPass((i & 1) == 0 ? 0.6f : -0.6f);
+        }
     }
 
     /** 采样率变化 / 首次使用:重建延迟线并清全部状态。 */
     void rebuild(int rate) {
         ownedRate = rate;
-        coefLo = 1.0 - Math.exp(-2.0 * Math.PI * LOW_XOVER_HZ / rate);
-        coefHi = 1.0 - Math.exp(-2.0 * Math.PI * HIGH_XOVER_HZ / rate);
+        coefLo = shelfPole(LOW_XOVER_HZ, rate);
+        coefHi = shelfPole(HIGH_XOVER_HZ, rate);
+        modDepthStep = -Math.expm1(-1.0 / (rate * MOD_DEPTH_TAU_SEC));
         // 输入端 220Hz 二阶 Butterworth 高通:DJ/劲爆歌曲的底鼓(808 类 sub,
         // 主能量 60-110Hz)原样进网络会让每一记底鼓在尾里循环 1-2s 与下一记
         // 叠加 —— 低频轰头 + 节拍性冲击。150Hz 档实测泄漏仍大(60Hz 仅 -16dB,
@@ -135,24 +119,31 @@ final class FdnTail {
         hpfX1R = hpfX2R = hpfY1R = hpfY2R = 0.0;
         sideBuf = new float[Math.max(4, (int) (SIDE_DELAY_SEC * Math.max(8000, rate)) + 1)];
         sidePos = 0;
+        // 两耳错开短延迟,每段有直通项,增加密度但没有串联纯延迟。
+        inputL1.rebuild(Math.max(1, (int) Math.round(0.0029 * rate)));
+        inputL2.rebuild(Math.max(1, (int) Math.round(0.0067 * rate)));
+        inputR1.rebuild(Math.max(1, (int) Math.round(0.0041 * rate)));
+        inputR2.rebuild(Math.max(1, (int) Math.round(0.0083 * rate)));
         for (int i = 0; i < LINES; i++) {
             final int loop = Math.max(8, (int) Math.round(LOOP_DELAYS_SEC[i] * rate));
-            final int ap = Math.max(2, (int) Math.round(AP_DELAYS_SEC[i] * rate));
+            final int ap = Math.max(2, (int) Math.round(AP_DELAYS_SEC[i] * rate)) + 1;
             baseDelay[i] = loop;
-            // 增益公式的 L = 完整环路长度:主延迟 + 全通段 + ~1 样反馈取整
-            // —— 漏掉全通段会让渲染 T60 系统性偏长 11-13%(L 每大 1%,T60 跟着大)。
-            loopSec[i] = (loop + ap + 1) / (double) rate;
-            // 缓冲 = 基准延迟 + 调制余量;读位最远回看 baseDelay + MOD_MARGIN/2 + DEPTH
-            buf[i] = new float[loop + MOD_MARGIN + 1];
+            // 名义环路长度包含调制中心和全通段的平均群延迟。
+            decayFactor[i] = -3.0 * Math.log(10.0) * (loop + MOD_CENTER + ap) / rate;
+            buf[i] = new float[loop + 2 * MOD_CENTER + 2];
             pos[i] = 0;
-            apDelay[i] = ap;
-            apBuf[i] = new float[ap + 1];
-            apPos[i] = 0;
+            loopDiffusers[i].rebuild(ap);
             lpLo[i] = 0.0;
             lpHi[i] = 0.0;
+            highGain[i] = midMinusHigh[i] = lowDelta[i] = 0.0;
         }
-        modPhase = 0.0;
+        resetModulation();
         tunedLow = tunedMid = tunedHigh = -1.0;
+    }
+
+    private static double shelfPole(double hz, int rate) {
+        final double g = Math.tan(Math.PI * Math.min(hz / rate, 0.45));
+        return g / (1.0 + g);
     }
 
     /**
@@ -160,7 +151,8 @@ final class FdnTail {
      * 调用方负责湿声闸);三次都几乎没变则跳过(省 24 次 exp)。
      */
     void update(double t60LowSec, double t60MidSec, double t60HighSec) {
-        if (t60MidSec <= 0.0 || ownedRate <= 0) {
+        if (ownedRate <= 0 || !(t60MidSec > 0.0) || !Double.isFinite(t60MidSec)
+                || !Double.isFinite(t60LowSec) || !Double.isFinite(t60HighSec)) {
             return;
         }
         if (Math.abs(t60LowSec - tunedLow) < 1e-4
@@ -172,26 +164,22 @@ final class FdnTail {
         tunedMid = t60MidSec;
         tunedHigh = t60HighSec;
 
-        final double ln10 = Math.log(10.0);
+        final double invMid = 1.0 / t60MidSec;
+        final double invHigh = 1.0 / Math.max(0.05, t60HighSec);
+        final double invLowDelta = Math.max(0.0, 1.0 / Math.max(0.05, t60LowSec) - invMid);
         for (int i = 0; i < LINES; i++) {
-            final double base = -3.0 * ln10 * loopSec[i];
-            final double mid = Math.exp(base / t60MidSec);
-            midGain[i] = mid;
-            relLow[i] = mid > 1e-12
-                    ? Math.min(1.0, Math.exp(base / Math.max(0.05, t60LowSec)) / mid)
-                    : 1.0;
-            relHigh[i] = mid > 1e-12 ? Math.exp(base / Math.max(0.05, t60HighSec)) / mid : 1.0;
+            final double base = decayFactor[i];
+            // g = 10^(-3 * loopSec / T60)。低架只衰减(低频不得比中频更长),
+            // 高架用绝对高/中频增益插值,不除以可能接近 0 的中频增益。
+            lowDelta[i] = invLowDelta == 0.0 ? 0.0 : Math.expm1(base * invLowDelta);
+            highGain[i] = Math.exp(base * invHigh);
+            midMinusHigh[i] = Math.exp(base * invMid) - highGain[i];
         }
     }
 
     /**
      * 渲染一个样本(双耳入,双耳出)。先 {@link #update} 过才有正确的阻尼;
      * outLR 长度 ≥2,写入左右湿声(未乘 wet,调用方统一乘)。
-     *
-     * <p>立体声尾:输入 L/R 各经一条互质的短预延迟(7ms/11ms,低于哈斯阈
-     * 不会听成双声)再进网 —— 中高频在两条入网路径上携带不同延迟图案,
-     * 输出双耳的相关性显著下降(空间感);低频已被 220Hz HPF 拦在网外,
-     * 保持天然 mono,不轰头。</p>
      */
     void process(float inL, float inR, float[] outLR) {
         // 输入高通先于注入:低频(底鼓)不进尾网络,防止每记底鼓在反馈环里
@@ -209,81 +197,39 @@ final class FdnTail {
         hpfX1R = inR;
         hpfY2R = hpfY1R;
         hpfY1R = hpR;
-        // 立体声去相关预延迟:左右各一条互质短延迟(低于哈斯阈 30ms 的一半),
-        // 输出 (L+R)/2 相干量 + (L−R) 差量保留 —— 等价于「半单声道化」的
-        // 温和去相关:保持能量不变,相关系数从 1.0 降到 ~0.5。
-        final float mono = (float) hpL * 0.5f + (float) hpR * 0.5f;
-        final float side = (float) hpL * 0.5f - (float) hpR * 0.5f;
-        // side 过 7ms 互质延迟(L:0,R:差量反相)
-        final float sideDelayed = sideDelay(side);
-        final float inLg = (mono + sideDelayed) * AcousticsDebugTuning.fdnInputGain((float) INPUT_GAIN);
-        final float inRg = (mono - sideDelayed) * AcousticsDebugTuning.fdnInputGain((float) INPUT_GAIN);
-        // 注入:奇偶线分左右去相关输入(zita distrib 变体)
-        final float inEven = inLg;
-        final float inOdd = inRg;
+        final float mono = (float) ((hpL + hpR) * 0.5);
+        final float sideDelayed = sideDelay((float) ((hpL - hpR) * 0.5));
+        final float gain = AcousticsDebugTuning.fdnInputGain(INPUT_GAIN);
+        final float inEven = inputL2.process(inputL1.process(mono + sideDelayed + STAY_NORMAL)) * gain;
+        final float inOdd = inputR2.process(inputR1.process(mono - sideDelayed + STAY_NORMAL)) * gain;
 
         // 1) 每线:延迟读(插值调制)→ 全通梳 → 收进蝶形
-        float a0 = 0f;
-        float a1 = 0f;
-        float a2 = 0f;
-        float a3 = 0f;
-        float a4 = 0f;
-        float a5 = 0f;
-        float a6 = 0f;
-        float a7 = 0f;
-        float r0 = 0f;
-        float r1 = 0f;
-        float r2 = 0f;
-        float r3 = 0f;
-        float r4 = 0f;
-        float r5 = 0f;
-        float r6 = 0f;
-        float r7 = 0f;
-
+        final float ramp = modFrame < modFrames ? modFrame++ * modInvFrames : 1f;
+        modDepth += (modDepthTarget - modDepth) * modDepthStep;
+        final float depth = (float) modDepth;
         for (int i = 0; i < LINES; i++) {
             final float[] line = buf[i];
-            int p = pos[i];
-            final double readF = p - baseDelay[i] - modOffset[i];
-            int read = (int) Math.floor(readF);
-            final float frac = (float) (readF - read);
+            // 偏移恒为非负,向更旧的样本插值,热循环不需要 floor。
+            final float offset = MOD_CENTER + (modFrom[i] + modDelta[i] * ramp) * depth;
+            final int whole = (int) offset;
+            int read = pos[i] - baseDelay[i] - whole;
             if (read < 0) {
                 read += line.length;
             }
-            final int readNext = read + 1 == line.length ? 0 : read + 1;
-            final float delayed = line[read] + (line[readNext] - line[read]) * frac;
-
-            final float[] ap = apBuf[i];
-            int q = apPos[i];
-            final float stored = ap[q];
-            // DF2 全通:先算内部 w = delayed + a·stored,输出 = stored − a·w。
-            // 恒定 |H|=1(Faust allpass_comb 同构);写成 stored−delayed 会把
-            // 环路谱半径顶到 >1(参数盒上部发散,稳定性攸关)。
-            final float w = delayed + (float) AP_COEFF[i] * stored;
-            final float apOut = stored - (float) AP_COEFF[i] * w;
-            ap[q] = w;
-            apPos[i] = q + 1 == ap.length ? 0 : q + 1;
-
-            switch (i) {
-                case 0 -> { a0 = apOut; r0 = delayed; }
-                case 1 -> { a1 = apOut; r1 = delayed; }
-                case 2 -> { a2 = apOut; r2 = delayed; }
-                case 3 -> { a3 = apOut; r3 = delayed; }
-                case 4 -> { a4 = apOut; r4 = delayed; }
-                case 5 -> { a5 = apOut; r5 = delayed; }
-                case 6 -> { a6 = apOut; r6 = delayed; }
-                default -> { a7 = apOut; r7 = delayed; }
-            }
+            final int older = read == 0 ? line.length - 1 : read - 1;
+            final float recent = line[read];
+            mixed[i] = loopDiffusers[i].process(recent + (line[older] - recent) * (offset - whole));
         }
 
-        // 2) Hadamard 蝶形(8 点,三级加减,免乘法)
-        float b0 = a0 + a1;
-        float b1 = a0 - a1;
-        float b2 = a2 + a3;
-        float b3 = a2 - a3;
-        float b4 = a4 + a5;
-        float b5 = a4 - a5;
-        float b6 = a6 + a7;
-        float b7 = a6 - a7;
+        // 2) 单位化 Hadamard 蝶形(8 点,三级加减)
+        float b0 = mixed[0] + mixed[1];
+        float b1 = mixed[0] - mixed[1];
+        float b2 = mixed[2] + mixed[3];
+        float b3 = mixed[2] - mixed[3];
+        float b4 = mixed[4] + mixed[5];
+        float b5 = mixed[4] - mixed[5];
+        float b6 = mixed[6] + mixed[7];
+        float b7 = mixed[6] - mixed[7];
         float c0 = b0 + b2;
         float c1 = b1 + b3;
         float c2 = b0 - b2;
@@ -292,54 +238,40 @@ final class FdnTail {
         float c5 = b5 + b7;
         float c6 = b4 - b6;
         float c7 = b5 - b7;
-        float f0 = (c0 + c4) * HADAMARD_SCALE;
-        float f1 = (c1 + c5) * HADAMARD_SCALE;
-        float f2 = (c2 + c6) * HADAMARD_SCALE;
-        float f3 = (c3 + c7) * HADAMARD_SCALE;
-        float f4 = (c0 - c4) * HADAMARD_SCALE;
-        float f5 = (c1 - c5) * HADAMARD_SCALE;
-        float f6 = (c2 - c6) * HADAMARD_SCALE;
-        float f7 = (c3 - c7) * HADAMARD_SCALE;
+        mixed[0] = (c0 + c4) * HADAMARD_SCALE;
+        mixed[1] = (c1 + c5) * HADAMARD_SCALE;
+        mixed[2] = (c2 + c6) * HADAMARD_SCALE;
+        mixed[3] = (c3 + c7) * HADAMARD_SCALE;
+        mixed[4] = (c0 - c4) * HADAMARD_SCALE;
+        mixed[5] = (c1 - c5) * HADAMARD_SCALE;
+        mixed[6] = (c2 - c6) * HADAMARD_SCALE;
+        mixed[7] = (c3 - c7) * HADAMARD_SCALE;
 
-        // 3) 阻尼(逐带 T60)→ 输入注入 + 反馈写回;阻尼后值同时进输出和。
-        //    输出必须取【阻尼后】的信号 —— 取阻尼前的蝶形值会让逐带 T60 只
-        //    作用在反馈回路,输出端的高频整形被直通分量稀释(实测差 <4%)。
-        double oL = 0;
-        double oR = 0;
+        // 3) 串联搁架。梯形低/高通互补且相差 90°,单段增益不超过两端的最大值。
+        //    所以高频 T60 即使长于中频也不会把定参数搁架的增益推过 1。
         for (int i = 0; i < LINES; i++) {
-            float fb = switch (i) {
-                case 0 -> f0;
-                case 1 -> f1;
-                case 2 -> f2;
-                case 3 -> f3;
-                case 4 -> f4;
-                case 5 -> f5;
-                case 6 -> f6;
-                default -> f7;
-            };
-            final double lpL = lpLo[i] + coefLo * (fb - lpLo[i]);
-            lpLo[i] = lpL;
-            final double lpH = lpHi[i] + coefHi * (fb - lpHi[i]);
-            lpHi[i] = lpH;
-            final double damped = midGain[i]
-                    * (fb + (relLow[i] - 1.0) * lpL + (relHigh[i] - 1.0) * (fb - lpH));
+            final float fb = mixed[i];
+            final double vLo = coefLo * (fb - lpLo[i]);
+            final double low = lpLo[i] + vLo;
+            lpLo[i] = low + vLo;
+            final double lowShelved = fb + lowDelta[i] * low;
+            final double vHi = coefHi * (lowShelved - lpHi[i]);
+            final double lp = lpHi[i] + vHi;
+            lpHi[i] = lp + vHi;
+            final float damped = (float) (highGain[i] * lowShelved + midMinusHigh[i] * lp);
 
             final float[] line = buf[i];
-            line[pos[i]] = (i & 1) == 0 ? inEven + (float) damped + STAY_NORMAL
-                    : inOdd + (float) damped + STAY_NORMAL;
-            pos[i] = pos[i] + 1 == line.length ? 0 : pos[i] + 1;
-
-            // 双耳各取 4 条交错线(EAR_LINES 表):Hadamard 混合后天然等能量、
-            // 去相关;×2 = 4 行和的 RMS 归一(最终电平由 TAIL_MAKEUP 收口)。
-            if (i == EAR_LINES_L[0] || i == EAR_LINES_L[1]
-                    || i == EAR_LINES_L[2] || i == EAR_LINES_L[3]) {
-                oL += damped;
-            } else {
-                oR += damped;
-            }
+            final int p = pos[i];
+            final float in = (i & 1) == 0 ? inEven : inOdd;
+            final float signedIn = (INPUT_NEGATIVE & (1 << i)) == 0 ? in : -in;
+            line[p] = signedIn + damped + STAY_NORMAL;
+            pos[i] = p + 1 == line.length ? 0 : p + 1;
+            mixed[i] = damped;
         }
-        outLR[0] = (float) (oL * 0.5);
-        outLR[1] = (float) (oR * 0.5);
+        // 每耳四线、1/2 单位归一,两组混配长短线,避免短衰减时明显偏耳。
+        // 每组反相一线:等阻尼时仍读出所有 Hadamard 列,全正求和则会抵消六路。
+        outLR[0] = (mixed[0] + mixed[2] + mixed[5] - mixed[7]) * 0.5f;
+        outLR[1] = (-mixed[1] + mixed[3] + mixed[4] + mixed[6]) * 0.5f;
     }
 
     /** side 差量的互质延迟(7ms):输入去相关的最小件。 */
@@ -350,49 +282,94 @@ final class FdnTail {
         return delayed;
     }
 
-    /** 每缓冲推进调制相位并整定各线读距偏移(缓冲级,与梳线同款)。
-     *  深度 = 基础值 + 低扩散场景的额外量(0..1 平滑过渡)。 */
+    /** 每缓冲求调制终点,从当前偏移逐样本缓移;各线独立回卷相位。 */
     void advanceModulation(int frames, int rate) {
-        modPhase += 2.0 * Math.PI * MOD_MASTER_HZ * frames / rate;
-        if (modPhase > 6.283185307179586 * 1024.0) {
-            modPhase -= 6.283185307179586 * 1024.0; // 防长会话浮点精度劣化
-        }
-        final double depth = MOD_DEPTH + (1.0 - diffusion) * MOD_DIFFUSION_EXTRA;
+        if (frames <= 0 || rate <= 0) return;
+        final double phasePerFrame = TAU * MOD_MASTER_HZ / rate;
+        final float ramp = modFrame < modFrames ? modFrame * modInvFrames : 1f;
         for (int i = 0; i < LINES; i++) {
-            final double wave = Math.sin(modPhase * MOD_SPEED[i] + i * 2.399);
-            modOffset[i] = (float) (MOD_MARGIN / 2 + wave * depth);
+            final double step = phasePerFrame * MOD_SPEED[i];
+            final double phase = modPhase[i] + step * modFrame;
+            modPhase[i] = phase >= TAU ? phase % TAU : phase;
+            modFrom[i] += modDelta[i] * ramp;
+            modDelta[i] = (float) Math.sin(modPhase[i] + step * frames) - modFrom[i];
+        }
+        modFrame = 0;
+        modFrames = frames;
+        modInvFrames = 1f / frames;
+    }
+
+    /** 低扩散场景的调制更深,深度按样本平滑,与缓冲大小无关。 */
+    void setDiffusion(float target) {
+        if (Float.isFinite(target)) {
+            modDepthTarget = MOD_DEPTH + (1.0 - Math.max(0f, Math.min(1f, target))) * MOD_DIFFUSION_EXTRA;
         }
     }
 
-    /** 交付扩散度(0..1;低于 1 时调制加深)。内部向目标缓移,杜绝深度跳变。 */
-    void setDiffusion(float target) {
-        final double t = Math.max(0.0, Math.min(1.0, target));
-        diffusion += (t - diffusion) * 0.25; // 每缓冲 1/4 步:约 200ms 收敛
+    private void resetModulation() {
+        for (int i = 0; i < LINES; i++) {
+            modPhase[i] = (i * 2.399) % TAU;
+            modFrom[i] = (float) Math.sin(modPhase[i]);
+            modDelta[i] = 0f;
+        }
+        modFrame = modFrames = 0;
+        modInvFrames = 0f;
+        modDepth = modDepthTarget;
     }
 
     /** 清空全部延迟线与滤波状态(曲目切换)。 */
     void flush() {
         hpfX1 = hpfX2 = hpfY1 = hpfY2 = 0.0;
         hpfX1R = hpfX2R = hpfY1R = hpfY2R = 0.0;
-        if (sideBuf != null) java.util.Arrays.fill(sideBuf, 0f);
+        Arrays.fill(sideBuf, 0f);
         sidePos = 0;
+        inputL1.flush();
+        inputL2.flush();
+        inputR1.flush();
+        inputR2.flush();
         for (int i = 0; i < LINES; i++) {
             if (buf[i] != null) {
-                java.util.Arrays.fill(buf[i], 0f);
+                Arrays.fill(buf[i], 0f);
             }
-            if (apBuf[i] != null) {
-                java.util.Arrays.fill(apBuf[i], 0f);
-            }
+            loopDiffusers[i].flush();
             pos[i] = 0;
-            apPos[i] = 0;
             lpLo[i] = 0.0;
             lpHi[i] = 0.0;
         }
-        modPhase = 0.0;
+        resetModulation();
     }
 
     /** 当前采样率(诊断;-1 = 未重建)。 */
     int ownedRate() {
         return ownedRate;
+    }
+
+    /** DF2 全通梳:单位幅频响应,且首项为 -coefficient,不是纯延迟。 */
+    private static final class AllPass {
+        private final float coefficient;
+        private float[] delay;
+        private int pos;
+
+        AllPass(float coefficient) {
+            this.coefficient = coefficient;
+        }
+
+        void rebuild(int samples) {
+            delay = new float[samples];
+            pos = 0;
+        }
+
+        float process(float in) {
+            final float stored = delay[pos];
+            final float w = in + coefficient * stored;
+            delay[pos] = w;
+            pos = pos + 1 == delay.length ? 0 : pos + 1;
+            return stored - coefficient * w;
+        }
+
+        void flush() {
+            if (delay != null) Arrays.fill(delay, 0f);
+            pos = 0;
+        }
     }
 }

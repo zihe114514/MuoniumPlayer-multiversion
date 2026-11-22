@@ -248,10 +248,15 @@ class QishuiThreadDecouplingStaticTest {
         assertTrue(source.contains("CARD_BUILD_BATCH"),
                 "分批要有批次上限");
         String layout = methodBody(source, "private void layout(List<PlayList> displayedPlayLists,");
-        assertTrue(layout.contains("this.pendingCards = new ArrayList<>(displayedPlayLists)"),
-                "layout 应把卡片交给待建队列，而不是当场建完");
+        assertTrue(layout.contains("this.pendingCards = directTrackFeed ? null : new ArrayList<>(displayedPlayLists)"),
+                "普通主页卡片应交给卡片待建队列，而不是当场建完");
+        assertTrue(layout.contains("this.pendingHomeTracks = directTrackFeed"),
+                "歌曲推荐行也应交给独立的待建队列");
         assertFalse(layout.contains("new PlaylistWidget("),
                 "layout 里不该直接构造卡片 —— 那就是「一口气建完」");
+        String batches = methodBody(source, "private void buildPendingRecommendationRows()");
+        assertTrue(batches.contains("new MusicWidget(") && batches.contains("MUSIC_ROW_BUILD_BATCH"),
+                "推荐歌曲行必须按帧预算构造，不能一口气塞进首页");
     }
 
     @Test

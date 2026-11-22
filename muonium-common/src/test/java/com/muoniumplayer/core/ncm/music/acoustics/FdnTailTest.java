@@ -14,6 +14,131 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FdnTailTest {
 
     private static final int RATE = 44100;
+    private static final int BLOCK = 64;
+
+    @Test
+    @DisplayName("晚期混响如期到达,第一批回声填密,湿声和后段能量不掉档")
+    void firstArrivalsAreDenseWithoutLosingLevel() {
+        for (int rate : new int[] {RATE, 48000}) {
+            final FdnTail fdn = new FdnTail();
+            fdn.rebuild(rate);
+            fdn.update(3.375, 2.5, 2.0);
+            final int onset = rate / 8;
+            final int win = rate / 200;
+            final double[] earlyWindows = new double[24];
+            final float[] out = new float[2];
+            int first = -1;
+            double energy = 0, lateEnergy = 0, earlyEnergy = 0, earlySquared = 0;
+            for (int i = 0; i < rate * 3; i++) {
+                if (i % BLOCK == 0) {
+                    fdn.advanceModulation(BLOCK, rate);
+                    fdn.setDiffusion(0.4f);
+                }
+                final float in = i == 0 ? 1f : 0f;
+                fdn.process(in, in, out);
+                final double e = stereoEnergy(out);
+                if (first < 0 && e > 1e-10) first = i;
+                energy += e;
+                if (i >= rate / 2) lateEnergy += e;
+                final int relative = i - onset;
+                if (relative >= 0 && relative < win * earlyWindows.length) {
+                    earlyEnergy += e;
+                    earlySquared += e * e;
+                    earlyWindows[relative / win] += e;
+                }
+            }
+            int populated = 0;
+            for (double e : earlyWindows) {
+                if (e > earlyEnergy * 0.01) populated++;
+            }
+            // 125ms 是主网起点,给取整及几样点的读头调制留余量,不容许新的固定预延迟。
+            assertTrue(first >= onset - 1 && first <= onset + 10, rate + " Hz first=" + first);
+            // 除了填平窗间空档,窗内也不能只剩几个尖峰。有效样本数:能量平方 / 能量二阶矩。
+            final double effectiveSamples = earlyEnergy * earlyEnergy / earlySquared;
+            assertTrue(populated >= 20 && effectiveSamples > 50,
+                    rate + " Hz windows=" + populated + " effective=" + effectiveSamples);
+            // 旧网络同设置下总能量约 0.103,0.5s 之后约 0.0098;守住量级而非逐样本形状。
+            assertTrue(energy > 0.075 && energy < 0.14 && lateEnergy > 0.0055,
+                    rate + " Hz energy=" + energy + " late=" + lateEnergy);
+        }
+    }
+
+    @Test
+    @DisplayName("切换扩散度时调制仍连续,缓冲分块不改变读头轨迹")
+    void modulationDoesNotStepWithBuffers() {
+        final int rate = 48000;
+        final int coarseBlock = 512;
+        final FdnTail fine = new FdnTail();
+        final FdnTail coarse = new FdnTail();
+        final FdnTail frozen = new FdnTail();
+        for (FdnTail fdn : new FdnTail[] {fine, coarse, frozen}) {
+            fdn.rebuild(rate);
+            fdn.update(2.0, 1.5, 1.2);
+        }
+        final float[] a = new float[2], b = new float[2], c = new float[2];
+        final Random rng = new Random(221);
+        double energy = 0, blockError = 0, frozenError = 0;
+        for (int i = 0; i < rate * 3; i++) {
+            // 两种分块在同一帧收到新的深度目标,中间不改变 T60 或激励。
+            final float diffusion = (i / 16384 & 1) == 0 ? 0f : 1f;
+            if (i % BLOCK == 0) {
+                fine.advanceModulation(BLOCK, rate);
+                fine.setDiffusion(diffusion);
+                frozen.setDiffusion(diffusion);
+            }
+            if (i % coarseBlock == 0) {
+                coarse.advanceModulation(coarseBlock, rate);
+                coarse.setDiffusion(diffusion);
+            }
+            final float in = rng.nextFloat() - 0.5f;
+            fine.process(in, in, a);
+            coarse.process(in, in, b);
+            frozen.process(in, in, c);
+            energy += stereoEnergy(a);
+            blockError += stereoError(a, b);
+            frozenError += stereoError(a, c);
+        }
+        assertTrue(energy > 0 && blockError < energy * 1e-6 && frozenError > energy * 0.01,
+                "分块差能量=" + blockError + " 停调差能量=" + frozenError + " 输出能量=" + energy);
+    }
+
+    @Test
+    @DisplayName("反相立体声没有被压成静音,送入端仍抑制低音")
+    void sideSurvivesAndBassStaysProtected() {
+        final double low = stereoBandEnergy(50, 63, 77, 90, 105);
+        final double mid = stereoBandEnergy(590, 770, 930, 1200, 1480);
+        assertTrue(mid > RATE * 0.00008 && low < mid * 0.05, "低频=" + low + " 中频=" + mid);
+    }
+
+    /** 两段等能量多音激励,避免拿单个频点的驻波当成频带响应。 */
+    private static double stereoBandEnergy(int... frequencies) {
+        final FdnTail fdn = new FdnTail();
+        fdn.rebuild(RATE);
+        fdn.update(5.6, 1.6, 1.2);
+        final float[] out = new float[2];
+        double energy = 0;
+        for (int i = 0; i < RATE * 2; i++) {
+            if (i % BLOCK == 0) fdn.advanceModulation(BLOCK, RATE);
+            double sum = 0;
+            for (int j = 0; j < frequencies.length; j++) {
+                sum += Math.sin(2.0 * Math.PI * frequencies[j] * i / RATE + j * 1.7);
+            }
+            final float in = (float) (0.3 * sum / frequencies.length);
+            fdn.process(in, -in, out);
+            if (i >= RATE) energy += stereoEnergy(out);
+        }
+        return energy;
+    }
+
+    private static double stereoEnergy(float[] out) {
+        return (double) out[0] * out[0] + (double) out[1] * out[1];
+    }
+
+    private static double stereoError(float[] a, float[] b) {
+        final double left = (double) a[0] - b[0];
+        final double right = (double) a[1] - b[1];
+        return left * left + right * right;
+    }
 
     /** 冲激激励跑 N 秒,按样本返回 |左右|能量包络(mono 合计)。 */
     private static double[] impulseEnvelope(FdnTail fdn, double seconds) {
@@ -129,19 +254,29 @@ class FdnTailTest {
     }
 
     @Test
-    @DisplayName("长跑稳定:8s 冲激尾不发散、不 NaN、收敛到数值地板以下")
+    @DisplayName("长跑稳定:高频比中频长、调制运行时尾声也有限且收敛")
     void longRunStaysFiniteAndStable() {
         final FdnTail fdn = new FdnTail();
         fdn.rebuild(RATE);
-        fdn.update(4.0, 3.0, 2.5);
-        final double[] env = impulseEnvelope(fdn, 8.0);
-        double peak = 0;
-        for (double v : env) {
-            assertTrue(Double.isFinite(v), "尾音里出现 NaN/Inf");
-            peak = Math.max(peak, v);
+        fdn.update(5.6, 1.2, 5.6);
+        final float[] out = new float[2];
+        final Random rng = new Random(71);
+        double peak = 0, earlyEnergy = 0, lastEnergy = 0;
+        for (int i = 0; i < RATE * 8; i++) {
+            if (i % BLOCK == 0) {
+                fdn.advanceModulation(BLOCK, RATE);
+                fdn.setDiffusion(0f);
+            }
+            final float in = i < RATE ? 0.25f * (2f * rng.nextFloat() - 1f) : 0f;
+            fdn.process(in, in, out);
+            final double energy = stereoEnergy(out);
+            // 留出在时间窗内检出间歇噪声的能力,不只抽查最后一个样本。
+            peak = Math.max(peak, energy);
+            if (i >= RATE && i < RATE * 2) earlyEnergy += energy;
+            if (i >= RATE * 7) lastEnergy += energy;
         }
-        assertTrue(peak < 10.0, "峰值=" + peak + " 发散了");
-        assertTrue(env[env.length - 1] < 1e-6, "尾端=" + env[env.length - 1] + " 没收敛");
+        assertTrue(peak < 1.0 && earlyEnergy > 0.01 && lastEnergy < earlyEnergy * 1e-5,
+                "峰值能量=" + peak + " 头段=" + earlyEnergy + " 尾段=" + lastEnergy);
     }
 
     @Test
@@ -225,8 +360,8 @@ class FdnTailTest {
     }
 
     @Test
-    @DisplayName("flush 紧跟脉冲也清掉左右 HPF 历史,不会把滤波尾重新灌回网络")
-    void flushClearsBothInputFiltersImmediately() {
+    @DisplayName("flush 紧跟脉冲也清掉高通、side 和输入全通历史")
+    void flushClearsInputHistoryImmediately() {
         final FdnTail fdn = new FdnTail();
         fdn.rebuild(RATE);
         fdn.update(1.2, 1.0, 0.8);
@@ -238,7 +373,7 @@ class FdnTailTest {
             fdn.process(0, 0, out);
             residue = Math.max(residue, Math.abs(out[0]) + Math.abs(out[1]));
         }
-        assertTrue(residue < 1e-7, "清态不能留单耳滤波余音: " + residue);
+        assertTrue(residue < 1e-7, "清态不能留输入链余音: " + residue);
     }
 
     @Test
@@ -254,10 +389,11 @@ class FdnTailTest {
         }
         fdn.flush();
         double residue = 0;
-        for (int i = 0; i < RATE / 10; i++) {
+        // 至少覆盖一圈最长的主线和全通,否则未清空的状态可能还未到达读头。
+        for (int i = 0; i < RATE / 2; i++) {
             fdn.process(0f, 0f, out);
             residue = Math.max(residue, Math.abs(out[0]) + Math.abs(out[1]));
         }
-        assertTrue(residue < 1e-3, "flush 后残响=" + residue);
+        assertTrue(residue < 1e-7, "flush 后残响=" + residue);
     }
 }

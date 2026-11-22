@@ -30,6 +30,22 @@ public interface ListenerSample {
     /** 降水强度:0 无雨;0.5 降雨;1 雷暴(只统计听者头顶真正在降水时)。 */
     float precipitation();
 
+    /**
+     * 晚期围合度 0..1:射线在逃逸前反复弹射的占比(弹 4 次以上记满权重)。
+     * 与 {@link #enclosure()} 的区别是它不把脚下的地面算成墙:旷野只有地板一次反射,
+     * 反射后朝天逃逸,权重≈0;房间/矿洞里射线被困住,权重≈1。混响尾的量与长度
+     * 由它驱动,{@link #enclosure()} 只管「周围有没有反射面」(早期反射)。
+     * default = 旧采样器没有这份数据,按首命中占比近似(修前行为)。
+     */
+    default float lateEnclosure() {
+        return enclosure();
+    }
+
+    /** 每次命中之后下一段射线飞向开阔的概率 0..1:声能泄漏项。default 0 = 无泄漏(修前行为)。 */
+    default float escapeFraction() {
+        return 0f;
+    }
+
     /** 首次命中距离的平均值(米),即「最近的墙平均有多远」;全方向逃逸时为 {@link #NO_HIT}。 */
     float firstHitMeanMeters();
 
@@ -64,7 +80,17 @@ public interface ListenerSample {
      */
     float[] tapGains();
 
-    /** 每条反射的声像 −1(正左)..1(正右):到达方向在玩家右手方向上的投影。 */
+    /**
+     * 每条抽头在 8kHz 频带的幅度比(高频/中频),数组长度应与 {@link #tapCount()} 一致。
+     * 树侧从路径经过的材料反射率与空气吸收累计得到,0..1;null 代表旧采样器,
+     * 音频侧不对此抽头额外做材料低通。
+     */
+    default float[] tapHighRatios() {
+        return null;
+    }
+
+    /** 每条反射的到达向量(墙→耳)由树侧用于按当前视角现算声像。 */
+
     float[] tapPans();
 
     /**

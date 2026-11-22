@@ -1875,8 +1875,6 @@ public final class WorldLyricsState {
         double yaw;
         double pitch;
         if (params.facePlayer()) {
-            // 相机根姿态已作用于整个公告牌；叠加当前相机 yaw/pitch 可抵消这次旋转，
-            // 让锚点位于东西/斜向时也保持与屏幕平行。
             yaw = facePlayerYaw(camera);
             pitch = facePlayerPitch(camera);
         } else {

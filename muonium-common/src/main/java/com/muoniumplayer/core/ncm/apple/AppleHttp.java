@@ -110,6 +110,8 @@ public final class AppleHttp {
         if ("POST".equals(method)) {
             builder.POST(HttpRequest.BodyPublishers.ofString(
                     body == null ? "" : body, StandardCharsets.UTF_8));
+        } else if ("DELETE".equals(method)) {
+            builder.method("DELETE", HttpRequest.BodyPublishers.noBody());
         }
         if (headers != null) {
             for (Map.Entry<String, String> entry : headers.entrySet()) {

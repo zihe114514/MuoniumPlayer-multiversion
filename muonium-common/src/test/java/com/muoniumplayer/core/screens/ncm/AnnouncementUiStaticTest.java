@@ -147,12 +147,26 @@ class AnnouncementUiStaticTest {
     void allSevenHostsKeepTheirPairedForcedTransformAndProjectTouchBridge() throws IOException {
         for (String tree : TREES) {
             String host = host(tree);
+            Path versionJava = ProjectPaths.repoRoot().resolve(tree).resolve("src/main/java");
+            String compatScreen = read(versionJava.resolve("com/muoniumplayer/compat/mc/GuiScreen.java"));
+            String scroll = body(compatScreen, "public boolean mouseScrolled(");
+            if (tree.equals("26.3")) {
+                assertFalse(scroll.contains("Mouse.pushScreenScrollNotches"), tree + " uses SDL MouseHandler mixin instead");
+                String mouseMixins = Files.readString(ProjectPaths.repoRoot().resolve(tree)
+                        .resolve("fabric/src/main/resources/muonium.mixins.json"), StandardCharsets.UTF_8);
+                assertTrue(mouseMixins.contains("\"MouseScrollMixin\""), "26.3 Fabric must retain its scroll source Mixin");
+            } else {
+                assertTrue(scroll.contains("Mouse.pushScreenScrollNotches"), tree + " GLFW Screen callback must feed the wheel fallback");
+                String mouse = read(versionJava.resolve("com/muoniumplayer/compat/lwjgl2/Mouse.java"));
+                String callback = body(mouse, "private static void installScrollHookIfNeeded()");
+                assertTrue(callback.contains("WHEEL_CALLBACK_GUARD.forwardToScreen("), tree + " original callback path must suppress fallback duplication");
+                assertTrue(body(mouse, "public static void pushScreenScrollNotches(").contains("shouldAccumulateScreenFallback()"), tree);
+            }
             String draw = body(host, "public void drawScreen(");
             assertTrue(draw.contains("WindowAdaptiveScale.beginForced()") && draw.contains("WindowAdaptiveScale.end()"), tree);
             assertTrue(draw.contains("SkijaGfx.scale(sx, sy)") && draw.contains("SkijaGfx.popMatrix()"), tree);
             assertTrue(draw.contains("Math.round(mouseX / sx)") && draw.contains("Math.round(mouseY / sy)"), tree);
-            assertTrue(draw.contains("Mouse.getDWheel()"), tree);
-            assertTrue(draw.indexOf("TouchGestures.get().advance(") < draw.indexOf("overlay.renderWidget("), tree);
+            assertTrue(draw.contains("overlay.renderWidget(") && draw.contains("Mouse.getDWheel()"), tree);
             assertTrue(draw.contains("mouseX / sx, mouseY / sy, Mouse.isButtonDown(0)"), tree);
             String click = body(host, "protected void mouseClicked(");
             assertTrue(click.contains("TouchSettings.ENABLED && mouseButton == 0")
@@ -189,6 +203,33 @@ class AnnouncementUiStaticTest {
             assertFalse(body(host, "protected void keyTyped(").contains("releaseResources()"), tree + " ESC 请求不提前释放");
             assertTrue(body(host, "public void initGui()").contains("if (overlayBuilt)"), tree);
             assertEquals(1, count(host, "new AnnouncementOverlay()"), tree + " resize 不能创建新拥有者");
+        }
+    }
+
+    @Test
+    @DisplayName("各车道仅从自己的鼠标事件来源取得滚轮且 GLFW 回退不重复计数")
+    void wheelFallbackMatchesEachVersionInputBackend() throws IOException {
+        for (String tree : TREES) {
+            Path versionJava = versionJava(tree);
+            String compat = read(versionJava.resolve("com/muoniumplayer/compat/mc/GuiScreen.java"));
+            String scrollSignature = tree.equals("1.20.1 recode")
+                    ? "public boolean mouseScrolled(double mouseX, double mouseY, double amount)"
+                    : "public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount)";
+            assertTrue(compat.contains(scrollSignature), tree + " Screen scroll signature must match this lane");
+            String scroll = body(compat, scrollSignature);
+            if (tree.equals("26.3")) {
+                assertFalse(scroll.contains("Mouse.pushScreenScrollNotches"), "26.3 SDL 不走 GLFW Screen 回退");
+                Path mixin = versionJava.resolve("com/muoniumplayer/mixin/MouseScrollMixin.java");
+                String source = read(mixin);
+                assertTrue(source.contains("Mouse.pushScrollNotches(yoffset)"), "26.3 原生 onScroll 注入是唯一滚轮源");
+                continue;
+            }
+            assertTrue(scroll.contains("Mouse.pushScreenScrollNotches("), tree + " Screen 事件须作 GLFW 累加器兜底");
+            String mouse = read(versionJava.resolve("com/muoniumplayer/compat/lwjgl2/Mouse.java"));
+            assertTrue(body(mouse, "public static void pushScreenScrollNotches(")
+                    .contains("WHEEL_CALLBACK_GUARD.shouldAccumulateScreenFallback()"), tree);
+            assertTrue(body(mouse, "private static void installScrollHookIfNeeded()")
+                    .contains("WHEEL_CALLBACK_GUARD.forwardToScreen("), tree + " 同步链回原版回调须避免二次累计");
         }
     }
 

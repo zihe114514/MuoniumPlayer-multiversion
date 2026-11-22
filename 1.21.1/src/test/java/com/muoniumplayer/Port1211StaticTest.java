@@ -306,6 +306,30 @@ class Port1211StaticTest {
     }
 
     @Test
+    @DisplayName("世界阶段歌词拥有独立立即缓冲，并在恢复矩阵前收完所有批次")
+    void worldLyricsOwnTheirBuffers() throws IOException {
+        String bridge = stripComments(read(ProjectPaths.versionJava().resolve(
+                "com/muoniumplayer/compat/mc/WorldLyricsBridge.java")));
+        int world = bridge.indexOf("public static void worldRenderEnd()");
+        int identity = bridge.indexOf("RenderSystem.getModelViewStack().identity()", world);
+        int draw = bridge.indexOf("renderInner(basePose, mc, camera)", identity);
+        int restore = bridge.indexOf("RenderSystem.getModelViewStack().popMatrix()", draw);
+        int wrapper = bridge.indexOf("private static void renderInner(Matrix4f basePose, Minecraft mc, Camera camera)");
+        int storage = bridge.indexOf("try (ByteBufferBuilder lyricStorage = new ByteBufferBuilder(1536))", wrapper);
+        int immediate = bridge.indexOf("MultiBufferSource.immediate(lyricStorage)", storage);
+        int bodyDraw = bridge.indexOf("renderInner(basePose, mc, camera, lyricBuffers)", immediate);
+        int flush = bridge.indexOf("lyricBuffers.endBatch()", bodyDraw);
+        assertTrue(world >= 0 && identity > world && draw > identity && restore > draw
+                        && wrapper > restore && storage > wrapper && immediate > storage
+                        && bodyDraw > immediate && flush > bodyDraw,
+                "世界渲染先同步调用独立缓冲包装器，包装器返回前必须全量收批");
+        assertFalse(bridge.substring(wrapper, bodyDraw).contains("mc.renderBuffers().bufferSource()"),
+                "世界歌词不能沿用 Iris 世界阶段禁止显式按类型收批的宿主 bufferSource");
+        assertTrue(bridge.contains("WorldBillboard.INSTANCE.begin(poseStack,\n                lyricBuffers,"),
+                "世界阶段隔离缓冲必须实际传给公告牌");
+    }
+
+    @Test
     @DisplayName("现代字形及特效不依赖可被改写的矩阵顶点重载")
     void modernLyricsUseExplicitPositionTransform() throws IOException {
         String billboard = stripComments(read(ProjectPaths.versionJava().resolve(
@@ -337,43 +361,117 @@ class Port1211StaticTest {
                             }
                             return proxy;
                         });
-        float[] yaws = {0f, 90f, 180f, 270f, -145f, 725f};
-        float[] pitches = {-70f, -20f, 0f, 35f, 75f};
-        for (float yaw : yaws) {
-            for (float pitch : pitches) {
-                org.joml.Matrix4f base = new org.joml.Matrix4f()
-                        .rotationX((float) Math.toRadians(pitch))
-                        .rotateY((float) Math.toRadians(yaw + 180f));
-                // 回屏保持把世界锚点拉到新视线前；相机逆旋转后应仍在同一屏内位置。
-                org.joml.Vector3f anchor = new org.joml.Vector3f(1f, 0.5f, -12f);
-                new org.joml.Matrix4f(base).invert().transformPosition(anchor);
-                org.joml.Matrix4f mat = new org.joml.Matrix4f(base)
-                        .translate(anchor.x, anchor.y, anchor.z)
-                        .rotateY((float) -Math.toRadians(yaw))
-                        .rotateX((float) Math.toRadians(pitch))
-                        .scale(-0.02f, -0.02f, 0.02f);
-                org.joml.Vector3f center = mat.transformPosition(0f, 0f, 0f, new org.joml.Vector3f());
-                org.junit.jupiter.api.Assertions.assertEquals(1f, center.x, 0.0001f);
-                org.junit.jupiter.api.Assertions.assertEquals(0.5f, center.y, 0.0001f);
-                org.junit.jupiter.api.Assertions.assertEquals(-12f, center.z, 0.0001f);
-                org.joml.Vector3f expected = mat.transformPosition(3f, 4f, 0f, new org.joml.Vector3f());
-                putGlyph.invoke(null, sink, mat, 3f, 4f, 0f, 0f, 1f, 0f, 1f,
-                        0xFFFFFFFF, 0.2f, 0.3f);
-                org.junit.jupiter.api.Assertions.assertEquals(expected.x, actual[0], 0.0001f);
-                org.junit.jupiter.api.Assertions.assertEquals(expected.y, actual[1], 0.0001f);
-                org.junit.jupiter.api.Assertions.assertEquals(expected.z, actual[2], 0.0001f);
-                float cos = (float) Math.cos(Math.toRadians(35f));
-                float sin = (float) Math.sin(Math.toRadians(35f));
-                expected = mat.transformPosition(1f + (2f * cos - 2f * sin) * 1.3f,
-                        2f + (2f * sin + 2f * cos) * 1.3f, 0f, new org.joml.Vector3f());
-                putGlyph.invoke(null, sink, mat, 3f, 4f, 1f, 2f, cos, sin, 1.3f,
-                        0xFFFFFFFF, 0.2f, 0.3f);
-                org.junit.jupiter.api.Assertions.assertEquals(expected.x, actual[0], 0.0001f);
-                org.junit.jupiter.api.Assertions.assertEquals(expected.y, actual[1], 0.0001f);
-                org.junit.jupiter.api.Assertions.assertEquals(expected.z, actual[2], 0.0001f);
+        java.lang.reflect.Method cameraBasePose = com.muoniumplayer.compat.mc.WorldLyricsBridge.class
+                .getDeclaredMethod("cameraBasePose", org.joml.Matrix4f.class, float.class, float.class);
+        cameraBasePose.setAccessible(true);
+        java.lang.reflect.Field poseField = com.muoniumplayer.compat.mc.WorldBillboard.class
+                .getDeclaredField("poseStack");
+        poseField.setAccessible(true);
+        com.muoniumplayer.compat.mc.WorldBillboard billboard =
+                com.muoniumplayer.compat.mc.WorldBillboard.INSTANCE;
+        Object previousPoseStack = poseField.get(billboard);
+        java.lang.reflect.Method facePlayerYaw = com.muoniumplayer.core.lyrics3d.WorldLyricsState.class
+                .getDeclaredMethod("facePlayerYaw", com.muoniumplayer.core.lyrics3d.WorldLyricsState.CameraView.class);
+        java.lang.reflect.Method facePlayerPitch = com.muoniumplayer.core.lyrics3d.WorldLyricsState.class
+                .getDeclaredMethod("facePlayerPitch", com.muoniumplayer.core.lyrics3d.WorldLyricsState.CameraView.class);
+        facePlayerYaw.setAccessible(true);
+        facePlayerPitch.setAccessible(true);
+        java.lang.reflect.Constructor<com.muoniumplayer.compat.mc.CameraAccess> cameraAccessConstructor =
+                com.muoniumplayer.compat.mc.CameraAccess.class.getDeclaredConstructor(
+                        net.minecraft.client.Camera.class, float.class);
+        cameraAccessConstructor.setAccessible(true);
+        java.lang.reflect.Method setRotation = net.minecraft.client.Camera.class
+                .getDeclaredMethod("setRotation", float.class, float.class);
+        setRotation.setAccessible(true);
+        float[] yaws = {0f, 45f, 90f, 135f, 180f, 225f, 270f, 315f, -145f};
+        float[] pitches = {-70f, -35f, -20f, 0f, 35f, 70f};
+        try {
+            for (float yaw : yaws) {
+                for (float pitch : pitches) {
+                    net.minecraft.client.Camera camera = new net.minecraft.client.Camera();
+                    setRotation.invoke(camera, yaw, pitch);
+                    com.muoniumplayer.compat.mc.CameraAccess cameraAccess =
+                            cameraAccessConstructor.newInstance(camera, 0f);
+                    float faceYaw = ((Double) facePlayerYaw.invoke(null, cameraAccess)).floatValue();
+                    float facePitch = ((Double) facePlayerPitch.invoke(null, cameraAccess)).floatValue();
+                    org.joml.Matrix4f base = (org.joml.Matrix4f) cameraBasePose.invoke(null,
+                            new org.joml.Matrix4f(), camera.getXRot(), camera.getYRot());
+                    // 回屏保持把世界锚点拉到新视线前；相机逆旋转后应仍在同一屏内位置。
+                    org.joml.Vector3f anchor = new org.joml.Vector3f(1f, 0.5f, -12f);
+                    new org.joml.Matrix4f(base).invert().transformPosition(anchor);
+                    com.mojang.blaze3d.vertex.PoseStack poses = new com.mojang.blaze3d.vertex.PoseStack();
+                    poses.last().pose().set(base);
+                    poseField.set(billboard, poses);
+                    billboard.pushBillboard(anchor.x, anchor.y, anchor.z, faceYaw, facePitch, 1f);
+                    org.joml.Matrix4f mat = new org.joml.Matrix4f(poses.last().pose());
+                    billboard.popBillboard();
+
+                    org.joml.Vector3f center = mat.transformPosition(0f, 0f, 0f, new org.joml.Vector3f());
+                    org.junit.jupiter.api.Assertions.assertEquals(1f, center.x, 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(0.5f, center.y, 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(-12f, center.z, 0.0001f);
+                    org.joml.Vector3f xAxis = mat.transformDirection(1f, 0f, 0f, new org.joml.Vector3f());
+                    org.joml.Vector3f yAxis = mat.transformDirection(0f, 1f, 0f, new org.joml.Vector3f());
+                    org.joml.Vector3f zAxis = mat.transformDirection(0f, 0f, 1f, new org.joml.Vector3f());
+                    org.junit.jupiter.api.Assertions.assertEquals(1f, xAxis.x, 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(0f, xAxis.y, 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(0f, xAxis.z, 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(0f, yAxis.x, 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(-1f, yAxis.y, 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(0f, yAxis.z, 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(0f, zAxis.x, 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(0f, zAxis.y, 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(-1f, zAxis.z, 0.0001f);
+                    org.joml.Vector3f expected = mat.transformPosition(3f, 4f, 0f, new org.joml.Vector3f());
+                    putGlyph.invoke(null, sink, mat, 3f, 4f, 0f, 0f, 1f, 0f, 1f,
+                            0xFFFFFFFF, 0.2f, 0.3f);
+                    org.junit.jupiter.api.Assertions.assertEquals(expected.x, actual[0], 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(expected.y, actual[1], 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(expected.z, actual[2], 0.0001f);
+                    float cos = (float) Math.cos(Math.toRadians(35f));
+                    float sin = (float) Math.sin(Math.toRadians(35f));
+                    expected = mat.transformPosition(1f + (2f * cos - 2f * sin) * 1.3f,
+                            2f + (2f * sin + 2f * cos) * 1.3f, 0f, new org.joml.Vector3f());
+                    putGlyph.invoke(null, sink, mat, 3f, 4f, 1f, 2f, cos, sin, 1.3f,
+                            0xFFFFFFFF, 0.2f, 0.3f);
+                    org.junit.jupiter.api.Assertions.assertEquals(expected.x, actual[0], 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(expected.y, actual[1], 0.0001f);
+                    org.junit.jupiter.api.Assertions.assertEquals(expected.z, actual[2], 0.0001f);
+                }
+            }
+        } finally {
+            poseField.set(billboard, previousPoseStack);
+        }
+        org.junit.jupiter.api.Assertions.assertEquals(yaws.length * pitches.length * 2, writes[0]);
+    }
+
+    @Test
+    @DisplayName("1.21.1 的朝向玩家角与烘进根姿态的相机角一致")
+    void facePlayerAnglesMatchCameraRootPose() throws Exception {
+        java.lang.reflect.Method facePlayerYaw = com.muoniumplayer.core.lyrics3d.WorldLyricsState.class
+                .getDeclaredMethod("facePlayerYaw", com.muoniumplayer.core.lyrics3d.WorldLyricsState.CameraView.class);
+        java.lang.reflect.Method facePlayerPitch = com.muoniumplayer.core.lyrics3d.WorldLyricsState.class
+                .getDeclaredMethod("facePlayerPitch", com.muoniumplayer.core.lyrics3d.WorldLyricsState.CameraView.class);
+        facePlayerYaw.setAccessible(true);
+        facePlayerPitch.setAccessible(true);
+        java.lang.reflect.Constructor<com.muoniumplayer.compat.mc.CameraAccess> constructor =
+                com.muoniumplayer.compat.mc.CameraAccess.class.getDeclaredConstructor(
+                        net.minecraft.client.Camera.class, float.class);
+        constructor.setAccessible(true);
+        for (float yaw : new float[] {0f, 45f, 90f, 135f, 180f, 270f, 315f}) {
+            for (float pitch : new float[] {-70f, -35f, 0f, 35f, 70f}) {
+                net.minecraft.client.Camera camera = new net.minecraft.client.Camera();
+                java.lang.reflect.Method setRotation = net.minecraft.client.Camera.class
+                        .getDeclaredMethod("setRotation", float.class, float.class);
+                setRotation.setAccessible(true);
+                setRotation.invoke(camera, yaw, pitch);
+                com.muoniumplayer.compat.mc.CameraAccess access = constructor.newInstance(camera, 0f);
+                org.junit.jupiter.api.Assertions.assertEquals(camera.getYRot(),
+                        (double) facePlayerYaw.invoke(null, access), 1e-6);
+                org.junit.jupiter.api.Assertions.assertEquals(camera.getXRot(),
+                        (double) facePlayerPitch.invoke(null, access), 1e-6);
             }
         }
-        org.junit.jupiter.api.Assertions.assertEquals(60, writes[0]);
     }
 
     @Test

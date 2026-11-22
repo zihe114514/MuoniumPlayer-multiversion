@@ -15,8 +15,9 @@ class RoomPlanTest {
         final float[] delay = {0.01f};
         final float[] left = {0.1f};
         final float[] right = {0.3f};
+        final float[] high = {0.42f};
         final RoomPlan plan = new RoomPlan(20000, 0.4f, 0.9f, 1,
-                0.004f, 0.5f, 0.28f, 0.6f, 0.3f, 1, delay, left, right,
+                0.004f, 0.5f, 0.28f, 0.6f, 0.3f, 1, delay, left, right, high,
                 0.1f, 12000, 0.6f, 10, true, 1, 0.5f,
                 true, 2, 64, 3, 0, true, 12);
         delay[0] = 0.15f;
@@ -25,6 +26,7 @@ class RoomPlanTest {
         assertEquals(0.01f, plan.tapDelaySec[0]);
         assertEquals(0.1f, plan.tapGainL[0]);
         assertEquals(0.3f, plan.tapGainR[0]);
+        assertEquals(0.42f, plan.tapHighRatio[0]);
         final RoomPlan transition = plan.withTransition(0.18f);
         assertTrue(transition.diffracted);
         assertEquals(12f, transition.directPathMeters);

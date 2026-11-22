@@ -3,6 +3,7 @@ package com.muoniumplayer.core.ncm.apple;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 
@@ -10,9 +11,11 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -356,6 +359,7 @@ public final class AppleMusicService {
     private static volatile boolean userPlaylistsLoaded;
     private static volatile boolean userPlaylistsLoading;
     private static volatile long userPlaylistsLastAttempt;
+    private static final Set<String> likedTrackIds = Collections.synchronizedSet(new HashSet<>());
 
     public static List<PlayList> getUserPlaylistsSnapshot() {
         return new ArrayList<>(userPlaylistsSnapshot);
@@ -447,6 +451,37 @@ public final class AppleMusicService {
     private static void clearPlaylistCache() {
         userPlaylistsSnapshot = Collections.emptyList();
         userPlaylistsLoaded = false;
+        likedTrackIds.clear();
+    }
+
+    /** Apple account favorite state is kept locally so LikeButton never performs per-frame I/O. */
+    public static boolean isTrackLiked(String trackId) {
+        return trackId != null && likedTrackIds.contains(trackId.trim());
+    }
+
+    public static void noteTrackLikedLocal(String trackId, boolean liked) {
+        if (trackId == null || trackId.trim().isEmpty()) return;
+        if (liked) likedTrackIds.add(trackId.trim());
+        else likedTrackIds.remove(trackId.trim());
+    }
+
+    /**
+     * Catalog-song favorite writeback. Apple accepts the catalog id in the favorites collection;
+     * library-upload ids are deliberately left to the native MusicKit route.
+     */
+    public static boolean setTrackLiked(String trackId, boolean liked) {
+        String id = trackId == null ? "" : trackId.trim();
+        if (!isLoggedIn() || id.isEmpty() || !DIGITS.matcher(id).matches()) return false;
+        String path = "/v1/me/favorites?ids%5Bsongs%5D=" + urlEncode(id);
+        try {
+            if (liked) AppleApiClient.postAccount(path);
+            else AppleApiClient.deleteAccount(path);
+            noteTrackLikedLocal(id, liked);
+            return true;
+        } catch (IOException | AppleApiClient.AppleApiException failure) {
+            System.err.println("[Music/Apple] 收藏变更失败: " + failure.getMessage());
+            return false;
+        }
     }
 
     public static boolean isLoggedIn() {
@@ -459,6 +494,49 @@ public final class AppleMusicService {
      */
     public static List<PlayList> recommendationPlaylists() {
         List<PlayList> out = new ArrayList<>();
+        for (Playlist recommendation : searchRecommendationCards()) {
+            PlayList card = toPlayListCard(recommendation);
+            if (card != null) out.add(card);
+        }
+        return out;
+    }
+
+    /**
+     * Turns Apple's personalized recommendation collections into song shelves for the home page.
+     * The account's own library playlists remain in the account sidebar.
+     */
+    public static List<PlayList> recommendationSongShelves() {
+        List<Playlist> recommendations = searchRecommendationCards();
+        List<Track> tracks = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Playlist recommendation : recommendations) {
+            if (recommendation == null || recommendation.id.isEmpty()) continue;
+            for (Track track : playlistTracks(recommendation.id, 20)) {
+                if (track != null && seen.add(track.id)) tracks.add(track);
+                if (tracks.size() >= 60) break;
+            }
+            if (tracks.size() >= 60) break;
+        }
+        if (tracks.isEmpty()) return Collections.emptyList();
+        List<Music> songs = new ArrayList<>();
+        for (Track track : tracks) {
+            Music song = Music.fromAppleTrack(track);
+            if (song != null) songs.add(song);
+        }
+        if (songs.isEmpty()) return Collections.emptyList();
+        PlayList shelf = new PlayList(stableCardId("apple-home-personalized"), "为你推荐",
+                songs.get(0).getCoverUrl(256), songs.size(), 0L, null, "Apple Music", 0L);
+        shelf.setPlatform(MusicPlatform.APPLE);
+        shelf.setPlatformPlaylistId("home:personalized");
+        shelf.setSearchMode(true);
+        shelf.setMusics(new java.util.concurrent.CopyOnWriteArrayList<>(songs));
+        shelf.setMusicsQueried(true);
+        shelf.setMusicsLoaded(true);
+        return Collections.singletonList(shelf);
+    }
+
+    private static List<Playlist> searchRecommendationCards() {
+        List<Playlist> out = new ArrayList<>();
         if (!isConfigured()) return out;
         try {
             JsonObject payload = AppleApiClient.getAccount("/v1/me/recommendations?limit=5");
@@ -471,23 +549,16 @@ public final class AppleMusicService {
                 JsonArray contents = relationships.getAsJsonObject("contents").getAsJsonArray("data");
                 if (contents == null) continue;
                 for (JsonElement item : contents) {
-                    if (!item.isJsonObject()) continue;
-                    JsonObject o = item.getAsJsonObject();
-                    if (!"playlists".equals(text(o, "type"))) continue;
-                    String plId = text(o, "id");
-                    JsonObject attributes = o.getAsJsonObject("attributes");
-                    if (plId.isEmpty() || attributes == null) continue;
-                    String name = text(attributes, "name");
-                    if (name.isEmpty()) continue;
-                    PlayList card = new PlayList(stableCardId(plId), name, artworkUrl(attributes),
-                            0, 0L, null, text(attributes, "curatorName"), 0L);
-                    card.setPlatform(MusicPlatform.APPLE);
-                    card.setPlatformPlaylistId(plId);
-                    out.add(card);
+                    if (item == null || !item.isJsonObject()) continue;
+                    JsonObject resource = item.getAsJsonObject();
+                    if (!"playlists".equals(text(resource, "type"))) continue;
+                    Playlist playlist = readPlaylistCard(resource, "Apple Music");
+                    if (playlist != null && !playlist.id.isEmpty()) out.add(playlist);
+                    if (out.size() >= 3) return out;
                 }
             }
-        } catch (IOException | AppleApiClient.AppleApiException throwable) {
-            System.err.println("[Music/Apple] 推荐歌单失败: " + throwable.getMessage());
+        } catch (IOException | AppleApiClient.AppleApiException failure) {
+            System.err.println("[Music/Apple] 推荐歌单读取失败: " + failure.getMessage());
         }
         return out;
     }

@@ -1,6 +1,7 @@
 package com.muoniumplayer.core.utils.network;
 
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 真联网冒烟：对真实镜像链跑一次竞速，验证冠军耗时、进度单调、文件正确。
  * 需要 network；常态构建不跑它（tag 掉，用 -Dgroups 手动触发）。
  */
+@Tag("network-smoke")
 class HttpDownloadRaceSmokeTest {
 
     private static final List<String> ZSTD_MIRRORS = List.of(

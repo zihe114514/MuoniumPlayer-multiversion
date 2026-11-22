@@ -251,8 +251,7 @@ public abstract class GuiScreen extends Screen {
     // 1.20.1 是 mouseScrolled(x, y, amount)；1.21.1 拆成水平/垂直两个分量。
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        // 项目通过 Mouse.getDWheel() 轮询滚轮；GLFW 回调链已在 Mouse 里挂好，
-        // 这里再补一次会重复计数，故只做拦截返回，不再累加。
+        Mouse.pushScreenScrollNotches(verticalAmount);
         return true;
     }
 

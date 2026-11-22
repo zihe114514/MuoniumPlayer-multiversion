@@ -7,7 +7,7 @@ import java.io.File;
  *
  * <p>顺序是有意的，三层各管一段：</p>
  * <ol>
- *   <li>{@link PcmWindowReader}：WAV 缓存（含 AAC/M4A 播放前解出的 {@code .decoded.wav} 边车），
+ *   <li>{@link PcmWindowReader}：WAV 缓存（含压缩音源播放前解出的 {@code .decoded.wav} 边车），
  *       直接 seek，不起进程、不依赖外部工具；</li>
  *   <li>{@link JavaDecoderAnalysisAudio}：mp3 / flac，用 mod 里打包的 JLayer / jFLAC 纯 Java 解码
  *       （与播放链同一套库）。手机装不了也跑不了 ffmpeg，这一层就是移动端的分析主力；</li>
