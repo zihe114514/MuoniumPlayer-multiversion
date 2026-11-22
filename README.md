@@ -493,11 +493,9 @@ MuoniumPlayer 由**四位开发者**共同维护：心事抱抱、云杉、N0ne�
 
 贡献者：[Chryui (Cherry7593)](https://github.com/Cherry7593) —— 游戏窗口失焦时自动压低音乐（PR #6）。
 
-贡献者：[WJiangzhi](https://github.com/WJiangzhi) —— OneConfig 冲突防护与 HUD 设置选择（[PR #31](https://github.com/zihe114514/MuoniumPlayer-multiversion/pull/31)）、ImBlocker 输入法恢复（[PR #35](https://github.com/zihe114514/MuoniumPlayer-multiversion/pull/35)）。
+贡献者：[WJiangzhi](https://github.com/WJiangzhi) —— OneConfig 冲突防护与 HUD 设置选择（PR #31）、ImBlocker 输入法恢复（PR #35）。
 
-贡献者：[LPFVG](https://github.com/LPFVG) —— 桌面歌词对齐与排版（[PR #33](https://github.com/zihe114514/MuoniumPlayer-multiversion/pull/33)）。
-
-GitHub 贡献者：[查看完整贡献者列表](https://github.com/zihe114514/MuoniumPlayer-multiversion/graphs/contributors)
+贡献者：[LPFVG](https://github.com/LPFVG) —— 桌面歌词对齐与排版（PR #33）。
 
 **赞助完全自愿 —— 不赞助，功能一个都不少。** 所有核心功能、全部音源和免费下载渠道始终对所有人开放。
 
