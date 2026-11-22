@@ -151,13 +151,26 @@ class ExpressivePromptsStaticTest {
     void lazyPlaylistRefreshRebuildsOnlyTheListOnTheMainThread() throws IOException {
         Source source = screen("AddToPlaylistOverlay");
         MethodTree init = source.method("onInit");
-        MethodInvocationTree ensure = oneCall(init, "ensureUserPlaylistsAsync");
-        assertTrue(compact(init).contains("!kuGouCallbackPending") && compact(init).contains("kuGouCallbackPending=true;"),
-                "The one-request-per-overlay latch must prevent duplicated callbacks");
-        assertTrue(calls(ensure).stream().anyMatch(call -> callName(call).equals("runOnMainThread")),
-                "The service completion callback must marshal widget mutation to the client thread");
-        assertTrue(calls(ensure).stream().anyMatch(call -> callName(call).equals("rebuildPlaylistList")));
-        assertTrue(compact(ensure).contains("!closing"), "A delayed cover/list callback must not revive a dismissed overlay");
+        List<MethodInvocationTree> ensures = calls(init).stream()
+                .filter(call -> callName(call).equals("ensureUserPlaylistsAsync")).toList();
+        assertEquals(2, ensures.size(), "酷狗与波点云歌单必须各自懒加载，不能互相覆盖");
+        assertTrue(ensures.stream().anyMatch(call -> call.getMethodSelect().toString()
+                        .equals("KuGouMusicService.ensureUserPlaylistsAsync"))
+                        && ensures.stream().anyMatch(call -> call.getMethodSelect().toString()
+                        .equals("BodianMusicService.ensureUserPlaylistsAsync")),
+                "Both cloud-playlist providers must be wired independently");
+        for (MethodInvocationTree ensure : ensures) {
+            assertTrue(calls(ensure).stream().anyMatch(call -> callName(call).equals("runOnMainThread")),
+                    "The service completion callback must marshal widget mutation to the client thread");
+            assertTrue(calls(ensure).stream().anyMatch(call -> callName(call).equals("rebuildPlaylistList")));
+            assertTrue(compact(ensure).contains("!closing"),
+                    "A delayed cover/list callback must not revive a dismissed overlay");
+        }
+        String initCode = compact(init);
+        assertTrue(initCode.contains("!kuGouCallbackPending") && initCode.contains("kuGouCallbackPending=true;"),
+                "The KuGou one-request-per-overlay latch must prevent duplicated callbacks");
+        assertTrue(initCode.contains("!bodianCallbackPending") && initCode.contains("bodianCallbackPending=true;"),
+                "The Bodian one-request-per-overlay latch must prevent duplicated callbacks");
         assertTrue(compact(init).contains("areUserPlaylistsLoading()") && compact(init).contains("areUserPlaylistsLoaded()"),
                 "Observe service state too: a loading service can discard an added callback");
         assertFalse(calls(source.type).stream().anyMatch(call -> callName(call).equals("onInit")),
@@ -240,10 +253,12 @@ class ExpressivePromptsStaticTest {
         assertTrue(rename.contains("LocalPlaylistStore.rename(renaming,name)") && rename.contains("replaceCurrentPanel("),
                 "Renaming must retain existing tracks and replace, not stack, the current page");
         assertFalse(calls(created.method("renameTo")).stream().anyMatch(call -> callName(call).equals("setCurrentPanel")));
-        for (Source source : List.of(imported, created)) {
-            assertFalse(compact(source.type).contains("AccountSessionStore") || compact(source.type).contains("NeteaseMusicService"),
-                    "Local creation/anonymous import must not acquire account credentials");
-        }
+        // The create page also hosts QQ and Bodian cloud branches; keep this
+        // privacy assertion scoped to credential storage, not service wiring.
+        assertFalse(compact(imported.type).contains("AccountSessionStore"),
+                "Anonymous import must not acquire account credentials");
+        assertFalse(compact(created.type).contains("AccountSessionStore"),
+                "Local creation must not acquire account credentials");
     }
 
     @Test

@@ -12,7 +12,8 @@ import com.muoniumplayer.party.ui.PartyIcons;
 public final class SourceStep implements OnboardingStepView {
     private static final MusicPlatform[] PLATFORMS = {
             MusicPlatform.NETEASE, MusicPlatform.QQ, MusicPlatform.KUGOU,
-            MusicPlatform.YOUTUBE, MusicPlatform.BILIBILI, MusicPlatform.QISHUI, MusicPlatform.GD
+            MusicPlatform.YOUTUBE, MusicPlatform.BILIBILI, MusicPlatform.QISHUI,
+            MusicPlatform.BODIAN, MusicPlatform.GD
     };
 
     /** 两列排得下所需的最小内容带宽：再窄就退成一列。 */

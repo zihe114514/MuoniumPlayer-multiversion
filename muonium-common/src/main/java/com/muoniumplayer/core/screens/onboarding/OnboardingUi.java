@@ -90,8 +90,8 @@ public final class OnboardingUi {
     /**
      * 引导里算「账号通不通」要看的那几家。
      *
-     * <p>必须和 {@code AccountManagerOverlay} 那张账号表是同一份名单（那里三行六格：
-     * 网易云 / QQ / 酷狗、汽水 / 哔哩哔哩、Apple）。只轮询前三家的话，在账号管理器里登录了
+     * <p>必须和 {@code AccountManagerOverlay} 那张账号表是同一份名单（那里三行七格：
+     * 网易云 / QQ / 酷狗、汽水 / 哔哩哔哩 / 波点、Apple）。只轮询前三家的话，在账号管理器里登录了
      * 汽水、哔哩哔哩或 Apple 的玩家回到引导页仍然看到「未登录」，完成页摘要也写「稍后登录」——
      * 而他刚刚就在这个界面里登录过。</p>
      *
@@ -100,7 +100,7 @@ public final class OnboardingUi {
      */
     public static final MusicPlatform[] ACCOUNT_PLATFORMS = {
             MusicPlatform.NETEASE, MusicPlatform.QQ, MusicPlatform.KUGOU,
-            MusicPlatform.QISHUI, MusicPlatform.BILIBILI, MusicPlatform.APPLE
+            MusicPlatform.QISHUI, MusicPlatform.BILIBILI, MusicPlatform.BODIAN, MusicPlatform.APPLE
     };
 
     /** 这几家里有没有任一已登录。账号页那条状态条与完成页摘要共用，免得两处各写一份清单。 */
@@ -459,6 +459,8 @@ public final class OnboardingUi {
         } else if (platform == MusicPlatform.QISHUI) {
             drawBrandIcon(MusicBrandIcons.QISHUI_MONOGRAM, FontManager.pf18bold,
                     centerX, centerY, color);
+        } else if (platform == MusicPlatform.BODIAN) {
+            drawBrandIcon("点", FontManager.pf18bold, centerX, centerY, color);
         } else {
             drawPartyIcon(PartyIcons.RADIO, centerX, centerY, box, color);
         }

@@ -36,6 +36,8 @@ public final class PlatformAccess {
                     return KuGouDevice.isLoggedIn();
                 case QISHUI:
                     return QishuiMusicService.isLoggedIn();
+                case BODIAN:
+                    return BodianMusicService.isLoggedIn();
                 case BILIBILI:
                     return BilibiliMusicService.isLoggedIn();
                 case KUWO:
@@ -83,6 +85,9 @@ public final class PlatformAccess {
                 case QISHUI:
                     return QishuiMusicService.isLoggedIn()
                             ? Boolean.valueOf(QishuiMusicService.isVipAccount()) : Boolean.FALSE;
+                case BODIAN:
+                    return BodianMusicService.isLoggedIn()
+                            ? Boolean.valueOf(BodianMusicService.isVipAccount()) : Boolean.FALSE;
                 case BILIBILI:
                     return BilibiliMusicService.isLoggedIn()
                             ? Boolean.valueOf(BilibiliMusicService.isVipAccount()) : Boolean.FALSE;

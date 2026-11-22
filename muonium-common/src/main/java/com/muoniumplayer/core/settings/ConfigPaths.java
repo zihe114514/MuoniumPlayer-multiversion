@@ -121,6 +121,9 @@ public final class ConfigPaths {
     /** 汽水已保存账号列表；与当前活动会话分开，切换失败不会覆盖现账号。 */
     public static final File QISHUI_ACCOUNTS = new File(AUTH_ROOT, "qishui_accounts.json");
 
+    /** 波点音乐的设备身份、活动会话与本地记住的账号。 */
+    public static final File BODIAN_AUTH = new File(AUTH_ROOT, "bodian_auth.json");
+
     /**
      * Spotify 的本机配置：用户自备的 Client ID 与市场代码。
      *

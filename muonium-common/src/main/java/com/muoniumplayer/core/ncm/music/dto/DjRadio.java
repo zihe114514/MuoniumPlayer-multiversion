@@ -22,6 +22,8 @@ public class DjRadio {
     private boolean subscribed;
     /** 最后一次更新时间（毫秒），「最近收听」按它排到最前。 */
     private long lastUpdateTime;
+    /** 平台原始条目 id（QQ 电台等非网易云条目使用）。 */
+    private String platformId = "";
     /**
      * 这张卡点击后去哪。电台/播客进 {@code RadioDetailPanel}；广播电台页与 DIFM 频道
      * 有自己的落点，解析侧直接填好，UI 不必再按类型分派。
@@ -34,7 +36,9 @@ public class DjRadio {
         /** DIFM 策展曲风频道，点开后取正在播的曲目列表播放。 */
         DIFM_CHANNEL,
         /** 真实广播电台（直播流），本期只浏览与收藏。 */
-        BROADCAST_CHANNEL
+        BROADCAST_CHANNEL,
+        /** QQ 音乐歌单式电台。 */
+        QQ_RADIO
     }
 
     public String coverUrl() {

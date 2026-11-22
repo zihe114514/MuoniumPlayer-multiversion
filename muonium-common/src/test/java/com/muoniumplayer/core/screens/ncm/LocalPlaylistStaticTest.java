@@ -142,12 +142,22 @@ class LocalPlaylistStaticTest {
     @DisplayName("曲目行按这张单是不是本地单，决定移除按钮和它占的位")
     void removeButtonTracksThePlaylistKind() throws IOException {
         String body = read(MUSIC_WIDGET);
-        int row = indexOf(body, "playList.isLocalPlaylist()", "移除按钮的条件");
+        int row = indexOf(body, "if (canRemoveFromPlaylist(playList))", "移除按钮的条件");
+        int guard = indexOf(body, "private static boolean canRemoveFromPlaylist(", "移除权限判断");
+        assertTrue(body.indexOf("playlist.isLocalPlaylist()", guard) > 0
+                        && body.indexOf("playlist.isLocalPlaylist()", guard) < guard + 500,
+                "Remove permission lost its local-playlist branch");
+        assertTrue(body.indexOf("MusicPlatform.BODIAN", guard) > 0
+                        && body.indexOf("MusicPlatform.BODIAN", guard) < guard + 700,
+                "Remove permission lost its Bodian cloud-playlist branch");
         assertTrue(body.indexOf("LocalPlaylistStore.removeTrack", row) < row + 1400,
                 "这一格只是画了个叉，没接移除");
         int reserve = indexOf(body, "private double rightActionsReserve()", "右侧预留宽度");
-        assertTrue(body.indexOf("isLocalPlaylist()", reserve) > 0 && body.indexOf("isLocalPlaylist()", reserve) < reserve + 700,
-                "预留宽度没把第四枚图标算进去：长标题会滑到叉号底下");
+        int removeReserve = body.indexOf("canRemoveFromPlaylist(this.playList) ? 1 : 0", reserve);
+        int iconReserve = body.indexOf("iconCount * (ACTION_GAP + ACTION_ICON_SIZE)", reserve);
+        assertTrue(removeReserve > reserve && removeReserve < reserve + 600
+                        && iconReserve > removeReserve && iconReserve < reserve + 600,
+                "右侧预留宽度必须按实际显示的移除操作计数，避免长标题滑到叉号底下");
         // 「加入歌单」那颗对任何源都该在（只要有本地单可放），否则跨源的歌根本进不来。
         int canAdd = indexOf(body, "private static boolean canAddToPlaylist(", "加入歌单可行性");
         assertTrue(body.indexOf("LocalPlaylistStore.hasAny()", canAdd) > 0

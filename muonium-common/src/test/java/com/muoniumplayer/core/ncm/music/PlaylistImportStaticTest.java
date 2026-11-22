@@ -183,7 +183,7 @@ class PlaylistImportStaticTest {
         // 带进来的引用。分区顺序没变，所以这一条仍然归在这里测（建单/移除那条链见 LocalPlaylistStaticTest）。
         int importLabel = source.indexOf("\"Mu本地歌单\"");
         int accountLabel = source.indexOf("\"我的账号歌单\"");
-        int playlistSource = source.indexOf("List<PlayList> pl = qqMode");
+        int playlistSource = source.indexOf("List<PlayList> pl = bodianMode");
         assertTrue(importLabel >= 0, "侧栏没有「Mu本地歌单」栏");
         assertTrue(accountLabel >= 0, "「我的歌单」没改成「我的账号歌单」");
         assertTrue(importLabel < accountLabel, "本地歌单栏没有排在账号歌单之上");

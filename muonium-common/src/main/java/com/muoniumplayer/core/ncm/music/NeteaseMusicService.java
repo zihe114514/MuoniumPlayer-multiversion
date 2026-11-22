@@ -11,6 +11,7 @@ import com.muoniumplayer.core.music.source.MuMusicApi;
 import com.muoniumplayer.core.music.source.MuQQApi;
 import com.muoniumplayer.core.music.source.MusicSource;
 import com.muoniumplayer.core.music.source.QQUserInfo;
+import com.muoniumplayer.core.music.source.QQRadioGroup;
 import com.muoniumplayer.core.music.source.QrCode;
 import com.muoniumplayer.core.music.source.QrLoginState;
 import com.muoniumplayer.core.music.source.SongUrl;
@@ -304,6 +305,7 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.YOUTUBE) return searchYouTube(keyword, limit);
         if (platform == MusicPlatform.BILIBILI) return searchBilibili(keyword, limit);
         if (platform == MusicPlatform.QISHUI) return searchQishui(keyword, limit);
+        if (platform == MusicPlatform.BODIAN) return BodianMusicService.search(keyword, limit);
         // 酷我 / 咪咕没有内置音源层通道，宿主照上游 musicSdk 内置了它们的搜索（供
         // 换源流水线拿它们当候选）；取流则只认自定义源，见 Music#getPlayUrl 的早退。
         if (platform == MusicPlatform.KUWO) return KuwoMusicService.search(keyword, limit);
@@ -348,6 +350,109 @@ public final class NeteaseMusicService {
         }
     }
 
+    public static List<Music> getQQGuessYouLike() {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn()) throw new IllegalStateException("QQ 猜你喜欢需要先登录");
+        return adaptTracks(SERVICE.getQq().getGuessYouLike());
+    }
+
+    public static List<Music> getQQDailySongs() {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn()) throw new IllegalStateException("QQ 每日歌曲需要先登录");
+        return adaptTracks(SERVICE.getQq().getDailySongs());
+    }
+
+    public static List<Music> getQQPersonalFm(int page) {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn()) throw new IllegalStateException("QQ 私人 FM 需要先登录");
+        return adaptTracks(SERVICE.getQq().getPersonalFm(page));
+    }
+
+    public static List<QQRadioGroup> getQQRadioGroups() {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn()) throw new IllegalStateException("QQ 电台需要先登录");
+        return SERVICE.getQq().getRadioGroups();
+    }
+
+    public static List<QQRadioGroup.Radio> getQQRecommendedRadioModes() {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn()) throw new IllegalStateException("QQ 电台推荐需要先登录");
+        return SERVICE.getQq().getRecommendedRadioModes();
+    }
+
+    public static List<Music> getQQRadioTracks(int radioId) {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn()) throw new IllegalStateException("QQ 电台需要先登录");
+        return adaptTracks(SERVICE.getQq().getRadioTracks(radioId));
+    }
+
+    public static List<Music> getQQRecommendedRadioTracks(int radioId) {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn()) throw new IllegalStateException("QQ 电台推荐需要先登录");
+        return adaptTracks(SERVICE.getQq().getRecommendedRadioTracks(radioId));
+    }
+
+    public static List<Music> getQQCloudTracks(int limit) {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn()) throw new IllegalStateException("QQ 音乐云盘需要先登录");
+        return adaptTracks(SERVICE.getQq().getCloudSongs(limit));
+    }
+
+    public static List<Music> getQQAutoplayTracks(List<Long> seedIds) {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn()) throw new IllegalStateException("QQ 自动接歌需要先登录");
+        return adaptTracks(SERVICE.getQq().getAutoplayTracks(seedIds));
+    }
+
+    public static List<Music> getQQSimilarAutoplayTracks(long seedId) {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn()) throw new IllegalStateException("QQ 相似接歌需要先登录");
+        return adaptTracks(SERVICE.getQq().getSimilarAutoplayTracks(seedId));
+    }
+
+    public static long createQQPlaylist(String name) {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn()) throw new IllegalStateException("QQ 歌单管理需要先登录");
+        return SERVICE.getQq().createPlaylist(name);
+    }
+
+    public static boolean renameQQPlaylist(String playlistId, String name) {
+        initialize(OptionsUtil.getCookie());
+        long tid = parseQQPlaylistId(playlistId);
+        return SERVICE.getQq().getLoggedIn() && SERVICE.getQq().renamePlaylist(tid, name);
+    }
+
+    public static boolean deleteQQPlaylist(String playlistId) {
+        initialize(OptionsUtil.getCookie());
+        long tid = parseQQPlaylistId(playlistId);
+        return SERVICE.getQq().getLoggedIn() && SERVICE.getQq().deletePlaylist(tid);
+    }
+
+    public static boolean updateQQPlaylistTrack(String playlistId, Music music, boolean add) {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn() || music == null || !music.isQQ()) return false;
+        return SERVICE.getQq().updatePlaylistTrack(parseQQPlaylistId(playlistId), music.getId(), add);
+    }
+
+    public static boolean setQQLike(Music music, boolean liked) {
+        initialize(OptionsUtil.getCookie());
+        if (!SERVICE.getQq().getLoggedIn() || music == null || !music.isQQ()) return false;
+        return SERVICE.getQq().setLike(music.getId(), music.getSourceId(), liked);
+    }
+
+    private static long parseQQPlaylistId(String playlistId) {
+        if (isBlank(playlistId) || playlistId.startsWith("qq-")) {
+            throw new IllegalArgumentException("不是可管理的 QQ 自建歌单");
+        }
+        try {
+            long id = Long.parseLong(playlistId.trim());
+            if (id <= 0L) throw new NumberFormatException("non-positive id");
+            return id;
+        } catch (NumberFormatException malformed) {
+            throw new IllegalArgumentException("非法 QQ 歌单标识 " + playlistId, malformed);
+        }
+    }
+
     /**
      * 指定 QQ 榜单的曲目。
      *
@@ -373,6 +478,23 @@ public final class NeteaseMusicService {
     public static List<Music> getQQPlaylistTracks(String playlistId, int limit) {
         if (isBlank(playlistId)) return Collections.emptyList();
         String trimmed = playlistId.trim();
+        if ("qq-cloud".equals(trimmed)) return getQQCloudTracks(limit);
+        if ("qq-daily".equals(trimmed)) return getQQDailySongs();
+        if ("qq-guess".equals(trimmed)) return getQQGuessYouLike();
+        if (trimmed.startsWith("qq-radio:")) {
+            try {
+                return getQQRecommendedRadioTracks(Integer.parseInt(trimmed.substring("qq-radio:".length())));
+            } catch (NumberFormatException malformed) {
+                throw new IllegalArgumentException("非法 QQ 雷达标识 " + trimmed, malformed);
+            }
+        }
+        if (trimmed.startsWith("qq-account-radio:")) {
+            try {
+                return getQQRadioTracks(Integer.parseInt(trimmed.substring("qq-account-radio:".length())));
+            } catch (NumberFormatException malformed) {
+                throw new IllegalArgumentException("非法 QQ 账号电台标识 " + trimmed, malformed);
+            }
+        }
         if (trimmed.startsWith("toplist:")) {
             try {
                 return getQQTopTracks(Integer.parseInt(trimmed.substring("toplist:".length()).trim()),
@@ -492,6 +614,11 @@ public final class NeteaseMusicService {
                     QishuiMusicService.getSongUrl(music.getSourceId(), effectiveQuality);
             return result == null ? null : new Tuple<>(result.url, result.format);
         }
+        if (music.isBodian()) {
+            BodianMusicService.ResolveResult result = BodianMusicService.getSongUrl(
+                    music.getSourceId(), requestedQuality == null ? Quality.LOSSLESS : requestedQuality);
+            return result == null ? null : new Tuple<>(result.url, result.format);
+        }
         if (music.isKuGou()) {
             return KuGouMusicService.getSongUrl(music, requestedQuality);
         }
@@ -566,6 +693,19 @@ public final class NeteaseMusicService {
         if (music.isYouTube() || music.isQishui()) {
             // 汽水音乐有自己的逐字提供方；其他匿名源使用兜底匹配器。
             return null;
+        }
+        if (music.isBodian()) {
+            try {
+                String lrc = BodianMusicService.getLyricText(music.getSourceId());
+                if (isBlank(lrc)) return null;
+                List<com.muoniumplayer.core.music.source.LyricLine> lines =
+                        com.muoniumplayer.core.music.source.LyricParser.INSTANCE.parse(lrc, "", "");
+                return new Lyric(lrc, "", "", lines);
+            } catch (Throwable throwable) {
+                System.err.println("[Music/Bodian] Lyric failed for " + music.getStableKey() + ": "
+                        + throwable.getMessage());
+                return null;
+            }
         }
         if (music.isKuGou()) {
             // 酷狗的歌词走 KRC（逐字），在 LyricLoadService 里比这条统一兜底链路更早被问。
@@ -664,6 +804,9 @@ public final class NeteaseMusicService {
         }
         if (platform == MusicPlatform.QISHUI) {
             return QishuiMusicService.createQrCode();
+        }
+        if (platform == MusicPlatform.BODIAN) {
+            return BodianMusicService.createQrCode();
         }
         if (platform == MusicPlatform.KUGOU) {
             KuGouMusicService.KuGouSession session = KuGouMusicService.createQrSession(
@@ -770,6 +913,7 @@ public final class NeteaseMusicService {
             QrLoginState state = QishuiMusicService.checkQrCode(qrCode);
             return state;
         }
+        if (platform == MusicPlatform.BODIAN) return BodianMusicService.checkQrCode(qrCode);
         if (platform == MusicPlatform.KUGOU) {
             // 酷狗不经内置音源层：上游给的是原始码，这里翻成宿主的状态机。
             switch (KuGouMusicService.checkQr(qrCode.getKey())) {
@@ -804,6 +948,7 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.QISHUI) {
             return; // QishuiMusicService 在扫码确认时已经原子写入自己的凭据文件。
         }
+        if (platform == MusicPlatform.BODIAN) return;
         if (platform == MusicPlatform.KUGOU) {
             // 酷狗的 token 在扫码成功那一刻已由 KuGouDevice 落盘，这里无需二次写入。
             return;
@@ -840,6 +985,10 @@ public final class NeteaseMusicService {
         }
         if (platform == MusicPlatform.QISHUI) {
             QishuiMusicService.logout();
+            return;
+        }
+        if (platform == MusicPlatform.BODIAN) {
+            BodianMusicService.logout();
             return;
         }
         if (platform == MusicPlatform.KUGOU) {
@@ -882,6 +1031,7 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.YOUTUBE) return YouTubeSessionStore.isLoggedIn();
         if (platform == MusicPlatform.BILIBILI) return BilibiliMusicService.isLoggedIn();
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.isLoggedIn();
+        if (platform == MusicPlatform.BODIAN) return BodianMusicService.isLoggedIn();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.isLoggedIn();
         // 必须挡在 initializeIfNeeded 之前：Spotify 的登录态与网易云 cookie 无关，
         // 掉进下面的 内置音源层 分支会为了查登录态去初始化一整套网易云会话。
@@ -911,6 +1061,7 @@ public final class NeteaseMusicService {
         }
         if (platform == MusicPlatform.BILIBILI) return BilibiliMusicService.getAccountName();
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.getAccountName();
+        if (platform == MusicPlatform.BODIAN) return BodianMusicService.getAccountName();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAccountName();
         if (platform == MusicPlatform.SPOTIFY) {
             return com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.getAccountName();
@@ -944,6 +1095,7 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.YOUTUBE) return YouTubeSessionStore.snapshot().avatarUrl;
         if (platform == MusicPlatform.BILIBILI) return BilibiliMusicService.getAvatarUrl();
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.getAvatarUrl();
+        if (platform == MusicPlatform.BODIAN) return BodianMusicService.getAvatarUrl();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAvatarUrl();
         if (platform == MusicPlatform.SPOTIFY) {
             return com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.getAvatarUrl();
@@ -984,6 +1136,10 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.QISHUI) {
             String url = QishuiMusicService.getAvatarUrl();
             return QishuiMusicService.avatarLocation(QishuiMusicService.getAccountId(), url);
+        }
+        if (platform == MusicPlatform.BODIAN) {
+            return BodianMusicService.getAvatarUrl().isEmpty()
+                    ? null : Location.of("muonium/textures/account/bodian_avatar.png");
         }
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAvatarLocation();
         if (platform == MusicPlatform.QQ) {
@@ -1108,6 +1264,8 @@ public final class NeteaseMusicService {
 
         try {
             List<PlayList> loaded = requestQQUserPlaylists();
+            loaded.add(createQQPlaylist("qq-cloud", "QQ 音乐云盘", "", 0,
+                    "显示已匹配到 QQ 曲库的云盘歌曲", true));
             qqUserPlaylists = Collections.unmodifiableList(new ArrayList<>(loaded));
             qqUserPlaylistsLoaded = true;
             System.out.println("[Music/Netease] Loaded " + loaded.size() + " QQ account playlists.");

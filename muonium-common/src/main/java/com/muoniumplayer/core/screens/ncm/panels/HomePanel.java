@@ -7,6 +7,7 @@ import lombok.Getter;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.BilibiliFavoriteService;
+import com.muoniumplayer.core.ncm.music.BodianMusicService;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
@@ -42,6 +43,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class HomePanel extends NCMPanel {
 
     private final MusicPlatform platform;
+    private final String platformAccountId;
     /** 固定结果集由播放器内歌单搜索使用，而不触碰首页缓存。 */
     private final List<PlayList> fixedPlaylists;
     private final String fixedRecommendationTitle;
@@ -72,6 +74,8 @@ public class HomePanel extends NCMPanel {
     public HomePanel(List<PlayList> playlists, String recommendationTitle, Map<Long, Runnable> cardActions) {
         super();
         this.platform = NeteaseMusicService.getCurrentPlatform();
+        this.platformAccountId = this.platform == MusicPlatform.BODIAN
+                ? BodianMusicService.getAccountId() : "";
         this.fixedPlaylists = playlists == null ? null : new ArrayList<>(playlists);
         this.fixedRecommendationTitle = recommendationTitle;
         this.fixedPlaylistActions = cardActions == null ? Collections.emptyMap() : new LinkedHashMap<>(cardActions);
@@ -153,6 +157,8 @@ public class HomePanel extends NCMPanel {
         }
         if (platform == MusicPlatform.QQ) {
             loadQQHome();
+        } else if (platform == MusicPlatform.BODIAN) {
+            loadBodianHome();
         } else if (platform == MusicPlatform.KUGOU) {
             loadKuGouHome();
         } else if (platform == MusicPlatform.YOUTUBE) {
@@ -196,6 +202,8 @@ public class HomePanel extends NCMPanel {
             if (this.hostClosed || !this.pendingUi.isCurrent(ticket,
                     NCMScreen.getInstance().getContentHostGeneration())) return;
             if (NeteaseMusicService.getCurrentPlatform() != this.platform) return;
+            if (this.platform == MusicPlatform.BODIAN
+                    && !this.platformAccountId.equals(BodianMusicService.getAccountId())) return;
             // Publishing data while navigated away is safe. Only the active page pump builds UI.
             callback.run();
         });
@@ -365,6 +373,7 @@ public class HomePanel extends NCMPanel {
         if (platform == MusicPlatform.YOUTUBE) return "欢迎使用 YouTube Music!";
         if (platform == MusicPlatform.BILIBILI) return "欢迎使用 哔哩哔哩!";
         if (platform == MusicPlatform.QISHUI) return "欢迎使用 汽水音乐!";
+        if (platform == MusicPlatform.BODIAN) return "欢迎使用 波点音乐!";
         return "欢迎来到 MuoniumPlayer!";
     }
 
@@ -597,6 +606,22 @@ public class HomePanel extends NCMPanel {
                     result = Collections.singletonList(top);
                 }
 
+                result = new ArrayList<>(result);
+                if (NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)) {
+                    try {
+                        appendQQTrackShelf(result, -260027L, "每日歌曲", "qq-daily",
+                                "QQ 音乐每日推荐");
+                    } catch (Throwable throwable) {
+                        System.err.println("[Music/QQ] Daily songs unavailable: " + throwable.getMessage());
+                    }
+                    try {
+                        appendQQTrackShelf(result, -260028L, "猜你喜欢", "qq-guess",
+                                "QQ 音乐个性化推荐");
+                    } catch (Throwable throwable) {
+                        System.err.println("[Music/QQ] Guess-you-like unavailable: " + throwable.getMessage());
+                    }
+                }
+
                 qqHomePlaylists = Collections.unmodifiableList(new ArrayList<>(result));
                 final List<PlayList> displayed = new ArrayList<>(result);
                 publishCallback(ticket, () -> {
@@ -618,6 +643,24 @@ public class HomePanel extends NCMPanel {
                 qqHomeLoading = false;
             }
         });
+    }
+
+    private static void appendQQTrackShelf(List<PlayList> destination, long id, String name,
+                                          String platformId, String description) {
+        List<Music> tracks = "qq-daily".equals(platformId)
+                ? NeteaseMusicService.getQQDailySongs()
+                : NeteaseMusicService.getQQGuessYouLike();
+        if (tracks == null || tracks.isEmpty()) return;
+        Music first = tracks.get(0);
+        PlayList shelf = new PlayList(id, name, first.getCoverUrl(256), tracks.size(), 0L,
+                null, description, 0L);
+        shelf.setPlatform(MusicPlatform.QQ);
+        shelf.setPlatformPlaylistId(platformId);
+        shelf.setSearchMode(true);
+        shelf.setMusics(new CopyOnWriteArrayList<>(tracks));
+        shelf.setMusicsQueried(true);
+        shelf.setMusicsLoaded(true);
+        destination.add(shelf);
     }
 
     /** 等另一次 QQ 首页加载填好缓存（最多 20 秒），然后用它布局本实例。超时按失败处理。 */
@@ -644,6 +687,91 @@ public class HomePanel extends NCMPanel {
 
     private static String qqRecommendationTitle(int count) {
         return count > 1 ? "QQ 音乐 · 推荐歌单 · " + count : "QQ 音乐 · 巅峰榜";
+    }
+
+    private static volatile List<PlayList> bodianHomePlaylists = Collections.emptyList();
+    private static volatile String bodianHomeAccountId = "";
+    private static volatile boolean bodianHomeLoading;
+
+    private void loadBodianHome() {
+        final UiTicket ticket = this.requestTicket;
+        final String accountId = BodianMusicService.getAccountId();
+        final List<PlayList> cached = new ArrayList<>(bodianHomePlaylists);
+        if (!cached.isEmpty() && accountId.equals(bodianHomeAccountId)) {
+            requestLayout(cached, bodianRecommendationTitle(cached.size()));
+            return;
+        }
+        requestPlaceholder("正在获取波点音乐推荐…", true);
+
+        synchronized (HomePanel.class) {
+            if (bodianHomeLoading) {
+                MultiThreadingUtil.runAsync(() -> awaitBodianHomeCache(ticket, accountId));
+                return;
+            }
+            bodianHomeLoading = true;
+        }
+
+        MultiThreadingUtil.runAsync(() -> {
+            List<PlayList> result = new ArrayList<>();
+            try {
+                result.addAll(BodianMusicService.recommendPlaylists(120));
+                if (!accountId.isEmpty()) appendBodianPersonalizedTracks(result);
+                if (accountId.equals(BodianMusicService.getAccountId())) {
+                    bodianHomePlaylists = Collections.unmodifiableList(new ArrayList<>(result));
+                    bodianHomeAccountId = accountId;
+                }
+                final List<PlayList> displayed = new ArrayList<>(result);
+                publishCallback(ticket, () -> {
+                    if (!displayed.isEmpty()) {
+                        requestLayout(displayed, bodianRecommendationTitle(displayed.size()));
+                    } else {
+                        requestPlaceholder("波点音乐推荐获取失败，请稍后重试", false);
+                    }
+                });
+            } catch (Throwable failure) {
+                System.err.println("[Music/Bodian] Home recommendations failed: " + failure.getMessage());
+                publishCallback(ticket, () -> requestPlaceholder("波点音乐推荐获取失败，请稍后重试", false));
+            } finally {
+                bodianHomeLoading = false;
+            }
+        });
+    }
+
+    private static void appendBodianPersonalizedTracks(List<PlayList> destination) {
+        List<Music> tracks = BodianMusicService.personalizedTracks(50);
+        if (tracks == null || tracks.isEmpty()) return;
+        Music first = tracks.get(0);
+        PlayList shelf = new PlayList(-260029L, "猜你喜欢", first.getCoverUrl(256), tracks.size(),
+                0L, null, "波点音乐个性化推荐", 0L);
+        shelf.setPlatform(MusicPlatform.BODIAN);
+        shelf.setPlatformPlaylistId("home:personalized-tracks");
+        shelf.setSearchMode(true);
+        shelf.setMusics(new CopyOnWriteArrayList<>(tracks));
+        shelf.setMusicsQueried(true);
+        shelf.setMusicsLoaded(true);
+        destination.add(shelf);
+    }
+
+    private void awaitBodianHomeCache(UiTicket ticket, String accountId) {
+        final long deadline = System.nanoTime() + 20_000_000_000L;
+        while (bodianHomeLoading && System.nanoTime() - deadline < 0L) {
+            try {
+                Thread.sleep(120L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        final List<PlayList> cached = accountId.equals(bodianHomeAccountId)
+                ? new ArrayList<>(bodianHomePlaylists) : Collections.emptyList();
+        publishCallback(ticket, () -> {
+            if (cached.isEmpty()) requestPlaceholder("波点音乐推荐获取失败，请稍后重试", false);
+            else requestLayout(cached, bodianRecommendationTitle(cached.size()));
+        });
+    }
+
+    private static String bodianRecommendationTitle(int count) {
+        return "波点音乐 · 推荐与个性化 · " + count;
     }
 
     /**

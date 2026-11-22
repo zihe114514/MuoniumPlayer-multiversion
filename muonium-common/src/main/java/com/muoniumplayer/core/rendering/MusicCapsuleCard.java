@@ -1130,6 +1130,7 @@ public final class MusicCapsuleCard implements SharedRenderingConstants {
             case KUGOU: glyph = MusicBrandIcons.KUGOU_MONOGRAM; break;
             case BILIBILI: glyph = MusicBrandIcons.BILIBILI_MONOGRAM; break;
             case QISHUI: glyph = MusicBrandIcons.QISHUI_MONOGRAM; break;
+            case BODIAN: glyph = "点"; break;
             case SPOTIFY: glyph = MusicBrandIcons.SPOTIFY_MONOGRAM; break;
             case APPLE: glyph = MusicBrandIcons.APPLE_MONOGRAM; break;
             case LOCAL: glyph = "♪"; break;

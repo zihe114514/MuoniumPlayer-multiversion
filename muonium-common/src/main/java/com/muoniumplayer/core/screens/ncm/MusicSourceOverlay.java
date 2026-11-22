@@ -43,7 +43,7 @@ import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
 /**
- * 音乐来源浮层：官方源（网易云 / QQ / 酷狗 / YouTube / 哔哩哔哩）与 GD音乐台 聚合源的切换。
+ * 音乐来源浮层：官方源与 GD 音乐台聚合源的切换。
  *
  * <p>版式、动效与图标对齐都在 {@link NcmSheet}，这里只描述「有哪些来源、每张卡上写什么」。
  * 改写的起因是原来这个文件自己写了一遍遮罩、弹窗、标题、卡片和胶囊，纵向位置是一串写死的
@@ -282,8 +282,8 @@ public final class MusicSourceOverlay extends NcmSheet {
         gridRow(feed, 2, cell -> officialCell(cell, 6, MusicPlatform.SPOTIFY),
                 cell -> officialCell(cell, 7, MusicPlatform.APPLE),
                 this::gdCell);
-        // 第十格（LX）独占一行行首：空出的两格是隐形 Panel，不画任何东西。
-        gridRow(feed, 3, this::lxCell, cell -> { }, cell -> { });
+        // 最后一行放 LX 与波点音乐；两个入口一格一个，剩余格保持空白。
+        gridRow(feed, 3, this::lxCell, cell -> officialCell(cell, 10, MusicPlatform.BODIAN), cell -> { });
 
         settingsRow(dialog);
         tip(dialog, () -> "GD音乐台来源由 music-api.gdstudio.xyz 提供，请遵循上游服务的使用要求",
@@ -493,6 +493,11 @@ public final class MusicSourceOverlay extends NcmSheet {
                     () -> NeteaseMusicService.isLoggedIn(MusicPlatform.APPLE),
                     () -> NCMScreen.getInstance().openAccountManager(MusicPlatform.APPLE), 0);
         }
+        if (platform == MusicPlatform.BODIAN) {
+            cornerButton(card, PartyIcons.KEY, MusicPlatform.BODIAN,
+                    () -> NeteaseMusicService.isLoggedIn(MusicPlatform.BODIAN),
+                    () -> NCMScreen.getInstance().openAccountManager(MusicPlatform.BODIAN), 0);
+        }
     }
 
     /** 名字行右端的让位宽度：角标钮（YouTube 两颗）> 勾标 > 无。勾标让位随补间连续变化。 */
@@ -501,6 +506,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         if (platform == MusicPlatform.YOUTUBE) return CELL_CORNER * 2 + 4.0 + 8.0;
         if (platform == MusicPlatform.SPOTIFY) return CELL_CORNER + 8.0;
         if (platform == MusicPlatform.APPLE) return CELL_CORNER + 8.0;
+        if (platform == MusicPlatform.BODIAN) return CELL_CORNER + 8.0;
         return badgeReserve;
     }
 
@@ -576,6 +582,7 @@ public final class MusicSourceOverlay extends NcmSheet {
             case QISHUI -> MusicBrandIcons.QISHUI_MONOGRAM;
             case SPOTIFY -> MusicBrandIcons.SPOTIFY_MONOGRAM;
             case APPLE -> MusicBrandIcons.APPLE_MONOGRAM;
+            case BODIAN -> "点";
             default -> MusicBrandIcons.NETEASE_CLOUD_MUSIC;
         };
     }
@@ -583,7 +590,7 @@ public final class MusicSourceOverlay extends NcmSheet {
     /** 品牌字形的兜底字体。酷狗/哔哩/汽水/Spotify/Apple 用正文字体画一枚字符字标。 */
     private CFontRenderer brandFont(final MusicPlatform platform) {
         return switch (platform) {
-            case KUGOU, BILIBILI, QISHUI, SPOTIFY, APPLE -> FontManager.pf34bold;
+            case KUGOU, BILIBILI, QISHUI, SPOTIFY, APPLE, BODIAN -> FontManager.pf34bold;
             case YOUTUBE -> FontManager.youtubeIcon34;
             case QQ -> FontManager.qqMusicIcon68;
             default -> FontManager.musicBrand52;
@@ -2104,6 +2111,11 @@ public final class MusicSourceOverlay extends NcmSheet {
     }
 
     private String accountLine(final MusicPlatform platform) {
+        if (platform == MusicPlatform.BODIAN) {
+            return NeteaseMusicService.isLoggedIn(platform)
+                    ? "已登录 · " + NeteaseMusicService.getAccountName(platform)
+                    : "未登录 · 搜索、播放与推荐可用，登录后管理歌单";
+        }
         if (platform == MusicPlatform.YOUTUBE) {
             return "无需登录 · 搜索并播放 YouTube 音频";
         }

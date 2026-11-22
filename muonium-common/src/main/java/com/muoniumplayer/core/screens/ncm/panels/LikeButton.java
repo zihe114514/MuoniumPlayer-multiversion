@@ -3,9 +3,12 @@ package com.muoniumplayer.core.screens.ncm.panels;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.BilibiliFavoriteService;
 import com.muoniumplayer.core.ncm.music.BilibiliMusicService;
+import com.muoniumplayer.core.ncm.music.BodianMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouLikedCache;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
+import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.svg.AnimatedIcons;
@@ -17,7 +20,9 @@ import com.muoniumplayer.core.screens.ncm.PlayerIconAssets;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.function.DoubleSupplier;
 
@@ -113,6 +118,7 @@ public final class LikeButton {
 
     /** 同一首歌的曲行、FM 与灵动岛共用请求占位和确认票据。 */
     private static final PendingLikes PENDING = new PendingLikes();
+    private static final Set<String> QQ_LIKED = new HashSet<>();
 
     @FunctionalInterface
     public interface ConfirmationHost {
@@ -192,7 +198,9 @@ public final class LikeButton {
             music.setLike(liked);
             return true;
         }
+        if (music.isQQ()) return NeteaseMusicService.setQQLike(music, liked);
         if (music.isQishui()) return QishuiMusicService.setTrackLiked(music.getSourceId(), liked);
+        if (music.isBodian()) return BodianMusicService.setTrackLiked(music.getSourceId(), liked);
         if (music.isBilibili()) return BilibiliFavoriteService.setFavourite(music, liked);
         if (music.isKuGou()) return liked ? KuGouMusicService.likeTrack(music) : KuGouMusicService.unlikeTrack(music);
         return false;
@@ -220,12 +228,19 @@ public final class LikeButton {
                     likes.remove(music.getId());
                 }
             }
+        } else if (music.isQQ()) {
+            synchronized (QQ_LIKED) {
+                if (liked) QQ_LIKED.add(music.getStableKey());
+                else QQ_LIKED.remove(music.getStableKey());
+            }
         } else if (music.isQishui()) {
             QishuiMusicService.noteTrackLikedLocal(music.getSourceId(), liked);
         } else if (music.isBilibili()) {
             noteBilibiliFavoured(music, liked);
         } else if (music.isKuGou()) {
             noteKuGouLiked(music, liked);
+        } else if (music.isBodian()) {
+            BodianMusicService.noteTrackLikedLocal(music.getSourceId(), liked);
         }
     }
 
@@ -278,12 +293,21 @@ public final class LikeButton {
         if (music.isKuGou()) {
             return KuGouLikedCache.contains(music.getStableKey());
         }
+        if (music.isQQ()) {
+            synchronized (QQ_LIKED) {
+                return QQ_LIKED.contains(music.getStableKey());
+            }
+        }
         if (music.isQishui()) {
             QishuiMusicService.ensureLikedTrackIdsLoaded();
             return QishuiMusicService.isTrackLikedLocal(music.getSourceId());
         }
         if (music.isBilibili()) {
             return BilibiliFavoriteService.isFavouredLocally(music);
+        }
+        if (music.isBodian()) {
+            BodianMusicService.ensureLikedTrackIdsLoaded();
+            return BodianMusicService.isTrackLikedLocal(music.getSourceId());
         }
         return false;
     }
@@ -299,6 +323,10 @@ public final class LikeButton {
         if (music.isQishui()) {
             return QishuiMusicService.isLoggedIn() && !QishuiMusicService.isReauthRequired();
         }
+        if (music.isBodian()) {
+            return BodianMusicService.isLoggedIn();
+        }
+        if (music.isQQ()) return NeteaseMusicService.isLoggedIn(MusicPlatform.QQ);
         return music.isNetease() || music.isKuGou()
                 || (music.isBilibili() && BilibiliMusicService.isLoggedIn());
     }

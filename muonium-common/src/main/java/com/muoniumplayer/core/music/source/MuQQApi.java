@@ -233,6 +233,169 @@ public final class MuQQApi {
         return out;
     }
 
+    /** QQ 登录态的「猜你喜欢」电台批次；上游当前最多返回 5 首。 */
+    public List<Track> getGuessYouLike() {
+        JsonObject data = musicu("music.radioProxy.MbTrackRadioSvr", "get_radio_track",
+                linked("id", 99, "firstplay", 1, "num", 15), false, null, "req", null);
+        return parseTrackArray(JsonExt.arrOrNull(data, "tracks"), false);
+    }
+
+    /** 登录态的每日 30 首。 */
+    public List<Track> getDailySongs() {
+        JsonObject data = musicu("music.srfDissInfo.aiDissInfo", "uniform_get_Dissinfo",
+                linked("dirid", 202, "optype", 3, "tag", 1, "userinfo", 0, "pic_dpi", 300),
+                false, null, "req", null);
+        return parseTrackArray(JsonExt.arrOrNull(data, "songlist"), false);
+    }
+
+    /**
+     * QQ 私人 FM（刷歌雷达）的一批歌曲。上游一页约 10 首；不自动重发，避免超时后重复推进推荐序列。
+     */
+    public List<Track> getPersonalFm(int page) {
+        int safePage = Math.max(1, Math.min(100, page));
+        JsonObject data = musicu("music.recommend.TrackRelationServer", "GetRadarSong",
+                linked("Page", safePage, "ReqType", 0, "FavSongs", new ArrayList<>(),
+                        "EntranceSongs", new ArrayList<>()), false, null, "req", null);
+        JsonArray entries = JsonExt.arrOrNull(data, "VecSongs");
+        List<Track> out = new ArrayList<>();
+        if (entries == null) return out;
+        for (JsonElement entry : entries) {
+            JsonObject row = entry != null && entry.isJsonObject() ? entry.getAsJsonObject() : null;
+            JsonObject song = row == null ? null : JsonExt.objOrNull(row, "Track");
+            if (song == null) continue;
+            try {
+                Track track = parseTrack(song);
+                if (track != null && track.getMid() != null && !track.getMid().isEmpty()) out.add(track);
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 登录用户电台分组。字段按当前官方 musicu 响应解析；目录为空时返回空列表。
+     */
+    public List<QQRadioGroup> getRadioGroups() {
+        JsonObject data = musicu("pf.radiosvr", "GetRadiolist",
+                linked("uin", musicid), false, null, "req", null);
+        JsonArray groups = JsonExt.arrOrNull(data, "radio_list");
+        List<QQRadioGroup> out = new ArrayList<>();
+        if (groups == null) return out;
+        for (JsonElement element : groups) {
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject group = element.getAsJsonObject();
+            int groupId = intOr(group, "id", 0);
+            String groupName = textOrEmpty(group, "title");
+            JsonArray radios = JsonExt.arrOrNull(group, "list");
+            List<QQRadioGroup.Radio> radioList = new ArrayList<>();
+            if (radios != null) {
+                for (JsonElement radioElement : radios) {
+                    if (radioElement == null || !radioElement.isJsonObject()) continue;
+                    JsonObject radio = radioElement.getAsJsonObject();
+                    int id = intOr(radio, "id", 0);
+                    String title = textOrEmpty(radio, "title");
+                    if (id <= 0 || title.isEmpty()) continue;
+                    radioList.add(new QQRadioGroup.Radio(id, title,
+                            textOrEmpty(radio, "pic_url"), longOr(radio, "listenNum", 0L)));
+                }
+            }
+            if (groupId > 0 && !groupName.isEmpty()) out.add(new QQRadioGroup(groupId, groupName, radioList));
+        }
+        return out;
+    }
+
+    /** QQ 官方推荐雷达的选项（手机端 GetRecRadioList 首屏）。 */
+    public List<QQRadioGroup.Radio> getRecommendedRadioModes() {
+        JsonObject data = musicu("music.radio.PfRadioSvr", "GetRecRadioList",
+                linked("Offset", 0, "PageSize", Integer.MAX_VALUE), false, null, "req", null);
+        JsonArray radios = JsonExt.arrOrNull(data, "Radios");
+        List<QQRadioGroup.Radio> out = new ArrayList<>();
+        if (radios == null) return out;
+        for (JsonElement element : radios) {
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject radio = element.getAsJsonObject();
+            int id = intOr(radio, "ID", 0);
+            String title = textOrEmpty(radio, "Title");
+            if (id > 0 && id != 99 && !title.isEmpty()) {
+                out.add(new QQRadioGroup.Radio(id, title, textOrEmpty(radio, "BgPicUrl"), 0L));
+            }
+        }
+        return out;
+    }
+
+    /** 读取一个 QQ 电台批次；id 99 使用与「猜你喜欢」相同的官方推荐接口。 */
+    public List<Track> getRadioTracks(int radioId) {
+        if (radioId <= 0) return new ArrayList<>();
+        if (radioId == 99) return getGuessYouLike();
+        JsonObject data = musicu("pf.radiosvr", "GetRadiosonglist",
+                linked("id", radioId, "firstplay", 0, "num", 9), false, null, "req", null);
+        return parseTrackArray(JsonExt.arrOrNull(data, "track_list"), false);
+    }
+
+    /** QQ 官方雷达模式歌曲批次；当前官方客户端请求一次返回 5 首。 */
+    public List<Track> getRecommendedRadioTracks(int radioId) {
+        if (radioId <= 0 || radioId == 99) return new ArrayList<>();
+        JsonObject data = musicu("music.radioProxy.MbTrackRadioSvr", "get_radio_track",
+                linked("id", radioId, "num", 5), false, null, "req", null);
+        return parseTrackArray(JsonExt.arrOrNull(data, "tracks"), false);
+    }
+
+    /** 按一首或多首种子获取 QQ 官方自动接歌结果。 */
+    public List<Track> getAutoplayTracks(List<Long> seedIds) {
+        if (seedIds == null || seedIds.isEmpty()) return new ArrayList<>();
+        List<Long> seeds = new ArrayList<>();
+        for (Long id : seedIds) {
+            if (id != null && id > 0L && !seeds.contains(id) && seeds.size() < 5) seeds.add(id);
+        }
+        if (seeds.isEmpty()) return new ArrayList<>();
+        JsonObject data = musicu("music.recommend.AutoPlayServer", "GetAutoPlayList",
+                linked("vecSong", seeds, "amount", seeds.size(), "from", 8),
+                false, null, "req", null);
+        return parseNestedTrackArray(JsonExt.arrOrNull(data, "vecSong"));
+    }
+
+    /** 按一首种子获取 QQ 官方相似接歌结果。 */
+    public List<Track> getSimilarAutoplayTracks(long seedId) {
+        if (seedId <= 0L) return new ArrayList<>();
+        JsonObject data = musicu("music.recommend.AutoPlayServer", "GetRadioSimilarSongs",
+                linked("vecSong", java.util.Collections.singletonList(seedId), "amount", 3, "from", 4),
+                false, null, "req", null);
+        return parseNestedTrackArray(JsonExt.arrOrNull(data, "vecSong"));
+    }
+
+    /**
+     * 读取 QQ 音乐云盘中能关联回曲库的歌曲。原文件上传项若没有曲库 mid 不作为可播放曲目暴露。
+     */
+    public List<Track> getCloudSongs(int limit) {
+        if (!getLoggedIn()) return new ArrayList<>();
+        int max = Math.max(1, Math.min(1000, limit));
+        List<Track> out = new ArrayList<>();
+        for (int page = 1; page <= 10 && out.size() < max; page++) {
+            JsonObject data = musicu("music.WeiyunMusic.WeiyunMusicRead", "GetMatchAudio",
+                    linked("uin", musicid, "file_id", "", "page_no", page, "page_size", 2000),
+                    false, null, "req", null);
+            JsonArray entries = JsonExt.arrOrNull(data, "info_list");
+            if (entries == null || entries.size() == 0) break;
+            for (JsonElement entry : entries) {
+                if (entry == null || !entry.isJsonObject()) continue;
+                JsonObject item = entry.getAsJsonObject();
+                if (intOr(item, "matched", 0) == 2) continue;
+                JsonObject song = JsonExt.objOrNull(item, "song_info");
+                if (song == null) continue;
+                try {
+                    Track track = parseTrack(song);
+                    if (track != null && track.getMid() != null && !track.getMid().isEmpty()) {
+                        out.add(track);
+                        if (out.size() >= max) break;
+                    }
+                } catch (RuntimeException ignored) {
+                }
+            }
+            if (intOr(data, "has_more", 0) != 1) break;
+        }
+        return out;
+    }
+
     public List<Track> getPlaylistTracks(String dissid, int num) {
         long disstid;
         try {
@@ -558,6 +721,179 @@ public final class MuQQApi {
         String avatar = (headpic != null && !headpic.isBlank())
                 ? headpic : "https://q1.qlogo.cn/g?b=qq&nk=" + musicid + "&s=100";
         return new QQUserInfo(musicid, nick, avatar);
+    }
+
+    /** 新建 QQ 自有歌单；返回 tid，失败抛出带上游阶段信息的异常。 */
+    public long createPlaylist(String name) {
+        String cleanName = requirePlaylistName(name);
+        JsonObject data = musicu("music.musicasset.PlaylistBaseWrite", "AddPlaylist",
+                linked("dirName", cleanName), false, null, "req", null);
+        JsonObject result = writeResult(data);
+        long tid = longOr(result, "tid", 0L);
+        long dirId = longOr(result, "dirId", 0L);
+        if (tid <= 0L || dirId <= 0L || dirId >= 200L) {
+            throw new MusicApiException("QQ：新建歌单未返回有效目录信息", null);
+        }
+        JsonObject owned = findOwnedPlaylist(tid);
+        if (owned == null || longOr(owned, "dirId", 0L) != dirId
+                || !cleanName.equals(textOrEmpty(owned, "dirName"))) {
+            throw new MusicApiException("QQ：歌单已提交，但写后核对未通过", null);
+        }
+        return tid;
+    }
+
+    /** 重命名本人创建的普通歌单，并在写后重新读取确认。 */
+    public boolean renamePlaylist(long tid, String name) {
+        if (tid <= 0L) return false;
+        String cleanName = requirePlaylistName(name);
+        JsonObject owned = findOwnedPlaylist(tid);
+        long dirId = owned == null ? 0L : longOr(owned, "dirId", 0L);
+        if (dirId <= 0L || dirId >= 200L || intOr(owned, "dirType", 0) != 0) return false;
+
+        JsonObject beforeData = musicu("music.srfDissInfo.aiDissInfo", "uniform_get_Dissinfo",
+                linked("dirid", dirId, "optype", 3, "tag", 1, "userinfo", 0, "pic_dpi", 300),
+                false, null, "req", null);
+        JsonObject before = JsonExt.objOrNull(beforeData, "dirinfo");
+        if (before == null || longOr(before, "dirid", 0L) != dirId) return false;
+        String description = textOrEmpty(before, "desc");
+        String picUrl = textOrEmpty(before, "picurl");
+        int visibility = intOr(before, "dir_show", 0);
+        if (visibility != 1 && visibility != 2) return false;
+        JsonArray tags = JsonExt.arrOrNull(before, "tag");
+        List<Integer> tagIds = new ArrayList<>();
+        if (tags != null) {
+            for (JsonElement tag : tags) {
+                if (tag == null || !tag.isJsonObject()) return false;
+                int tagId = intOr(tag.getAsJsonObject(), "id", 0);
+                if (tagId <= 0) return false;
+                tagIds.add(tagId);
+            }
+        }
+
+        JsonObject result = writeResult(musicu("music.musicasset.PlaylistBaseWrite", "EditPlaylist",
+                linked("dirId", dirId, "mask", 95, "dirNewName", cleanName,
+                        "dirNewDesc", description, "dirNewPicUrl", picUrl, "dirNewPicUrl2", "",
+                        "dirNewtaglist", joinInts(tagIds), "dirShow", visibility),
+                false, null, "req", null));
+        if (longOr(result, "dirId", 0L) != dirId || longOr(result, "tid", 0L) != tid) return false;
+        JsonObject afterData = musicu("music.srfDissInfo.aiDissInfo", "uniform_get_Dissinfo",
+                linked("dirid", dirId, "optype", 3, "tag", 1, "userinfo", 0, "pic_dpi", 300),
+                false, null, "req", null);
+        JsonObject after = JsonExt.objOrNull(afterData, "dirinfo");
+        return after != null && cleanName.equals(textOrEmpty(after, "title"))
+                && description.equals(textOrEmpty(after, "desc"))
+                && picUrl.equals(textOrEmpty(after, "picurl"))
+                && visibility == intOr(after, "dir_show", 0);
+    }
+
+    /** 删除本人创建的普通歌单；写后确认该 tid 与目录 id 均已消失。 */
+    public boolean deletePlaylist(long tid) {
+        if (tid <= 0L) return false;
+        JsonObject owned = findOwnedPlaylist(tid);
+        long dirId = owned == null ? 0L : longOr(owned, "dirId", 0L);
+        if (dirId <= 0L || dirId >= 200L || intOr(owned, "dirType", 0) != 0) return false;
+        JsonObject result = writeResult(musicu("music.musicasset.PlaylistBaseWrite", "DelPlaylist",
+                linked("dirId", dirId), false, null, "req", null));
+        if (longOr(result, "dirId", 0L) != dirId || longOr(result, "tid", 0L) != tid
+                || longOr(result, "updateTime", -1L) != 0L) return false;
+        return findOwnedPlaylist(tid) == null;
+    }
+
+    /** 往本人创建的普通歌单加/删一首歌；仅在 QQ 明确回报对应目录和 tid 时返回成功。 */
+    public boolean updatePlaylistTrack(long tid, long songId, boolean add) {
+        if (tid <= 0L || songId <= 0L) return false;
+        JsonObject owned = findOwnedPlaylist(tid);
+        long dirId = owned == null ? 0L : longOr(owned, "dirId", 0L);
+        if (dirId <= 0L || dirId >= 200L || intOr(owned, "dirType", 0) != 0) return false;
+        JsonObject song = new JsonObject();
+        song.addProperty("songId", songId);
+        song.addProperty("songType", 0);
+        JsonArray songs = new JsonArray();
+        songs.add(song);
+        JsonObject result = writeResult(musicu("music.musicasset.PlaylistDetailWrite",
+                add ? "AddSonglist" : "DelSonglist",
+                linked("dirId", dirId, "v_songInfo", GSON.fromJson(songs, Object.class)),
+                false, null, "req", null));
+        return longOr(result, "dirId", 0L) == dirId && longOr(result, "tid", 0L) == tid;
+    }
+
+    /** 设置 QQ「我喜欢」；先校验曲目身份，写入后再读回确认。 */
+    public boolean setLike(long songId, String mid, boolean liked) {
+        if (songId <= 0L || mid == null || mid.isEmpty() || !getLoggedIn()) return false;
+        JsonObject detail = musicu("music.pf_song_detail_svr", "get_song_detail_yqq",
+                linked("song_type", 0, "song_mid", mid), false, null, "req", null);
+        JsonObject track = JsonExt.objOrNull(detail, "track_info");
+        if (track == null || longOr(track, "id", 0L) != songId
+                || !mid.equals(textOrEmpty(track, "mid"))) return false;
+
+        if (readLike(mid) == liked) return true;
+        JsonObject song = new JsonObject();
+        song.addProperty("songId", songId);
+        song.addProperty("songType", 0);
+        JsonArray songs = new JsonArray();
+        songs.add(song);
+        JsonObject result = writeResult(musicu("music.musicasset.PlaylistDetailWrite",
+                liked ? "AddSonglist" : "DelSonglist",
+                linked("dirId", 201, "v_songInfo", GSON.fromJson(songs, Object.class)),
+                false, null, "req", null));
+        if (!((longOr(result, "dirId", 0L) == 201L && longOr(result, "tid", 0L) > 0L)
+                || (longOr(result, "dirId", -1L) == 0L && longOr(result, "tid", -1L) == 0L))) {
+            return false;
+        }
+        return readLike(mid) == liked;
+    }
+
+    private boolean readLike(String mid) {
+        JsonObject data = musicu("music.musicasset.SongFavRead", "IsSongFanByMid",
+                linked("v_songMid", java.util.Collections.singletonList(mid)),
+                false, null, "req", null);
+        JsonObject fans = JsonExt.objOrNull(data, "m_fan");
+        JsonElement value = fans == null ? null : fans.get(mid);
+        return value != null && !value.isJsonNull() && value.getAsBoolean();
+    }
+
+    private JsonObject findOwnedPlaylist(long tid) {
+        JsonObject data = musicu("music.musicasset.PlaylistBaseRead", "GetPlaylistByUin",
+                linked("uin", musicid), false, null, "req", null);
+        JsonArray playlists = JsonExt.arrOrNull(data, "v_playlist");
+        if (playlists == null) return null;
+        JsonObject match = null;
+        for (JsonElement item : playlists) {
+            if (item == null || !item.isJsonObject()) continue;
+            JsonObject playlist = item.getAsJsonObject();
+            if (longOr(playlist, "tid", 0L) != tid) continue;
+            if (match != null) throw new MusicApiException("QQ：自建歌单目录 id 不唯一", null);
+            match = playlist;
+        }
+        if (match == null || intOr(match, "dirType", 0) != 0) return null;
+        return match;
+    }
+
+    private static JsonObject writeResult(JsonObject data) {
+        if (data == null || intOr(data, "retCode", -1) != 0) {
+            throw new MusicApiException("QQ：歌单写入被拒绝", null);
+        }
+        JsonObject result = JsonExt.objOrNull(data, "result");
+        if (result == null) throw new MusicApiException("QQ：歌单写入响应格式异常", null);
+        return result;
+    }
+
+    private static String requirePlaylistName(String name) {
+        String clean = name == null ? "" : name.trim();
+        if (clean.isEmpty() || clean.codePointCount(0, clean.length()) > 20
+                || clean.chars().anyMatch(c -> c < 32 || c == 127)) {
+            throw new IllegalArgumentException("QQ 歌单名需为 1-20 个字符且不能包含控制字符");
+        }
+        return clean;
+    }
+
+    private static String joinInts(List<Integer> values) {
+        StringBuilder result = new StringBuilder();
+        for (Integer value : values) {
+            if (result.length() > 0) result.append(',');
+            result.append(value);
+        }
+        return result.toString();
     }
 
     // ── QQ 扫码登录 ────────────────────────────────────────────────────────
@@ -926,6 +1262,39 @@ public final class MuQQApi {
                 ? "https://y.gtimg.cn/music/photo_new/T002R300x300M000" + albumPmid + ".jpg" : null;
         return new Track(MusicSource.QQ, id, mid, name, singers, albumName,
                 interval * 1000L, coverUrl, vip);
+    }
+
+    private static List<Track> parseTrackArray(JsonArray rows, boolean nestedTrack) {
+        List<Track> out = new ArrayList<>();
+        if (rows == null) return out;
+        for (JsonElement element : rows) {
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject row = element.getAsJsonObject();
+            JsonObject song = nestedTrack ? JsonExt.objOrNull(row, "Track") : row;
+            if (song == null) continue;
+            try {
+                Track track = parseTrack(song);
+                if (track != null && track.getMid() != null && !track.getMid().isEmpty()) out.add(track);
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return out;
+    }
+
+    private static List<Track> parseNestedTrackArray(JsonArray rows) {
+        List<Track> out = new ArrayList<>();
+        if (rows == null) return out;
+        for (JsonElement element : rows) {
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject song = JsonExt.objOrNull(element.getAsJsonObject(), "track");
+            if (song == null) continue;
+            try {
+                Track track = parseTrack(song);
+                if (track != null && track.getMid() != null && !track.getMid().isEmpty()) out.add(track);
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return out;
     }
 
     // ── 小工具 ─────────────────────────────────────────────────────────────
