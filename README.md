@@ -497,6 +497,8 @@ MuoniumPlayer 由**四位开发者**共同维护：心事抱抱、云杉、N0ne�
 
 贡献者：[LPFVG](https://github.com/LPFVG) —— 桌面歌词对齐与排版（PR #33）。
 
+GitHub 贡献者：[查看完整贡献者列表](https://github.com/zihe114514/MuoniumPlayer-multiversion/graphs/contributors)
+
 **赞助完全自愿 —— 不赞助，功能一个都不少。** 所有核心功能、全部音源和免费下载渠道始终对所有人开放。
 
 关于渠道，有三点要说明：
