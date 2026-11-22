@@ -88,7 +88,7 @@ public class HomePanel extends NCMPanel {
 
     /** A short-lived visual snapshot is safe only after construction and scroll motion settle. */
     public boolean isTransitionSnapshotReady() {
-        return this.pendingCards == null && this.pendingUi.pending == null
+        return this.pendingCards == null && this.pendingHomeTracks == null && this.pendingUi.pending == null
                 && !this.reshape.isRunning() && this.scrollPanel != null
                 && !this.scrollPanel.isScrollActive();
     }
@@ -162,7 +162,9 @@ public class HomePanel extends NCMPanel {
         } else if (platform == MusicPlatform.KUGOU) {
             loadKuGouHome();
         } else if (platform == MusicPlatform.YOUTUBE) {
-            requestLayout(Collections.emptyList(), "YouTube Music · 使用搜索开始播放");
+            loadYouTubeHome();
+        } else if (platform == MusicPlatform.SPOTIFY) {
+            loadSpotifyHome();
         } else if (platform == MusicPlatform.BILIBILI) {
             loadBilibiliHome();
         } else if (platform == MusicPlatform.QISHUI) {
@@ -188,6 +190,9 @@ public class HomePanel extends NCMPanel {
         this.pendingUi.close();
         this.pendingCards = null;
         this.pendingCardIndex = 0;
+        this.pendingHomeTracks = null;
+        this.pendingHomeTrackPlaylist = null;
+        this.pendingHomeTrackIndex = 0;
         this.pendingCardActions = Collections.emptyMap();
         this.pumpedBeforeRender = false;
     }
@@ -393,6 +398,9 @@ public class HomePanel extends NCMPanel {
         // 否则它们会在下一次 layout 时被追加到新网格上（连的是上一份数据）。
         this.cardsPanel = null;
         this.pendingCards = null;
+        this.pendingHomeTracks = null;
+        this.pendingHomeTrackPlaylist = null;
+        this.pendingHomeTrackIndex = 0;
         this.pendingCardActions = Collections.emptyMap();
         this.recommendationsLabel = null;
         this.displayedCardIds.clear();
@@ -851,6 +859,164 @@ public class HomePanel extends NCMPanel {
     private static String kugouRecommendationTitle(int count) {
         return count > 0 ? "酷狗音乐 · 推荐歌单 · " + count : "酷狗音乐 · 推荐歌单";
     }
+
+    // ── YouTube Music 主页 ─────────────────────────────────────────────────
+
+    private static List<PlayList> youtubeRecommendationShelves;
+    private static boolean youtubeHomeLoading;
+
+    /**
+     * YouTube Music 未登录时仍保持匿名搜索/播放；登录后用喜欢的歌曲作种子生成个人电台歌曲流。
+     * 主页展示推荐曲目，不把账号资料库歌单混入推荐区。
+     */
+    private void loadYouTubeHome() {
+        final UiTicket ticket = this.requestTicket;
+        if (!com.muoniumplayer.core.ncm.music.YouTubeSessionStore.isLoggedIn()) {
+            requestLayout(Collections.emptyList(), "YouTube Music · 使用搜索，登录后查看你的音乐");
+            return;
+        }
+        List<PlayList> cached = youtubeRecommendationShelves;
+        if (cached != null && !cached.isEmpty()) {
+            requestLayout(cached, "YouTube Music · 为你推荐");
+            return;
+        }
+        requestPlaceholder("正在生成 YouTube Music 个人电台…", true);
+        synchronized (HomePanel.class) {
+            if (youtubeHomeLoading) {
+                MultiThreadingUtil.runAsync(() -> awaitYouTubeHomeCache(ticket));
+                return;
+            }
+            youtubeHomeLoading = true;
+        }
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                List<com.muoniumplayer.core.ncm.music.YouTubeMusicService.Track> tracks =
+                        com.muoniumplayer.core.ncm.music.YouTubeMusicService.accountRecommendations(60);
+                List<Music> songs = new ArrayList<>();
+                for (com.muoniumplayer.core.ncm.music.YouTubeMusicService.Track track : tracks) {
+                    Music song = Music.fromYouTubeMusicTrack(track);
+                    if (song != null) songs.add(song);
+                }
+                List<PlayList> result = songs.isEmpty() ? Collections.emptyList()
+                        : Collections.singletonList(trackShelf(MusicPlatform.YOUTUBE,
+                        "youtube-home-personal-fm", "为你推荐 · 个人电台", songs));
+                youtubeRecommendationShelves = Collections.unmodifiableList(new ArrayList<>(result));
+                final List<PlayList> displayed = new ArrayList<>(result);
+                publishCallback(ticket, () -> {
+                    if (displayed.isEmpty()) {
+                        requestLayout(Collections.emptyList(), "YouTube Music · 使用搜索开始播放");
+                    } else {
+                        requestLayout(displayed, "YouTube Music · 为你推荐");
+                    }
+                });
+            } finally {
+                youtubeHomeLoading = false;
+            }
+        });
+    }
+
+    private void awaitYouTubeHomeCache(UiTicket ticket) {
+        final long deadline = System.nanoTime() + 20_000_000_000L;
+        while (youtubeHomeLoading && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(120L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        final List<PlayList> cached = youtubeRecommendationShelves;
+        publishCallback(ticket, () -> requestLayout(cached == null ? Collections.emptyList() : cached,
+                cached == null || cached.isEmpty() ? "YouTube Music · 使用搜索开始播放"
+                        : "YouTube Music · 为你推荐"));
+    }
+
+    // ── Spotify 主页 ────────────────────────────────────────────────────────
+
+    private static List<PlayList> spotifyRecommendationShelves;
+    private static boolean spotifyHomeLoading;
+
+    /** Spotify Web API 可稳定提供的个性化歌曲流；资料库歌单留在账号侧栏。 */
+    private void loadSpotifyHome() {
+        final UiTicket ticket = this.requestTicket;
+        if (!com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.isLoggedIn()) {
+            requestLayout(Collections.emptyList(), "Spotify · 登录后查看喜欢、热门与最近播放");
+            return;
+        }
+        List<PlayList> cached = spotifyRecommendationShelves;
+        if (cached != null && !cached.isEmpty()) {
+            requestLayout(cached, "Spotify · 为你精选歌曲");
+            return;
+        }
+        requestPlaceholder("正在整理 Spotify 个性化歌曲…", true);
+        synchronized (HomePanel.class) {
+            if (spotifyHomeLoading) {
+                MultiThreadingUtil.runAsync(() -> awaitSpotifyHomeCache(ticket));
+                return;
+            }
+            spotifyHomeLoading = true;
+        }
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                List<PlayList> result = com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.accountHomeShelves();
+                spotifyRecommendationShelves = Collections.unmodifiableList(result);
+                final List<PlayList> displayed = new ArrayList<>(result);
+                publishCallback(ticket, () -> {
+                    if (displayed.isEmpty()) {
+                        requestLayout(Collections.emptyList(), "Spotify · 使用搜索开始播放");
+                    } else {
+                        requestLayout(displayed, "Spotify · 为你精选歌曲");
+                    }
+                });
+            } catch (Throwable failure) {
+                System.err.println("[Music/Spotify] Home recommendations failed: " + failure.getMessage());
+                spotifyRecommendationShelves = Collections.emptyList();
+                publishCallback(ticket, () -> requestLayout(Collections.emptyList(),
+                        "Spotify 推荐暂不可用 · 使用搜索开始播放"));
+            } finally {
+                spotifyHomeLoading = false;
+            }
+        });
+    }
+
+    private void awaitSpotifyHomeCache(UiTicket ticket) {
+        final long deadline = System.nanoTime() + 20_000_000_000L;
+        while (spotifyHomeLoading && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(120L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        final List<PlayList> cached = spotifyRecommendationShelves;
+        publishCallback(ticket, () -> requestLayout(cached == null ? Collections.emptyList() : cached,
+                cached == null || cached.isEmpty() ? "Spotify · 使用搜索开始播放"
+                        : "Spotify · 为你精选歌曲"));
+    }
+
+    private static PlayList trackShelf(MusicPlatform platform, String key, String title, List<Music> songs) {
+        if (songs == null || songs.isEmpty()) return null;
+        PlayList shelf = new PlayList(stableHomeShelfId(key), title, songs.get(0).getCoverUrl(256),
+                songs.size(), 0L, null, platform.getDisplayName(), 0L);
+        shelf.setPlatform(platform);
+        shelf.setPlatformPlaylistId(key);
+        shelf.setSearchMode(true);
+        shelf.setMusics(new CopyOnWriteArrayList<>(songs));
+        shelf.setMusicsQueried(true);
+        shelf.setMusicsLoaded(true);
+        return shelf;
+    }
+
+    private static long stableHomeShelfId(String key) {
+        long hash = 0xcbf29ce484222325L;
+        for (byte value : key.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+            hash ^= value & 0xff;
+            hash *= 0x100000001b3L;
+        }
+        return hash;
+    }
+
     /**
      * B 站首页。
      *
@@ -859,18 +1025,18 @@ public class HomePanel extends NCMPanel {
      */
     // ── Apple 主页 ──────────────────────────────────────────────────────────
 
-    private static List<PlayList> appleHomePlaylists;
+    private static List<PlayList> appleRecommendationShelves;
     private static boolean appleHomeLoading;
 
     /**
-     * Apple 主页:登录时展示个性化推荐歌单(/v1/me/recommendations),未登录或推荐
-     * 拿不到时用 8 地区榜单卡兜底 —— 主页不空白。
+     * Apple 主页展示个性化推荐歌单展开后的歌曲；未登录或推荐没有歌曲时用地区热门歌曲兜底。
+     * 账号资料库歌单只留在侧栏。
      */
     private void loadAppleHome() {
         final UiTicket ticket = this.requestTicket;
-        List<PlayList> cached = appleHomePlaylists;
+        List<PlayList> cached = appleRecommendationShelves;
         if (cached != null && !cached.isEmpty()) {
-            requestLayout(cached, "推荐歌单 · " + cached.size());
+            requestLayout(cached, "Apple Music · 为你推荐歌曲");
             return;
         }
         requestPlaceholder("正在获取 Apple Music 推荐…", true);
@@ -883,17 +1049,18 @@ public class HomePanel extends NCMPanel {
         }
         MultiThreadingUtil.runAsync(() -> {
             try {
-                List<PlayList> recs = com.muoniumplayer.core.ncm.apple.AppleMusicService
-                        .recommendationPlaylists();
-                List<PlayList> result = recs;
-                String title = "推荐歌单";
+                List<PlayList> result = new ArrayList<>(com.muoniumplayer.core.ncm.apple.AppleMusicService
+                        .recommendationSongShelves());
+                String title = "Apple Music · 为你推荐歌曲";
                 if (result.isEmpty()) {
-                    List<PlayList> charts =
-                            com.muoniumplayer.core.ncm.apple.chart.AppleChartsPanels.chartCards();
-                    result = charts == null ? Collections.emptyList() : charts;
-                    title = "Apple Music 排行榜";
+                    List<Music> chartTracks = com.muoniumplayer.core.ncm.apple.chart.AppleChartsService
+                            .chartTracks(com.muoniumplayer.core.ncm.apple.AppleConfigStore.storefront());
+                    PlayList shelf = chartTracks == null || chartTracks.isEmpty() ? null
+                            : trackShelf(MusicPlatform.APPLE, "apple-home-chart", "热门歌曲 · Top 100", chartTracks);
+                    result = shelf == null ? Collections.emptyList() : new ArrayList<>(Collections.singletonList(shelf));
+                    title = "Apple Music · 热门歌曲";
                 }
-                appleHomePlaylists = Collections.unmodifiableList(new ArrayList<>(result));
+                appleRecommendationShelves = Collections.unmodifiableList(new ArrayList<>(result));
                 final List<PlayList> displayed = new ArrayList<>(result);
                 final String titleLine = title + " · " + displayed.size();
                 publishCallback(ticket, () -> {
@@ -913,14 +1080,14 @@ public class HomePanel extends NCMPanel {
     /** 等另一次 Apple 主页加载填好缓存（最多 20 秒），超时按失败处理。 */
     private void awaitAppleHomeCache(UiTicket ticket) {
         for (int i = 0; i < 100; i++) {
-            List<PlayList> cached = appleHomePlaylists;
+            List<PlayList> cached = appleRecommendationShelves;
             if (cached != null && !cached.isEmpty()) {
                 if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.APPLE) {
                     publishCallback(ticket, () -> {
                         if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.APPLE) {
-                            List<PlayList> shown = appleHomePlaylists;
+                            List<PlayList> shown = appleRecommendationShelves;
                             if (shown != null && !shown.isEmpty()) {
-                                requestLayout(shown, "推荐歌单 · " + shown.size());
+                                requestLayout(shown, "Apple Music · 为你推荐歌曲");
                             }
                         }
                     });
@@ -1182,6 +1349,8 @@ public class HomePanel extends NCMPanel {
     private void layout(List<PlayList> displayedPlayLists, String recommendationsText) {
         this.getChildren().clear();
         final String welcomeText = welcomeTextFor(platform);
+        final PlayList trackFeed = singleTrackFeed(displayedPlayLists);
+        final boolean directTrackFeed = trackFeed != null;
 
         // 页头几何改成固定 token：欢迎语 (12,12)、副标题 (12,39)、内容从 60 起。
         // 以前副标题的 y 是由字体量出来的，字体图集没就绪时的负高度会让它上下跳；
@@ -1189,11 +1358,16 @@ public class HomePanel extends NCMPanel {
         scrollPanel = new ScrollPanel();
         this.addChild(scrollPanel);
 
-        scrollPanel
-                .setSpacing(GRID_GAP)
-                .setScrollStrength(44)
-                .setAlignment(ScrollPanel.Alignment.VERTICAL_WITH_HORIZONTAL_FILL)
-                .setIndexedVerticalLayout();
+        scrollPanel.setScrollStrength(44);
+        if (directTrackFeed) {
+            scrollPanel.setSpacing(0)
+                    .setUniformVerticalItemHeight(30.0)
+                    .setAlignment(ScrollPanel.Alignment.VERTICAL);
+        } else {
+            scrollPanel.setSpacing(GRID_GAP)
+                    .setAlignment(ScrollPanel.Alignment.VERTICAL_WITH_HORIZONTAL_FILL)
+                    .setIndexedVerticalLayout();
+        }
         // 网格视口的 bounds 不在这里挂 beforeRender：几何由 HomePanel#onRender 每帧 O(1) 刷新，
         // 那里跑在子控件之前，本帧新补的卡片在构造时就能拿到当帧列宽。
         // 账号身份已经挪到侧栏的账号行（那里本来就有头像和昵称），主页下方不再需要给它留位置。
@@ -1230,9 +1404,14 @@ public class HomePanel extends NCMPanel {
         // 一批一次 addAll 只发布一个快照。这些 card 仍直接挂在网格 ScrollPanel 下，
         // 所以接力的视口认领关系不变。
         this.cardsPanel = scrollPanel;
-        this.pendingCards = new ArrayList<>(displayedPlayLists);
+        this.pendingCards = directTrackFeed ? null : new ArrayList<>(displayedPlayLists);
         this.pendingCardIndex = 0;
         this.pendingCardActions = fixedPlaylistActions;
+        this.pendingHomeTracks = directTrackFeed
+                ? new ArrayList<>(trackFeed.musics == null ? Collections.emptyList() : trackFeed.musics)
+                : null;
+        this.pendingHomeTrackPlaylist = directTrackFeed ? trackFeed : null;
+        this.pendingHomeTrackIndex = 0;
         // 记下这一代网格上面有哪些卡片，并给这一代布局一个新号码：之后到的追加批
         // 只在这一代还活着时落笔（用户中途换来源/重排，号码就对不上了）。
         this.displayedCardIds.clear();
@@ -1297,6 +1476,9 @@ public class HomePanel extends NCMPanel {
     /** 攒着还没建完的卡片源（{@link #buildPendingCards} 每帧消耗一批）。 */
     private List<PlayList> pendingCards;
     private int pendingCardIndex;
+    private List<Music> pendingHomeTracks;
+    private PlayList pendingHomeTrackPlaylist;
+    private int pendingHomeTrackIndex;
     private Map<Long, Runnable> pendingCardActions = Collections.emptyMap();
     /** 这一批卡片最终挂到哪个网格上。网格本身在 {@link #layout} 里换新，所以每帧读它。 */
     private ScrollPanel cardsPanel;
@@ -1319,7 +1501,12 @@ public class HomePanel extends NCMPanel {
      * 才向 {@link #revealQueue} 领的，分批只是让它们晚一两帧领号。</p>
      */
     private void buildPendingCards() {
-        if (this.cardsPanel == null || this.pendingCards == null) return;
+        if (this.cardsPanel == null) return;
+        if (this.pendingHomeTracks != null) {
+            buildPendingRecommendationRows();
+            return;
+        }
+        if (this.pendingCards == null) return;
 
         int total = this.pendingCards.size();
         int batchSize = com.muoniumplayer.core.screens.ncm.PlayerIslandTransition.needsFrameBudget()
@@ -1349,6 +1536,47 @@ public class HomePanel extends NCMPanel {
             this.pendingCards = null;
             this.pendingCardActions = Collections.emptyMap();
         }
+    }
+
+    private void buildPendingRecommendationRows() {
+        int total = this.pendingHomeTracks.size();
+        int batchSize = com.muoniumplayer.core.screens.ncm.PlayerIslandTransition.needsFrameBudget()
+                || !NCMScreen.getInstance().isContentLayoutReady() ? 1 : MUSIC_ROW_BUILD_BATCH;
+        int end = Math.min(total, this.pendingHomeTrackIndex + batchSize);
+        if (this.pendingHomeTrackIndex < end) {
+            long startedAt = System.nanoTime();
+            List<AbstractWidget<?>> batch = new ArrayList<>(end - this.pendingHomeTrackIndex);
+            while (this.pendingHomeTrackIndex < end) {
+                int index = this.pendingHomeTrackIndex++;
+                MusicWidget row = new MusicWidget(this.pendingHomeTracks.get(index),
+                        this.pendingHomeTrackPlaylist, index);
+                row.setShouldOverrideMouseCursor(true);
+                row.setEntranceAnimation(this.revealQueue);
+                batch.add(row);
+                if (System.nanoTime() - startedAt >= MUSIC_ROW_BUILD_BUDGET_NANOS) break;
+            }
+            this.cardsPanel.addChild(batch);
+            this.cardsPanel.invalidateLayout();
+            if (!batch.isEmpty()) NCMScreen.getInstance().invalidateTransitionContent();
+        }
+        if (this.pendingHomeTrackIndex >= total) {
+            this.pendingHomeTracks = null;
+            this.pendingHomeTrackPlaylist = null;
+        }
+    }
+
+    private static final int MUSIC_ROW_BUILD_BATCH = 16;
+    private static final long MUSIC_ROW_BUILD_BUDGET_NANOS = 750_000L;
+
+    private static PlayList singleTrackFeed(List<PlayList> playlists) {
+        if (playlists == null || playlists.size() != 1) return null;
+        PlayList candidate = playlists.get(0);
+        if (candidate == null || candidate.musics == null || candidate.musics.isEmpty()) return null;
+        String id = candidate.getPlatformPlaylistId();
+        return "youtube-home-personal-fm".equals(id)
+                || "spotify-for-you".equals(id)
+                || "apple-home-personalized".equals(id)
+                || "apple-home-chart".equals(id) ? candidate : null;
     }
 
     /** 数量与耗时双上限：冷字体/低配设备构建一张慢卡片后不继续挤占这一帧。 */

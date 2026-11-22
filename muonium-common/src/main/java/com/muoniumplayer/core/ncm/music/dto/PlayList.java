@@ -360,6 +360,10 @@ public class PlayList {
      * 加入歌单并返回真实的服务端校验结果，供需要展示反馈的界面使用。
      */
     public CloudMusicApi.PlaylistTrackOperationResult addToListWithResult(long musicId) {
+        if (getPlatform() == MusicPlatform.SPOTIFY) {
+            return new CloudMusicApi.PlaylistTrackOperationResult(false, false, false, 400, -1,
+                    "Spotify 曲目必须使用平台曲目 ID");
+        }
         if (getPlatform() == MusicPlatform.BODIAN) {
             boolean success = com.muoniumplayer.core.ncm.music.BodianMusicService.addTrackToPlaylist(
                     getPlatformPlaylistId(), String.valueOf(musicId));
@@ -370,6 +374,25 @@ public class PlayList {
     }
 
     public CloudMusicApi.PlaylistTrackOperationResult addToListWithResult(String sourceTrackId) {
+        if (getPlatform() == MusicPlatform.SPOTIFY) {
+            try {
+                com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.addTrackToPlaylist(
+                        getPlatformPlaylistId(), sourceTrackId);
+                return new CloudMusicApi.PlaylistTrackOperationResult(true, false, true, 200, 200,
+                        "Spotify 已确认添加");
+            } catch (com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.SpotifyWritePermissionException missingScope) {
+                return new CloudMusicApi.PlaylistTrackOperationResult(false, false, false, 403, -1,
+                        "Spotify 授权缺少写入权限，请重新登录并同意新增权限");
+            } catch (IllegalArgumentException invalid) {
+                return new CloudMusicApi.PlaylistTrackOperationResult(false, false, false, 400, -1,
+                        "Spotify 歌单或曲目 ID 无效");
+            } catch (java.io.IOException | com.muoniumplayer.core.ncm.spotify.SpotifyWebApiClient.SpotifyApiException failure) {
+                int status = failure instanceof com.muoniumplayer.core.ncm.spotify.SpotifyWebApiClient.SpotifyApiException
+                        ? ((com.muoniumplayer.core.ncm.spotify.SpotifyWebApiClient.SpotifyApiException) failure).statusCode : 0;
+                return new CloudMusicApi.PlaylistTrackOperationResult(false, false, false, status, -1,
+                        "Spotify 未确认歌单变更：" + failure.getMessage());
+            }
+        }
         if (getPlatform() != MusicPlatform.BODIAN) {
             try {
                 return addToListWithResult(Long.parseLong(sourceTrackId));

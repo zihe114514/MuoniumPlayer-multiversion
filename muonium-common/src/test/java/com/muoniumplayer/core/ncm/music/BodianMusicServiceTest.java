@@ -102,6 +102,26 @@ class BodianMusicServiceTest {
     }
 
     @Test
+    void excludesCollectedAlbumsFromPlaylistLibrary() {
+        JsonArray rows = new JsonArray();
+        JsonObject playlist = new JsonObject();
+        playlist.addProperty("id", "4123");
+        playlist.addProperty("name", "收藏歌单");
+        playlist.addProperty("sourceType", 4);
+        rows.add(playlist);
+        JsonObject album = new JsonObject();
+        album.addProperty("id", "6123");
+        album.addProperty("name", "收藏专辑");
+        album.addProperty("sourceType", 6);
+        rows.add(album);
+
+        java.util.List<PlayList> result = BodianMusicService.collectedPlaylistsFrom(rows);
+
+        assertEquals(1, result.size());
+        assertEquals("pl-4-4123", result.get(0).getPlatformPlaylistId());
+    }
+
+    @Test
     void parsesCreateReceiptThatContainsOnlyAnId() {
         JsonObject receipt = new JsonObject();
         receipt.addProperty("id", "987654");

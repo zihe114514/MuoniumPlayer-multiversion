@@ -22,7 +22,7 @@ import java.util.Map;
  *   <li><b>401 → 强制刷新 → 重放一次</b>。access token 一小时一换，游戏开一下午必然撞上
  *       一次边界；撞上时用户不该看到「播放失败」。</li>
  *   <li><b>429 尊重 Retry-After</b>，但只重试一次、等待封顶（长冷却不值得让 UI 卡着）。</li>
- *   <li><b>5xx 有界重试一次</b>。瞬时抖动吞掉，连续失败如实抛出。</li>
+ *   <li><b>只读请求的 5xx 有界重试一次</b>。状态写入不重放 5xx，避免服务端已接受但响应丢失时重复修改。</li>
  *   <li><b>刷新单飞</b>：多个线程同时发现 token 过期时，只允许一个刷新请求出门，
  *       其余等它落地后复查 —— 没有这层，一次过期会打出 N 个刷新请求，其中 N-1 个
  *       会因为 token 轮换互相作废。</li>
@@ -142,6 +142,23 @@ public final class SpotifyWebApiClient {
         return putJson(path, query, null);
     }
 
+    /** No 5xx replay for state-changing requests; the server may have applied a write before failing. */
+    public static JsonObject putMutation(String path, Map<String, String> query) throws IOException {
+        return requestWithAuth("PUT", SpotifyConfigStore.API_BASE + path, query, null, null, 0, false);
+    }
+
+    /** No-body DELETE for a state-changing endpoint; server failures are never replayed. */
+    public static JsonObject deleteMutation(String path, Map<String, String> query) throws IOException {
+        return requestWithAuth("DELETE", SpotifyConfigStore.API_BASE + path, query, null, null, 0, false);
+    }
+
+    /** 带 Bearer 的 JSON POST（例如将曲目 URI 添加到歌单）。 */
+    public static JsonObject postJson(String path, Map<String, String> query,
+                                      JsonObject jsonBody) throws IOException {
+        return requestWithAuth("POST", SpotifyConfigStore.API_BASE + path, query, null,
+                jsonBody == null ? null : jsonBody.toString(), 0, false);
+    }
+
     /** 无体的带 Bearer POST（{@code /me/player/next}、{@code /previous}）。 */
     public static JsonObject post(String path, Map<String, String> query) throws IOException {
         return requestWithAuth("POST", SpotifyConfigStore.API_BASE + path, query, null, null, 0);
@@ -164,6 +181,13 @@ public final class SpotifyWebApiClient {
     private static JsonObject requestWithAuth(String method, String url,
                                               Map<String, String> query, String formBody,
                                               String jsonBody, int attempt) throws IOException {
+        return requestWithAuth(method, url, query, formBody, jsonBody, attempt, true);
+    }
+
+    private static JsonObject requestWithAuth(String method, String url,
+                                              Map<String, String> query, String formBody,
+                                              String jsonBody, int attempt,
+                                              boolean retryServerErrors) throws IOException {
         SpotifyAuthStore.Session session = SpotifyAuthStore.snapshot();
         if (session.isReauthRequired() && !session.tokenReady()) {
             throw new SpotifyApiException(0, "REAUTH_REQUIRED", true);
@@ -181,7 +205,7 @@ public final class SpotifyWebApiClient {
             // 重放仍 401 就不是「该刷新了」而是凭据已死，转重新授权。
             if (attempt == 0) {
                 invalidateAccessToken();
-                return requestWithAuth(method, url, query, formBody, jsonBody, attempt + 1);
+                return requestWithAuth(method, url, query, formBody, jsonBody, attempt + 1, retryServerErrors);
             }
             SpotifyAuthStore.markReauthRequired();
             throw new SpotifyApiException(401, "REAUTH_REQUIRED", true);
@@ -190,10 +214,10 @@ public final class SpotifyWebApiClient {
             long waitMillis = retryAfterMillis(response);
             if (waitMillis >= 0 && waitMillis <= MAX_RETRY_AFTER_MILLIS) {
                 sleepQuietly(waitMillis + 250L);
-                return requestWithAuth(method, url, query, formBody, jsonBody, attempt + 1);
+                return requestWithAuth(method, url, query, formBody, jsonBody, attempt + 1, retryServerErrors);
             }
         }
-        if (response.code >= 500 && attempt == 0) {
+        if (response.code >= 500 && attempt == 0 && retryServerErrors) {
             sleepQuietly(400L);
             return requestWithAuth(method, url, query, formBody, jsonBody, attempt + 1);
         }

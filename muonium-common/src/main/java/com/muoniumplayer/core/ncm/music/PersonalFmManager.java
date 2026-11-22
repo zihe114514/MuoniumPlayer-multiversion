@@ -347,7 +347,15 @@ public final class PersonalFmManager {
             requestQishuiBatch(startPlaybackAfterLoad);
             return;
         }
-        if (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L) {
+        MusicPlatform platform = NeteaseMusicService.getCurrentPlatform();
+        if (platform == MusicPlatform.QQ && !NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)) {
+            status = "QQ 私人 FM 需要先登录 QQ 音乐";
+            LOADING.set(false);
+            notifyUi();
+            return;
+        }
+        if (platform != MusicPlatform.QQ
+                && (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L)) {
             status = "私人 FM 需要登录网易云账号";
             LOADING.set(false);
             notifyUi();

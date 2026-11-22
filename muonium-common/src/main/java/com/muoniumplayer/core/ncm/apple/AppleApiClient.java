@@ -109,6 +109,15 @@ public final class AppleApiClient {
         return get("GET", AMP_API_BASE + pathWithQuery, true, 0);
     }
 
+    /** Account mutation used by favorites/playlist operations; writes are never replayed on 5xx. */
+    public static JsonObject postAccount(String pathWithQuery) throws IOException {
+        return mutate("POST", AMP_API_BASE + pathWithQuery, true, null);
+    }
+
+    public static JsonObject deleteAccount(String pathWithQuery) throws IOException {
+        return mutate("DELETE", AMP_API_BASE + pathWithQuery, true, null);
+    }
+
     /**
      * /v1/me/account 探测：cookies 里的账号态与订阅是否仍然有效。
      *
@@ -260,6 +269,29 @@ public final class AppleApiClient {
             return get(method, url, account, attempt + 1);
         }
 
+        JsonObject payload = parseBody(response);
+        if (response.code < 200 || response.code >= 300) {
+            throw new AppleApiException(response.code, errorReason(payload, response.code), false);
+        }
+        return payload;
+    }
+
+    private static JsonObject mutate(String method, String url, boolean account, String body)
+            throws IOException {
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Authorization", "Bearer " + AppleTokenManager.current());
+        headers.put("Origin", HOMEPAGE_ORIGIN);
+        headers.put("Referer", HOMEPAGE_ORIGIN + "/");
+        if (account) {
+            String mediaToken = AppleConfigStore.mediaUserToken();
+            if (mediaToken.isEmpty()) throw new AppleApiException(0, "NOT_LOGGED_IN", true);
+            headers.put("Media-User-Token", mediaToken);
+        }
+        Response response = transport().send(new Request(url, method, headers));
+        if (response.code == 401) {
+            if (account) markAccountInvalid();
+            throw new AppleApiException(401, "MEDIA_USER_TOKEN_REJECTED", account);
+        }
         JsonObject payload = parseBody(response);
         if (response.code < 200 || response.code >= 300) {
             throw new AppleApiException(response.code, errorReason(payload, response.code), false);

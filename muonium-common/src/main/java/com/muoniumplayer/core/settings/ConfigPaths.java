@@ -99,6 +99,7 @@ public final class ConfigPaths {
      * 发给每一个 CDN 请求反而是多余的暴露面。</p>
      */
     public static final File YOUTUBE_AUTH = new File(AUTH_ROOT, "youtube_auth.json");
+    public static final File YOUTUBE_BROWSER_PROFILE = new File(AUTH_ROOT, "youtube-browser-profile");
     /** Automix（无缝曲目交接）偏好设置。 */
     public static final File GD_SOURCE = new File(CONFIG_DIRECTORY, "gd_source.json");
 

@@ -10,6 +10,11 @@ import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
+import com.muoniumplayer.core.ncm.music.YouTubeMusicService;
+import com.muoniumplayer.core.ncm.music.YouTubeSessionStore;
+import com.muoniumplayer.core.ncm.apple.AppleMusicService;
+import com.muoniumplayer.core.ncm.spotify.SpotifyAuthStore;
+import com.muoniumplayer.core.ncm.spotify.SpotifyMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.svg.AnimatedIcons;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
@@ -203,6 +208,9 @@ public final class LikeButton {
         if (music.isBodian()) return BodianMusicService.setTrackLiked(music.getSourceId(), liked);
         if (music.isBilibili()) return BilibiliFavoriteService.setFavourite(music, liked);
         if (music.isKuGou()) return liked ? KuGouMusicService.likeTrack(music) : KuGouMusicService.unlikeTrack(music);
+        if (music.isSpotify()) return SpotifyMusicService.setTrackLiked(music.getSourceId(), liked);
+        if (music.isYouTube()) return YouTubeMusicService.setTrackLiked(music.getSourceId(), liked);
+        if (music.getSource() == MusicPlatform.APPLE) return AppleMusicService.setTrackLiked(music.getSourceId(), liked);
         return false;
     }
 
@@ -241,6 +249,12 @@ public final class LikeButton {
             noteKuGouLiked(music, liked);
         } else if (music.isBodian()) {
             BodianMusicService.noteTrackLikedLocal(music.getSourceId(), liked);
+        } else if (music.isSpotify()) {
+            SpotifyMusicService.noteTrackLikedLocal(music.getSourceId(), liked);
+        } else if (music.isYouTube()) {
+            YouTubeMusicService.noteTrackLikedLocal(music.getSourceId(), liked);
+        } else if (music.getSource() == MusicPlatform.APPLE) {
+            AppleMusicService.noteTrackLikedLocal(music.getSourceId(), liked);
         }
     }
 
@@ -309,6 +323,9 @@ public final class LikeButton {
             BodianMusicService.ensureLikedTrackIdsLoaded();
             return BodianMusicService.isTrackLikedLocal(music.getSourceId());
         }
+        if (music.isSpotify()) return SpotifyMusicService.isTrackLiked(music.getSourceId());
+        if (music.isYouTube()) return YouTubeMusicService.isTrackLiked(music.getSourceId());
+        if (music.getSource() == MusicPlatform.APPLE) return AppleMusicService.isTrackLiked(music.getSourceId());
         return false;
     }
 
@@ -327,6 +344,12 @@ public final class LikeButton {
             return BodianMusicService.isLoggedIn();
         }
         if (music.isQQ()) return NeteaseMusicService.isLoggedIn(MusicPlatform.QQ);
+        if (music.isSpotify()) {
+            return SpotifyMusicService.isLoggedIn()
+                    && SpotifyAuthStore.snapshot().hasLibraryModifyScope();
+        }
+        if (music.isYouTube()) return YouTubeSessionStore.isLoggedIn();
+        if (music.getSource() == MusicPlatform.APPLE) return AppleMusicService.isLoggedIn();
         return music.isNetease() || music.isKuGou()
                 || (music.isBilibili() && BilibiliMusicService.isLoggedIn());
     }

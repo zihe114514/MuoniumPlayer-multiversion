@@ -153,12 +153,14 @@ class ExpressivePromptsStaticTest {
         MethodTree init = source.method("onInit");
         List<MethodInvocationTree> ensures = calls(init).stream()
                 .filter(call -> callName(call).equals("ensureUserPlaylistsAsync")).toList();
-        assertEquals(2, ensures.size(), "酷狗与波点云歌单必须各自懒加载，不能互相覆盖");
+        assertEquals(3, ensures.size(), "酷狗、波点与 Spotify 云歌单必须各自懒加载，不能互相覆盖");
         assertTrue(ensures.stream().anyMatch(call -> call.getMethodSelect().toString()
                         .equals("KuGouMusicService.ensureUserPlaylistsAsync"))
                         && ensures.stream().anyMatch(call -> call.getMethodSelect().toString()
-                        .equals("BodianMusicService.ensureUserPlaylistsAsync")),
-                "Both cloud-playlist providers must be wired independently");
+                        .equals("BodianMusicService.ensureUserPlaylistsAsync"))
+                        && ensures.stream().anyMatch(call -> call.getMethodSelect().toString()
+                        .equals("SpotifyMusicService.ensureUserPlaylistsAsync")),
+                "Cloud-playlist providers must be wired independently");
         for (MethodInvocationTree ensure : ensures) {
             assertTrue(calls(ensure).stream().anyMatch(call -> callName(call).equals("runOnMainThread")),
                     "The service completion callback must marshal widget mutation to the client thread");

@@ -208,12 +208,14 @@ class PlaylistFeedbackStaticTest {
         assertTrue(hasCall(add.method("onInit"), "areUserPlaylistsLoading"));
         List<MethodInvocationTree> ensures = calls(add.method("onInit")).stream()
                 .filter(call -> name(call).equals("ensureUserPlaylistsAsync")).toList();
-        assertEquals(2, ensures.size(), "酷狗与波点账号歌单必须分别懒加载");
+        assertEquals(3, ensures.size(), "酷狗、波点与 Spotify 账号歌单必须分别懒加载");
         assertTrue(ensures.stream().anyMatch(call -> call.getMethodSelect().toString()
                         .equals("KuGouMusicService.ensureUserPlaylistsAsync"))
                         && ensures.stream().anyMatch(call -> call.getMethodSelect().toString()
-                        .equals("BodianMusicService.ensureUserPlaylistsAsync")),
-                "Both account playlist services must be wired");
+                        .equals("BodianMusicService.ensureUserPlaylistsAsync"))
+                        && ensures.stream().anyMatch(call -> call.getMethodSelect().toString()
+                        .equals("SpotifyMusicService.ensureUserPlaylistsAsync")),
+                "Account playlist services must be wired");
         for (MethodInvocationTree ensure : ensures) {
             assertTrue(hasCall(ensure, "runOnMainThread") && branches(ensure).stream().anyMatch(branch ->
                     compact(branch.getCondition()).contains("!closing") && compact(branch.getCondition()).contains("canPresentResult()")

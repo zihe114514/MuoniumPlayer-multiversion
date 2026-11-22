@@ -321,6 +321,7 @@ public final class YouTubeSessionStore {
 
     /** 退出登录：清内存与磁盘上的 Cookie。与「上游判定过期」不同，这是用户主动要删。 */
     public static void clear() {
+        YouTubeBrowserLogin.clearProfile();
         synchronized (LOCK) {
             data = new Data();
             loaded = true;

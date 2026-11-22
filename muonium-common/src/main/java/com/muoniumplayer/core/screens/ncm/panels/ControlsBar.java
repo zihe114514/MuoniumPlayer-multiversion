@@ -732,8 +732,6 @@ public class ControlsBar extends NCMPanel {
         final Quality[] selectableQualities = Quality.values();
         final double qualityButtonHeight = 20.0;
         final int qualityRows = (selectableQualities.length + QUALITY_COLUMNS - 1) / QUALITY_COLUMNS;
-        final int menuRows = qualityRows + 1;
-        final RoundedRectWidget loudnessOption = new RoundedRectWidget();
         // 每一列按自己最宽的那一行定宽，两列不必一样宽：「沉浸音质」和「母带」差着一倍。
         final double[] qualityColumnWidths = new double[QUALITY_COLUMNS];
         for (int index = 0; index < selectableQualities.length; index++) {
@@ -772,8 +770,6 @@ public class ControlsBar extends NCMPanel {
                             if (menuOption != null) menuOption.setHidden(!menuVisible);
                         }
                     }
-                    loudnessOption.setHidden(!menuVisible);
-
                     double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
                     double buttonHeight = qualityButtonHeight * scale;
                     double parentWidth = qualitySelector.getParentWidth();
@@ -1039,7 +1035,7 @@ public class ControlsBar extends NCMPanel {
                 .setBeforeRenderCallback(() -> {
                     double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
                     double menuWidth = qualityMenuWidth(scale, qualityColumnWidths);
-                    double menuHeight = menuRows * QUALITY_OPTION_HEIGHT * scale
+                    double menuHeight = qualityRows * QUALITY_OPTION_HEIGHT * scale
                             + QUALITY_MENU_PADDING * 2.0 * scale;
                     // 底边固定贴在按钮上方，只有上边沿随进度向上展开，看起来是从按钮里长出来的。
                     double progress = smoothProgress(qualityMenuAnimation);
@@ -1056,74 +1052,6 @@ public class ControlsBar extends NCMPanel {
                             // 底色压薄，让刚贴上去的糊背景透出来（不压就仍然是一块实心深色菜单）。
                             .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f))
                             .setAlpha((float) (ControlsBar.this.getAlpha() * .98f * progress));
-                });
-
-        this.addChild(loudnessOption);
-        loudnessOption.setHidden(true).setShouldOverrideMouseCursor(true);
-        LucideIconWidget loudnessCheck = new LucideIconWidget(() -> FoliaLucideIcons.CHECK,
-                () -> "", FontManager.pf12bold, 0, 0, QUALITY_CHECK_SIZE, QUALITY_CHECK_SIZE);
-        loudnessOption.addChild(loudnessCheck);
-        loudnessCheck.setClickable(false).setDrawScale(.9);
-        loudnessCheck.setBeforeRenderCallback(() -> {
-            double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
-            double size = QUALITY_CHECK_SIZE * scale;
-            loudnessCheck.setBounds(size, size)
-                    .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                    .setPosition(loudnessOption.getWidth() - size - QUALITY_ROW_INSET * scale,
-                            Math.max(0.0, (loudnessOption.getHeight() - size) * .5));
-        });
-
-        LabelWidget loudnessText = new LabelWidget("响度均衡 (-18 LUFS)", FontManager.pf12bold);
-        loudnessOption.addChild(loudnessText);
-        loudnessText.setClickable(false);
-        loudnessText.setBeforeRenderCallback(() -> {
-            double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
-            double textX = QUALITY_ROW_INSET * scale;
-            loudnessText.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                    .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
-                    .setMaxWidth(Math.max(0.0, loudnessOption.getWidth() - textX
-                            - (QUALITY_CHECK_GAP + QUALITY_CHECK_SIZE + QUALITY_ROW_INSET) * scale))
-                    .setPosition(textX, Math.max(1.0, (loudnessOption.getHeight() - loudnessText.getHeight()) * .5));
-        });
-
-        loudnessOption
-                .setTooltip(() -> NCMPlayerConfig.isTrackLoudnessNormalizationEnabled()
-                        ? "已开启：整首歌完成后台测量后平滑应用，按样本峰值限制增益。"
-                        : "按整首歌响度调整音量；首次测量在后台进行。")
-                .setBeforeRenderCallback(() -> {
-                    double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
-                    double optionHeight = QUALITY_OPTION_HEIGHT * scale;
-                    double bottom = qualitySelector.getRelativeY() - 4.0;
-                    double slotY = bottom - (QUALITY_MENU_PADDING + 1.0) * scale - optionHeight;
-                    double reveal = smoothProgress((slotY + optionHeight - qualityMenuBackground.getRelativeY())
-                            / Math.max(1.0, optionHeight));
-                    double slotX = qualityMenuBackground.getRelativeX() + QUALITY_MENU_PADDING * scale;
-                    double width = Math.max(0.0, qualityMenuBackground.getWidth()
-                            - QUALITY_MENU_PADDING * 2.0 * scale);
-                    boolean enabled = NCMPlayerConfig.isTrackLoudnessNormalizationEnabled();
-                    loudnessOption
-                            .setBounds(width, optionHeight - 2.0 * scale)
-                            .setPosition(slotX, slotY + (1.0 - reveal) * 3.0)
-                            .setRadius(4.0 * scale)
-                            .setGlassRim(GlassLook.Surface.PLAYER)
-                            .setFillAlpha(loudnessOption.isHovering() || enabled
-                                    ? 1.0f : GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f))
-                            .setColor(loudnessOption.isHovering()
-                                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                                    : (enabled ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
-                                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)))
-                            .setAlpha((float) (ControlsBar.this.getAlpha() * (enabled ? .72f : .98f) * reveal))
-                            .setClickable(qualityMenuOpen && reveal > .35);
-                    loudnessCheck.setHidden(!enabled);
-                })
-                .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-                    if (mouseButton != 0) return true;
-                    boolean enabled = !NCMPlayerConfig.isTrackLoudnessNormalizationEnabled();
-                    NCMPlayerConfig.setTrackLoudnessNormalizationEnabled(enabled);
-                    DownloadDynamicIsland.showPlaybackQuality(
-                            enabled ? "已开启响度均衡" : "已关闭响度均衡",
-                            enabled ? "目标 -18 LUFS · 首次测量在后台进行" : "已平滑恢复原始音量");
-                    return true;
                 });
 
         for (int index = 0; index < selectableQualities.length; index++) {
@@ -1182,7 +1110,7 @@ public class ControlsBar extends NCMPanel {
                         // 与背景共用同一条固定底边，所以展开过程里选项不会整体滑动，只是逐行露出来。
                         double bottom = qualitySelector.getRelativeY() - 4.0;
                         double slotY = bottom - QUALITY_MENU_PADDING * scale
-                                - (qualityRows - optionRow + 1) * optionHeight;
+                                - (qualityRows - optionRow) * optionHeight;
                         // 背景的上边沿扫过这一项时它才显形：任何时候都不会有选项浮在面板之外。
                         double reveal = smoothProgress((slotY + optionHeight - qualityMenuBackground.getRelativeY())
                                 / Math.max(1.0, optionHeight));

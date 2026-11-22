@@ -274,13 +274,13 @@ public final class BodianMusicService {
         JsonObject own = request("service/playlist/userCreate", mapOf("userId", session.uid), null,
                 "GET", session, true);
         appendPlaylists(merged, array(own, "playLists"), 5);
-        for (int page = 1; page <= 10; page++) {
+        for (int page = 1; page <= 100; page++) {
             JsonObject collected = request("service/collect/4/list", mapOf("userId", session.uid,
                     "fromUid", session.uid, "pn", String.valueOf(page), "rn", "100"), null,
                     "GET", session, true);
             JsonArray rows = array(collected, "playLists");
             if (rows == null || rows.isEmpty()) break;
-            for (PlayList playlist : playlistsFrom(rows, 4)) {
+            for (PlayList playlist : collectedPlaylistsFrom(rows)) {
                 playlist.setSubscribed(true);
                 merged.putIfAbsent(playlist.getPlatformPlaylistId(), playlist);
             }
@@ -553,7 +553,7 @@ public final class BodianMusicService {
             String playlistId = string(data, "id");
             Set<String> ids = new LinkedHashSet<>();
             if (!playlistId.isEmpty()) {
-                for (int page = 1; page <= 30; page++) {
+                for (int page = 1; page <= 100; page++) {
                     JsonObject pageData = request("service/playlist/" + encode(playlistId) + "/musicList",
                             mapOf("pn", String.valueOf(page), "rn", "100", "source", "5"), null,
                             "GET", session, true);
@@ -748,6 +748,22 @@ public final class BodianMusicService {
             if (item != null && item.isJsonObject()) {
                 PlayList playlist = parsePlaylist(item.getAsJsonObject(), source);
                 if (playlist != null) result.add(playlist);
+            }
+        }
+        return result;
+    }
+
+    static List<PlayList> collectedPlaylistsFrom(JsonArray rows) {
+        if (rows == null) return Collections.emptyList();
+        List<PlayList> result = new ArrayList<>();
+        for (JsonElement item : rows) {
+            if (item == null || !item.isJsonObject()) continue;
+            JsonObject wire = item.getAsJsonObject();
+            // The upstream collection endpoint mixes playlists with albums (sourceType=6).
+            if (integer(wire, "sourceType", 0) == 6) continue;
+            PlayList playlist = parsePlaylist(wire, 4);
+            if (playlist != null && !playlist.getPlatformPlaylistId().startsWith("pl-6-")) {
+                result.add(playlist);
             }
         }
         return result;

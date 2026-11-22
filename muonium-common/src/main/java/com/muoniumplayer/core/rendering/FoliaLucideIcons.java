@@ -128,13 +128,11 @@ public final class FoliaLucideIcons {
             +             "8c0 4.499-1.411 5.956-2.738 7.326",
     };
 
-    /** 「封面」「动态封面」（lucide {@code disc-3}）。 */
-    public static final String ALBUM = "disc-3";
+    /** 「封面」「动态封面」（lucide {@code disc}）。 */
+    public static final String ALBUM = "disc";
     static final String[] D_ALBUM = {
         "M2 12 a10 10 0 1 0 20 0 a10 10 0 1 0 -20 0",
-        "M6 12c0-1.7.7-3.2 1.8-4.2",
         "M10 12 a2 2 0 1 0 4 0 a2 2 0 1 0 -4 0",
-        "M18 12c0 1.7-.7 3.2-1.8 4.2",
     };
 
     /** 「播放器界面」分类（lucide {@code music-2}）。 */
@@ -279,6 +277,14 @@ public final class FoliaLucideIcons {
     static final String[] D_FOLDER = {
                     "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1"
             +             "-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2",
+    };
+
+    /** 网易云发现页「音乐云盘」入口（lucide {@code cloud-download}）。 */
+    public static final String CLOUD_DOWNLOAD = "cloud-download";
+    static final String[] D_CLOUD_DOWNLOAD = {
+        "M12 13v8l-4-4",
+        "m12 21 4-4",
+        "M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284",
     };
 
     /** 「删除所有模型」这类破坏性按钮（lucide {@code trash-2}）。 */
@@ -620,7 +626,7 @@ public final class FoliaLucideIcons {
         TABLE.put("captions", D_CAPTION);
         TABLE.put("subtitles", D_SUBTITLES);
         TABLE.put("bell", D_ISLAND);
-        TABLE.put("disc-3", D_ALBUM);
+        TABLE.put("disc", D_ALBUM);
         TABLE.put("music-2", D_NOTE);
         TABLE.put("eye", D_VISIBILITY);
         TABLE.put("timer", D_TIMER);
@@ -640,6 +646,7 @@ public final class FoliaLucideIcons {
         TABLE.put("refresh-cw", D_REFRESH);
         TABLE.put("search", D_SEARCH);
         TABLE.put("folder-open", D_FOLDER);
+        TABLE.put("cloud-download", D_CLOUD_DOWNLOAD);
         TABLE.put("trash-2", D_TRASH);
         TABLE.put("pipette", D_COLORIZE);
         TABLE.put("sun", D_SUN);

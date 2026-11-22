@@ -431,13 +431,24 @@ public final class NeteaseMusicService {
     public static boolean updateQQPlaylistTrack(String playlistId, Music music, boolean add) {
         initialize(OptionsUtil.getCookie());
         if (!SERVICE.getQq().getLoggedIn() || music == null || !music.isQQ()) return false;
-        return SERVICE.getQq().updatePlaylistTrack(parseQQPlaylistId(playlistId), music.getId(), add);
+        long songId = parseQQSongId(music);
+        return SERVICE.getQq().updatePlaylistTrack(parseQQPlaylistId(playlistId), songId, add);
     }
 
     public static boolean setQQLike(Music music, boolean liked) {
         initialize(OptionsUtil.getCookie());
         if (!SERVICE.getQq().getLoggedIn() || music == null || !music.isQQ()) return false;
-        return SERVICE.getQq().setLike(music.getId(), music.getSourceId(), liked);
+        long songId = parseQQSongId(music);
+        return SERVICE.getQq().setLike(songId, music.getSourceMid(), liked);
+    }
+
+    private static long parseQQSongId(Music music) {
+        try {
+            long id = Long.parseLong(music.getSourceId());
+            if (id > 0L) return id;
+        } catch (NumberFormatException ignored) {
+        }
+        throw new IllegalArgumentException("QQ 曲目缺少有效的原始歌曲 ID");
     }
 
     private static long parseQQPlaylistId(String playlistId) {
@@ -515,6 +526,20 @@ public final class NeteaseMusicService {
 
     public static List<PlayList> getQQUserPlaylistsSnapshot() {
         return new ArrayList<>(qqUserPlaylists);
+    }
+
+    /** 仅返回 QQ 明确标记为本人创建、且具有可管理数字 tid 的歌单。 */
+    public static List<PlayList> getQQWritableUserPlaylistsSnapshot() {
+        List<PlayList> writable = new ArrayList<>();
+        for (PlayList playlist : qqUserPlaylists) {
+            if (playlist == null || playlist.getPlatform() != MusicPlatform.QQ || playlist.isSubscribed()) continue;
+            try {
+                if (Long.parseLong(playlist.getPlatformPlaylistId()) > 0L) writable.add(playlist);
+            } catch (NumberFormatException ignored) {
+                // 云盘等虚拟入口不是可写歌单。
+            }
+        }
+        return writable;
     }
 
     public static boolean areQQUserPlaylistsLoaded() {

@@ -11,7 +11,7 @@
 一个 Minecraft 客户端 Mod：手机音乐 App 般的播放器、逐字歌词、灵动岛、一起听房间、无缝切歌 —— 全部画在游戏里，不弹浏览器、不切窗口。<br>
 纯客户端，普通服务器**不用装任何东西**。
 
-[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-2.6.0-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
+[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-2.6.1-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
 [![下载](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-melodifymc.cc.cd-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
 [![MC 百科](https://img.shields.io/badge/MC%E7%99%BE%E7%A7%91-class%2F30544-3d8528?style=flat-square&labelColor=2b2b33)](https://www.mcmod.cn/class/30544.html)
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1%20%7C%201.21.1%20%7C%201.21.10%20%7C%201.21.11%20%7C%2026.1.2%20%7C%2026.2%20%7C%2026.3-3d8528?style=flat-square&labelColor=2b2b33)](#支持的版本)
@@ -83,23 +83,24 @@
 
 ## 功能
 
-### 9 个聚合音源，一个播放器
+### 10 个聚合音源，一个播放器
 
 <table>
 <tr>
 <td align="center" width="20%"><a href="https://music.163.com/"><img src="assets/brands/netease.png" width="56" alt="网易云音乐"></a><br><sub><b>网易云音乐</b></sub></td>
-<td align="center" width="20%"><a href="https://y.qq.com/"><img src="assets/brands/qqmusic.png" width="56" alt="QQ 音乐"></a><br><sub><b>QQ 音乐</b></sub></td>
+<td align="center" width="20%"><a href="https://apps.apple.com/cn/app/qq%E9%9F%B3%E4%B9%90-%E5%90%AC%E6%88%91%E6%83%B3%E5%90%AC/id414603431"><img src="assets/brands/qqmusic.jpg" width="56" alt="QQ 音乐"></a><br><sub><b>QQ 音乐</b></sub></td>
+<td align="center" width="20%"><a href="https://apps.apple.com/cn/app/%E6%B3%A2%E7%82%B9%E9%9F%B3%E4%B9%90-qq%E9%9F%B3%E4%B9%90%E7%AE%80%E6%B4%81%E7%89%88/id1541981555"><img src="assets/brands/bodian.jpg" width="56" alt="波点音乐"></a><br><sub><b>波点音乐</b></sub></td>
 <td align="center" width="20%"><a href="https://www.kugou.com/"><img src="assets/brands/kugou.png" width="56" alt="酷狗音乐"></a><br><sub><b>酷狗音乐</b></sub></td>
 <td align="center" width="20%"><a href="https://music.youtube.com/"><img src="assets/brands/ytmusic.png" width="56" alt="YouTube Music"></a><br><sub><b>YouTube Music</b></sub></td>
-<td align="center" width="20%"><a href="https://www.bilibili.com/"><img src="assets/brands/bilibili.png" width="56" alt="哔哩哔哩"></a><br><sub><b>哔哩哔哩</b></sub></td>
 </tr>
 <tr>
+<td align="center" width="20%"><a href="https://www.bilibili.com/"><img src="assets/brands/bilibili.png" width="56" alt="哔哩哔哩"></a><br><sub><b>哔哩哔哩</b></sub></td>
 <td align="center" width="20%"><a href="https://qishui.douyin.com/"><img src="assets/brands/qishui.png" width="56" alt="汽水音乐"></a><br><sub><b>汽水音乐</b></sub></td>
 <td align="center" width="20%"><a href="https://open.spotify.com/"><img src="assets/brands/spotify.png" width="56" alt="Spotify"></a><br><sub><b>Spotify</b></sub></td>
 <td align="center" width="20%"><img src="assets/brands/apple.png" width="56" alt="Apple Music"><br><sub><b>Apple Music</b></sub></td>
 <td align="center" width="20%"><img src="assets/brands/gd.png" width="56" alt="GD 音乐台"><br><sub><b>GD 音乐台</b></sub></td>
-<td align="center" width="20%"><img src="assets/brands/lx.png" width="56" alt="LX 自定义脚本"><br><sub><b>LX 自定义脚本</b></sub></td>
 </tr>
+<tr><td align="center" width="20%"><img src="assets/brands/lx.png" width="56" alt="LX 自定义脚本"><br><sub><b>LX 自定义脚本</b></sub></td></tr>
 </table>
 
 各家能走到哪一步不一样，下表是**实际可用范围**：

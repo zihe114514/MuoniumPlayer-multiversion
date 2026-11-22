@@ -33,6 +33,7 @@ import com.muoniumplayer.core.rendering.FoliaLucideIcons;
 import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
+import com.muoniumplayer.core.rendering.AppStoreBrandIcons;
 import com.muoniumplayer.core.rendering.ScissorClipManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
@@ -108,7 +109,8 @@ public class NavigateBar extends NCMPanel {
      */
     private static boolean supportsPlaylistSearch(final MusicPlatform platform) {
         return platform == MusicPlatform.NETEASE || platform == MusicPlatform.KUGOU
-                || platform == MusicPlatform.QISHUI || platform == MusicPlatform.BILIBILI;
+                || platform == MusicPlatform.QISHUI || platform == MusicPlatform.BILIBILI
+                || platform == MusicPlatform.SPOTIFY || platform == MusicPlatform.APPLE;
     }
 
     /**
@@ -1041,6 +1043,15 @@ public class NavigateBar extends NCMPanel {
                 this.addSidebarRow("nav:hot", new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "热搜", () -> NCMScreen.getInstance().setCurrentPanel(
                         new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.HOT_SEARCH, MusicPlatform.QQ))));
+                this.addSidebarRow("nav:radio", new PlaylistItem("台", FontManager.pf12bold,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "电台", () -> NCMScreen.getInstance().navigateAsync(
+                        "QQ 电台", RadioHubPanel::new)));
+                this.addSidebarRow("nav:fm", new PlaylistItem(MusicBrandIcons.PERSONAL_FM,
+                        FontManager.musicBrand16,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                        () -> "私人 FM", () -> NCMScreen.getInstance()
+                        .setCurrentPanel(new PersonalFmPanel())));
             }
             if (qishuiMode) {
                 this.addSidebarRow("nav:qishui-radio", new PlaylistItem("台", FontManager.pf12bold,
@@ -1081,7 +1092,7 @@ public class NavigateBar extends NCMPanel {
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "已购专辑", () -> NCMScreen.getInstance().navigateAsync(
                         "已购专辑", NeteaseDiscoveryPanel::loadDigitalAlbumsPanel)));
-                this.addSidebarRow("nav:netease-cloud", PlaylistItem.withLucideIcon(FoliaLucideIcons.STORAGE,
+                this.addSidebarRow("nav:netease-cloud", PlaylistItem.withLucideIcon(FoliaLucideIcons.CLOUD_DOWNLOAD,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "音乐云盘", () -> NCMScreen.getInstance().navigateAsync(
                         "音乐云盘", NeteaseDiscoveryPanel::loadCloudSongsPanel)));
@@ -2018,7 +2029,9 @@ public class NavigateBar extends NCMPanel {
             // QQ 音乐使用其自有的服务商品牌字形。请勿复用 QQ 登录图标。
             // 有矢量标识的那三家（BrandVectorIcons.has）就用矢量，和圆盘、引导页是同一份数据；
             // 其余各家仍走各自的品牌字体字形。
-            this.platformIcon = BrandVectorIcons.has(this.platform)
+            ThemedTextureIconWidget appIcon = AppStoreBrandIcons.widget(this.platform,
+                    sourceGlyph(this.platform), sourceFont(this.platform), 0, 0, SOURCE_ICON_BOX);
+            this.platformIcon = appIcon != null ? appIcon : BrandVectorIcons.has(this.platform)
                     ? new BrandIconWidget(this.platform, SOURCE_ICON_BOX)
                     : new LabelWidget(sourceGlyph(this.platform), sourceFont(this.platform));
             this.platformIcon.setClickable(false);
@@ -2031,7 +2044,8 @@ public class NavigateBar extends NCMPanel {
             this.platformIcon.setBeforeRenderCallback(() -> {
                 boolean compact = NavigateBar.this.getWidth() < 112;
                 double groupWidth = this.platformIcon.getWidth() + (compact ? 0 : 4 + this.label.getWidth());
-                this.platformIcon.setColor(NeteaseMusicService.getCurrentPlatform() == this.platform
+                this.platformIcon.setColor(appIcon != null ? 0xFFFFFFFF
+                        : NeteaseMusicService.getCurrentPlatform() == this.platform
                         ? 0xFFFFFF : this.platform.getBrandColor());
                 this.platformIcon.setPosition(this.getWidth() * .5 - groupWidth * .5,
                         this.getHeight() * .5 - this.platformIcon.getHeight() * .5 + 1);
@@ -3119,11 +3133,11 @@ public class NavigateBar extends NCMPanel {
             AbstractWidget<?> iconWidget;
             if (lucideIcon != null) {
                 LucideIconWidget vectorIcon = new LucideIconWidget(() -> lucideIcon, () -> "",
-                        FontManager.music18, 0, 0, 12, 16);
+                        FontManager.music18, 0, 0, 16, 16).setDrawScale(.675);
                 this.addChild(vectorIcon);
                 vectorIcon.setBeforeRenderCallback(() -> {
                     vectorIcon.setColor(iconColorSupplier.get());
-                    vectorIcon.setPosition(8, vectorIcon.getRelativeY());
+                    vectorIcon.setPosition(4, vectorIcon.getRelativeY());
                 });
                 vectorIcon.setClickable(false);
                 iconWidget = vectorIcon;
@@ -3155,9 +3169,10 @@ public class NavigateBar extends NCMPanel {
 
             lbl.setBeforeRenderCallback(() -> {
                 lbl.centerVertically();
-                lbl.setPosition(iconWidget.getRelativeX() + iconWidget.getWidth() + 4, lbl.getRelativeY());
+                lbl.setPosition(lucideIcon == null ? iconWidget.getRelativeX() + iconWidget.getWidth() + 4 : 20,
+                        lbl.getRelativeY());
                 lbl.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-                lbl.setMaxWidth(this.getWidth() - 8 - iconWidget.getWidth() - 12);
+                lbl.setMaxWidth(this.getWidth() - (lucideIcon == null ? 8 + iconWidget.getWidth() + 12 : 32));
             });
 
             lbl.setClickable(false);

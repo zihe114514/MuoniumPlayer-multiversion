@@ -1116,6 +1116,8 @@ public final class MusicCapsuleCard implements SharedRenderingConstants {
     private void drawPlatform(MusicPlatform source, float alpha) {
         double x = MusicCardLayout.BADGE_X;
         double size = MusicCardLayout.BADGE_SIZE;
+        if (AppStoreBrandIcons.drawCentered(source, x + size * .5, COVER_Y + size * .5,
+                size - 8.0, RenderSystem.reAlpha(0xFFFFFFFF, alpha))) return;
         int brand = source.getBrandColor();
         boolean dark = source == MusicPlatform.QISHUI || source == MusicPlatform.SPOTIFY;
         roundedRect(x, COVER_Y, size, size, 7.0, RenderSystem.reAlpha(dark ? 0x050607 : brand, alpha * .97f));

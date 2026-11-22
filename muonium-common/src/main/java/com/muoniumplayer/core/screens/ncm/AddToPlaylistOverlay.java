@@ -7,6 +7,7 @@ import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.LocalPlaylistStore;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
+import com.muoniumplayer.core.ncm.spotify.SpotifyMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
@@ -41,6 +42,8 @@ public class AddToPlaylistOverlay extends NCMPanel {
     /** 每个实例只触发一次懒加载；未接受的回调由加载状态观察补上，只重铺列表、不重开弹层。 */
     private boolean kuGouCallbackPending = false;
     private boolean bodianCallbackPending = false;
+    private boolean qqCallbackPending = false;
+    private boolean spotifyCallbackPending = false;
     /** 同一弹层只请求一次；纹理由 Textures 的全局键去重与主线程上传队列拥有。 */
     private final java.util.Set<Location> coverRequests = new java.util.HashSet<>();
     /** 进出场那一条时钟，和 {@code NcmSheet} 那六个浮层共用同一个 {@link SheetClock}。 */
@@ -72,6 +75,10 @@ public class AddToPlaylistOverlay extends NCMPanel {
     private boolean observedKuGouLoaded;
     private boolean observedBodianLoading;
     private boolean observedBodianLoaded;
+    private boolean observedQQLoading;
+    private boolean observedQQLoaded;
+    private boolean observedSpotifyLoading;
+    private boolean observedSpotifyLoaded;
     private List<PlayList> displayedPlaylists = new ArrayList<>();
 
     private enum FeedbackState {
@@ -191,6 +198,26 @@ public class AddToPlaylistOverlay extends NCMPanel {
                     rebuildPlaylistList();
                 }
             }
+            if (!closing && music != null && music.isQQ()) {
+                boolean loading = NeteaseMusicService.areQQUserPlaylistsLoading();
+                boolean loaded = NeteaseMusicService.areQQUserPlaylistsLoaded();
+                accountSourceLabel = loading ? "正在加载 QQ 音乐歌单" : "本地 · QQ 音乐";
+                if (loading != observedQQLoading || loaded != observedQQLoaded) {
+                    observedQQLoading = loading;
+                    observedQQLoaded = loaded;
+                    rebuildPlaylistList();
+                }
+            }
+            if (!closing && music != null && music.isSpotify()) {
+                boolean loading = SpotifyMusicService.areUserPlaylistsLoading();
+                boolean loaded = SpotifyMusicService.areUserPlaylistsLoaded();
+                accountSourceLabel = loading ? "正在加载 Spotify 歌单" : "本地 · Spotify";
+                if (loading != observedSpotifyLoading || loaded != observedSpotifyLoaded) {
+                    observedSpotifyLoading = loading;
+                    observedSpotifyLoaded = loaded;
+                    rebuildPlaylistList();
+                }
+            }
         });
         dialog = NcmExpressive.shell(this, 620, () -> preferredHeight,
                 () -> presentation, this::requestClose);
@@ -229,6 +256,20 @@ public class AddToPlaylistOverlay extends NCMPanel {
                 && !bodianCallbackPending) {
             bodianCallbackPending = true;
             BodianMusicService.ensureUserPlaylistsAsync(() -> MultiThreadingUtil.runOnMainThread(() -> {
+                if (!closing && canPresentResult()) rebuildPlaylistList();
+            }));
+        }
+        if (music != null && music.isQQ() && NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)
+                && !NeteaseMusicService.areQQUserPlaylistsLoaded() && !qqCallbackPending) {
+            qqCallbackPending = true;
+            NeteaseMusicService.ensureQQUserPlaylistsAsync(() -> MultiThreadingUtil.runOnMainThread(() -> {
+                if (!closing && canPresentResult()) rebuildPlaylistList();
+            }));
+        }
+        if (music != null && music.isSpotify() && SpotifyMusicService.isLoggedIn()
+                && !SpotifyMusicService.areUserPlaylistsLoaded() && !spotifyCallbackPending) {
+            spotifyCallbackPending = true;
+            SpotifyMusicService.ensureUserPlaylistsAsync(() -> MultiThreadingUtil.runOnMainThread(() -> {
                 if (!closing && canPresentResult()) rebuildPlaylistList();
             }));
         }
@@ -342,7 +383,9 @@ public class AddToPlaylistOverlay extends NCMPanel {
 
     private boolean isAccountPlaylistLoading() {
         return music != null && ((music.isKuGou() && KuGouMusicService.areUserPlaylistsLoading())
-                || (music.isBodian() && BodianMusicService.areUserPlaylistsLoading()));
+                || (music.isBodian() && BodianMusicService.areUserPlaylistsLoading())
+                || (music.isQQ() && NeteaseMusicService.areQQUserPlaylistsLoading())
+                || (music.isSpotify() && SpotifyMusicService.areUserPlaylistsLoading()));
     }
 
     private void addTrackPreview() {
@@ -410,6 +453,14 @@ public class AddToPlaylistOverlay extends NCMPanel {
             accountSourceLabel = BodianMusicService.areUserPlaylistsLoading()
                     ? "正在加载波点歌单" : "本地 · 波点音乐";
             combined.addAll(BodianMusicService.getUserPlaylistsSnapshot());
+        } else if (music != null && music.isQQ()) {
+            accountSourceLabel = NeteaseMusicService.areQQUserPlaylistsLoading()
+                    ? "正在加载 QQ 音乐歌单" : "本地 · QQ 音乐";
+            combined.addAll(NeteaseMusicService.getQQWritableUserPlaylistsSnapshot());
+        } else if (music != null && music.isSpotify()) {
+            accountSourceLabel = SpotifyMusicService.areUserPlaylistsLoading()
+                    ? "正在加载 Spotify 歌单" : "本地 · Spotify";
+            combined.addAll(SpotifyMusicService.getWritableUserPlaylistsSnapshot());
         }
         return combined;
     }
@@ -434,7 +485,8 @@ public class AddToPlaylistOverlay extends NCMPanel {
         boolean sameSource = (music.isNetease() && playlist.getPlatform() == MusicPlatform.NETEASE)
                 || (music.isQQ() && playlist.getPlatform() == MusicPlatform.QQ)
                 || (music.isKuGou() && playlist.getPlatform() == MusicPlatform.KUGOU)
-                || (music.isBodian() && playlist.getPlatform() == MusicPlatform.BODIAN);
+                || (music.isBodian() && playlist.getPlatform() == MusicPlatform.BODIAN)
+                || (music.isSpotify() && playlist.getPlatform() == MusicPlatform.SPOTIFY);
         if (!sameSource) {
             submitting = false;
             closeAfterMillis = -1L;
@@ -453,7 +505,7 @@ public class AddToPlaylistOverlay extends NCMPanel {
         }
 
         final long musicId = music.getId();
-        if (musicId <= 0L && !music.isBodian()) {
+        if (musicId <= 0L && !music.isBodian() && !music.isSpotify()) {
             submitting = false;
             closeAfterMillis = -1L;
             showStatus("歌曲 ID 无效，无法加入歌单", FeedbackState.ERROR);
@@ -475,7 +527,7 @@ public class AddToPlaylistOverlay extends NCMPanel {
             CloudMusicApi.PlaylistTrackOperationResult result;
             try {
                 result = music.isBodian()
-                        ? playlist.addToListWithResult(music.getSourceId())
+                        || music.isSpotify() ? playlist.addToListWithResult(music.getSourceId())
                         : playlist.addToListWithResult(musicId);
             } catch (Throwable ignored) {
                 result = new CloudMusicApi.PlaylistTrackOperationResult(
@@ -574,7 +626,8 @@ public class AddToPlaylistOverlay extends NCMPanel {
             if (canPresentResult()) showStatus("已确认「" + playlistName + "」中已有这首歌。", FeedbackState.ALREADY_EXISTS);
         } else if (result != null && result.isSuccess() && result.isVerified()) {
             DownloadDynamicIsland.showPlaylistTrackAddSuccess(playlistName);
-            if (canPresentResult()) showStatus("网易云已确认加入「" + playlistName + "」", FeedbackState.SUCCESS);
+            if (canPresentResult()) showStatus(playlist.getPlatform().getDisplayName()
+                    + "已确认加入「" + playlistName + "」", FeedbackState.SUCCESS);
         } else {
             String message = result == null ? null : result.getMessage();
             if (message == null || message.trim().isEmpty()) message = "服务端未确认加入成功，请重试";

@@ -75,6 +75,12 @@ class AutomixIntegrationStaticTest {
                 "交接失败必须回到原始切歌路径");
         assertTrue(player.contains("if (!AutomixSettings.isEnabled()) return;"),
                 "Automix 关闭时不得把 DSP 链接入普通播放器");
+        assertTrue(cloud.contains("AudioContainerSupport.requiresFlacDecode(container)"),
+                "FLAC 播放必须先解成 WAV，不能把惰性 FLAC 解码留给音频线程");
+        assertTrue(cloud.contains("FlacAudioDecoder.decodeToWav"),
+                "FLAC 边车解码器没有接入播放前解析路径");
+        assertTrue(cloud.contains("AudioCacheFiles.isManagedCacheFile(sourceFile)"),
+                "本地 FLAC 转码失败时不得删除用户原文件");
     }
 
     @Test
