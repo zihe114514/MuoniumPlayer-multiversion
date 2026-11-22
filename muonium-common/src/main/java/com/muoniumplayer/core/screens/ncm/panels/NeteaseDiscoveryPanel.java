@@ -891,6 +891,63 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         return new HomePanel(cards.items, "我的数字专辑 · " + cards.items.size(), cards.actions);
     }
 
+    /** Loads the first account cloud-drive page and exposes it through the existing playback queue. */
+    public static NCMPanel loadCloudSongsPanel() {
+        JsonObject root = CloudMusicApi.userCloudSongs(200, 0).toJsonObject();
+        JsonArray entries = cloudEntries(root);
+        if (entries == null || entries.size() == 0) return null;
+
+        List<Music> songs = new ArrayList<>();
+        List<Long> unresolvedIds = new ArrayList<>();
+        for (JsonElement element : entries) {
+            if (!element.isJsonObject()) continue;
+            JsonObject cloudEntry = element.getAsJsonObject();
+            JsonObject song = object(cloudEntry, "simpleSong");
+            if (song == null) song = object(cloudEntry, "song");
+            if (song == null && cloudEntry.has("name") && number(cloudEntry, "id") > 0L) song = cloudEntry;
+            if (song == null) {
+                long id = number(cloudEntry, "songId", "id");
+                if (id > 0L) unresolvedIds.add(id);
+                continue;
+            }
+            addCloudSong(song, songs);
+        }
+
+        if (!unresolvedIds.isEmpty()) {
+            JsonObject details = CloudMusicApi.songDetail(unresolvedIds).toJsonObject();
+            JsonArray detailSongs = array(details, "songs", "data");
+            if (detailSongs == null) {
+                JsonObject data = object(details, "data");
+                detailSongs = array(data, "songs", "data");
+            }
+            if (detailSongs != null) {
+                for (JsonElement element : detailSongs) {
+                    if (element != null && element.isJsonObject()) addCloudSong(element.getAsJsonObject(), songs);
+                }
+            }
+        }
+        if (songs.isEmpty()) return null;
+        return buildSongsPanel(songs, false);
+    }
+
+    private static JsonArray cloudEntries(JsonObject root) {
+        JsonArray entries = array(root, "data", "songs");
+        if (entries != null) return entries;
+        JsonObject data = object(root, "data");
+        entries = array(data, "songs", "data");
+        return entries != null ? entries : array(root, "songs");
+    }
+
+    private static void addCloudSong(JsonObject song, List<Music> result) {
+        try {
+            Music music = JsonUtils.parse(song, Music.class);
+            if (music == null || music.getId() <= 0L) return;
+            music.applyNeteaseMetadata(song, null);
+            result.add(music);
+        } catch (Throwable ignored) {
+        }
+    }
+
     public static NCMPanel loadRecentSongsPanel() {
         JsonObject root = CloudMusicApi.recentSongs(100).toJsonObject();
         List<Music> songs = parseSongsFromRecentResponse(root);

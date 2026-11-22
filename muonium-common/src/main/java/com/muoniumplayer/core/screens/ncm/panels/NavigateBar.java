@@ -1075,6 +1075,14 @@ public class NavigateBar extends NCMPanel {
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "电台 · 播客", () -> NCMScreen.getInstance().navigateAsync(
                         "电台 · 播客", RadioHubPanel::new)));
+                this.addSidebarRow("nav:digital-albums", PlaylistItem.withLucideIcon(FoliaLucideIcons.ALBUM,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "已购专辑", () -> NCMScreen.getInstance().navigateAsync(
+                        "已购专辑", NeteaseDiscoveryPanel::loadDigitalAlbumsPanel)));
+                this.addSidebarRow("nav:netease-cloud", PlaylistItem.withLucideIcon(FoliaLucideIcons.STORAGE,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "音乐云盘", () -> NCMScreen.getInstance().navigateAsync(
+                        "音乐云盘", NeteaseDiscoveryPanel::loadCloudSongsPanel)));
                 this.addSidebarRow("nav:fm", new PlaylistItem(MusicBrandIcons.PERSONAL_FM, FontManager.musicBrand16,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
                         () -> "私人 FM", () -> NCMScreen.getInstance().setCurrentPanel(new PersonalFmPanel())));
@@ -3037,8 +3045,19 @@ public class NavigateBar extends NCMPanel {
             this(null, FontManager.music18, iconLocation, iconColorSupplier, label, onClick);
         }
 
+        private static PlaylistItem withLucideIcon(String icon, Supplier<Integer> iconColorSupplier,
+                                                   Supplier<String> label, Runnable onClick) {
+            return new PlaylistItem(null, FontManager.music18, null, iconColorSupplier, label, onClick, icon);
+        }
+
         private PlaylistItem(String icon, CFontRenderer iconFont, Location iconLocation,
                              Supplier<Integer> iconColorSupplier, Supplier<String> label, Runnable onClick) {
+            this(icon, iconFont, iconLocation, iconColorSupplier, label, onClick, null);
+        }
+
+        private PlaylistItem(String icon, CFontRenderer iconFont, Location iconLocation,
+                             Supplier<Integer> iconColorSupplier, Supplier<String> label, Runnable onClick,
+                             String lucideIcon) {
             this.icon = icon;
             this.iconLocation = iconLocation;
             this.iconColorSupplier = iconColorSupplier;
@@ -3057,7 +3076,17 @@ public class NavigateBar extends NCMPanel {
             // 每个条目各画一块的话，切换栏目只能是一块消失、另一块出现，没有位移可动画。
 
             AbstractWidget<?> iconWidget;
-            if (iconLocation == null) {
+            if (lucideIcon != null) {
+                LucideIconWidget vectorIcon = new LucideIconWidget(() -> lucideIcon, () -> "",
+                        FontManager.music18, 0, 0, 12, 16);
+                this.addChild(vectorIcon);
+                vectorIcon.setBeforeRenderCallback(() -> {
+                    vectorIcon.setColor(iconColorSupplier.get());
+                    vectorIcon.setPosition(8, vectorIcon.getRelativeY());
+                });
+                vectorIcon.setClickable(false);
+                iconWidget = vectorIcon;
+            } else if (iconLocation == null) {
                 LabelWidget glyphIcon = new LabelWidget(icon, iconFont == null ? FontManager.music18 : iconFont);
                 this.addChild(glyphIcon);
                 glyphIcon.setBeforeRenderCallback(() -> {
