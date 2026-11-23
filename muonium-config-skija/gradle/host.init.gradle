@@ -1,0 +1,178 @@
+// Isolated acceptance tasks. This script does not alter host source sets or release tasks.
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.jvm.tasks.Jar
+
+gradle.projectsEvaluated {
+    def hostRoot = gradle.rootProject
+    def workspace = new File(gradle.startParameter.projectProperties.getOrDefault('skijaConfigRoot', new File(hostRoot.projectDir.parentFile, 'muonium-config-skija').absolutePath))
+    hostRoot.subprojects.findAll { it.name in ['fabric', 'neoforge', 'forge'] }.each { target ->
+        if (target.name == 'fabric' && gradle.startParameter.projectProperties.containsKey('skijaConfigBaseline')) {
+            target.tasks.named('runClient').configure { jvmArgs '-Dmuonium.config.skija.disabled=true' }
+        }
+        def output = new File(workspace, "build/host/" + hostRoot.projectDir.name + "/" + target.name)
+        def main = target.extensions.getByName('sourceSets').main
+        def compile = target.tasks.register('compileSkijaConfig', JavaCompile) {
+            dependsOn target.tasks.named('classes')
+            source new File(workspace, 'src/main/java')
+            source new File(workspace, 'src/versions/' + hostRoot.projectDir.name + '/java')
+            source new File(workspace, 'src/acceptance/' + target.name + '/java')
+            classpath = main.output + main.compileClasspath
+            destinationDirectory.set(new File(output, 'classes'))
+            javaCompiler.set(target.tasks.named('compileJava', JavaCompile).get().javaCompiler)
+            options.release.set(17)
+            options.encoding = 'UTF-8'
+            options.compilerArgs.addAll(['-proc:none', '-Xlint:deprecation'])
+        }
+        def metadata = target.tasks.register('prepareSkijaConfigMetadata') {
+            def directory = new File(output, 'metadata')
+            outputs.dir(directory)
+            inputs.property('metadataRevision', 3)
+            inputs.property('minecraftVersion', target.property('minecraft_version'))
+            inputs.property('hostModVersion', target.property('mod_version'))
+            doLast {
+                directory.mkdirs()
+                def mc = target.property('minecraft_version').toString()
+                def mixinJson = new groovy.json.JsonSlurper().parse(new File(workspace, 'src/main/resources/muonium-config-skija.mixins.json'))
+                if ((target.name == 'fabric' && !mc.startsWith('26.')) || target.name == 'forge') mixinJson.refmap='muoniumconfigskija.refmap.json'
+                new File(directory, 'muonium-config-skija.mixins.json').text=groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(mixinJson))
+                if (target.name == 'fabric') {
+                    new File(directory, 'fabric.mod.json').text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
+                        schemaVersion: 1, id: 'muonium_config_skija', version: '0.1.0-dev', name: 'MuoniumConfig Skija Preview',
+                        description: 'Isolated Skija configuration UI acceptance build.', environment: 'client', license: 'LGPL-3.0-only AND OneConfig-Additional-Terms',
+                        mixins: ['muonium-config-skija.mixins.json'], depends: [fabricloader: '>=' + target.property('loader_min_version'), minecraft: mc, muonium: '*']
+                    ]))
+                } else {
+                    def meta = new File(directory, 'META-INF'); meta.mkdirs()
+                    def filename = target.name == 'forge' ? 'mods.toml' : 'neoforge.mods.toml'
+                    new File(meta, filename).text = '''modLoader="javafml"
+loaderVersion="[1,)"
+license="LGPL-3.0-only AND OneConfig-Additional-Terms"
+[[mods]]
+modId="muonium_config_skija"
+version="0.1.0-dev"
+displayName="MuoniumConfig Skija Preview"
+description="Isolated configuration UI acceptance build."
+'''
+                    def dependency = target.name == 'forge' ? 'mandatory=true' : 'type="required"'
+                    new File(meta, filename).append('\n[[dependencies.muonium_config_skija]]\nmodId="muonium"\n' + dependency + '\nversionRange="[' + target.property('mod_version') + ',)"\nordering="AFTER"\nside="CLIENT"\n')
+                    if (target.name == 'neoforge') new File(meta, filename).append('''[[mixins]]
+config="muonium-config-skija.mixins.json"
+''')
+                }
+            }
+        }
+        def rawJar = target.tasks.register('skijaConfigDevJar', Jar) {
+            dependsOn compile, metadata
+            from(compile.map { it.destinationDirectory })
+            from(new File(workspace, 'src/main/resources')) { exclude 'muonium-config-skija.mixins.json' }
+            from(new File(output, 'metadata'))
+            archiveFileName.set('MuoniumConfig-Skija-' + target.property('minecraft_version') + '-' + target.name + '-0.1.0-dev.jar')
+            destinationDirectory.set(new File(workspace, 'build/devdist'))
+            manifest.attributes('MixinConfigs': 'muonium-config-skija.mixins.json', 'Implementation-Title': 'MuoniumConfig Skija Preview')
+            doLast { logger.lifecycle('Skija config acceptance artifact: ' + archiveFile.get().asFile) }
+        }
+        def oldRefmap = (target.name == 'fabric' && !target.property('minecraft_version').toString().startsWith('26.')) || target.name == 'forge'
+        if (oldRefmap) {
+            def processor = target.configurations.create('skijaConfigMixinProcessor')
+            if (target.name == 'fabric') { target.repositories.maven { url='https://maven.fabricmc.net/' }; target.dependencies.add(processor.name,'net.fabricmc:fabric-mixin-compile-extensions:0.6.0') }
+            def refmap = target.tasks.register('generateSkijaConfigRefmap', JavaCompile) {
+                dependsOn compile, metadata
+                source new File(workspace, 'src/versions/' + hostRoot.projectDir.name + '/java/com/muoniumplayer/configskija/mixin/ConfigToastMouseMixin.java')
+                classpath = main.output + main.compileClasspath + target.files(new File(output, 'classes'))
+                destinationDirectory.set(new File(output, 'mixin-ap'))
+                javaCompiler.set(target.tasks.named('compileJava', JavaCompile).get().javaCompiler)
+                options.release.set(17)
+                options.encoding='UTF-8'
+                options.annotationProcessorPath=main.compileClasspath + target.configurations.annotationProcessor + processor
+                options.compilerArgs.addAll(['-proc:only','-processor','org.spongepowered.tools.obfuscation.MixinObfuscationProcessorTargets,org.spongepowered.tools.obfuscation.MixinObfuscationProcessorInjection','-AoutRefMapFile=' + new File(output,'metadata/muoniumconfigskija.refmap.json').absolutePath])
+                if (target.name == 'forge') {
+                    def mapping = new File(target.projectDir,'build/moddev/artifacts/namedToIntermediate.tsrg')
+                    inputs.file(mapping)
+                    options.compilerArgs.addAll(['-AmappingTypes=tsrg','-AreobfTsrgFile='+mapping.absolutePath,'-AdefaultObfuscationEnv=searge'])
+                } else {
+                    def game = main.compileClasspath.files.find { it.name.startsWith('minecraft-merged-') && it.name.endsWith('.jar') }
+                    if (game == null) throw new GradleException('Missing exact Loom Minecraft artifact for Skija config refmap')
+                    def matcher = game.name =~ /minecraft-merged-([a-f0-9]{10})-/
+                    if (!matcher.find()) throw new GradleException('Cannot identify current Loom mapping source: ' + game.name)
+                    def hash = matcher.group(1)
+                    def mappings = target.fileTree(new File(hostRoot.projectDir,'.gradle/loom-cache/projects/fabric/source_mappings')).files.findAll { it.name.startsWith(hash) && it.name.endsWith('.tiny') }
+                    if (mappings.size() != 1) throw new GradleException('Exact Loom source mapping is ambiguous for ' + game.name)
+                    inputs.file(mappings[0])
+                    options.compilerArgs.addAll(['-AinMapFileNamedIntermediary='+mappings[0].absolutePath,'-AdefaultObfuscationEnv=named:intermediary'])
+                }
+                doLast {
+                    def result = new File(output,'metadata/muoniumconfigskija.refmap.json')
+                    if (!result.isFile() || !result.text.contains('ConfigToastMouseMixin')) throw new GradleException('Mouse mixin refmap was not generated')
+                }
+            }
+            rawJar.configure { dependsOn refmap }
+        }
+        target.tasks.register('skijaConfigSourceFingerprint') {
+            dependsOn compile
+            doLast {
+                def digest = java.security.MessageDigest.getInstance('SHA-256')
+                def files = target.fileTree(new File(workspace, 'src/main')).files + target.fileTree(new File(workspace, 'src/versions/' + hostRoot.projectDir.name)).files + target.fileTree(new File(workspace, 'src/acceptance/' + target.name)).files
+                files.findAll { it.isFile() }.sort { workspace.toPath().relativize(it.toPath()).toString() }.each { file ->
+                    digest.update(workspace.toPath().relativize(file.toPath()).toString().replace('\\','/').getBytes('UTF-8'));digest.update((byte)0);digest.update(file.bytes);digest.update((byte)0)
+                }
+                def info = [schemaVersion:1, minecraft:target.property('minecraft_version').toString(), loader:target.name, hostVersion:target.property('mod_version').toString(), sourceSha256:java.util.HexFormat.of().formatHex(digest.digest())]
+                new File(output, 'metadata/skija-config-build.json').text=groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(info))
+            }
+        }
+        rawJar.configure { dependsOn target.tasks.named('skijaConfigSourceFingerprint') }
+        def releaseName = 'MuoniumConfig-Skija-' + target.property('minecraft_version') + '-' + target.name + '-0.1.0.jar'
+        def packaged
+        if (target.name == 'fabric' && !target.property('minecraft_version').toString().startsWith('26.')) {
+            def reference = target.tasks.named('remapJar').get()
+            def taskClass = reference.class.superclass
+            packaged = target.tasks.register('remapSkijaConfigJar', taskClass) {
+                dependsOn rawJar
+                inputFile.set(rawJar.flatMap { it.archiveFile })
+                sourceNamespace.set(reference.sourceNamespace)
+                targetNamespace.set(reference.targetNamespace)
+                classpath.from(main.output, main.compileClasspath)
+                addNestedDependencies.set(false)
+                useMixinAP.set(true)
+                archiveFileName.set(releaseName)
+                destinationDirectory.set(new File(workspace, 'dist'))
+            }
+        } else if (target.name == 'forge') {
+            def reference = target.tasks.named('reobfJar').get()
+            def taskClass = reference.class.superclass
+            packaged = target.tasks.register('reobfSkijaConfigJar', taskClass) {
+                dependsOn rawJar
+                input.set(rawJar.flatMap { it.archiveFile })
+                libraries.from(reference.libraries)
+                remapOperation.toolType.set(reference.remapOperation.toolType)
+                remapOperation.toolClasspath.from(reference.remapOperation.toolClasspath)
+                remapOperation.mappings.from(reference.remapOperation.mappings)
+                archiveFileName.set(releaseName)
+                destinationDirectory.set(new File(workspace, 'dist'))
+            }
+        } else {
+            packaged = target.tasks.register('packageSkijaConfigJar', org.gradle.api.tasks.Copy) {
+                dependsOn rawJar
+                from(rawJar.flatMap { it.archiveFile })
+                into(new File(workspace, 'dist'))
+                rename { releaseName }
+            }
+        }
+        target.tasks.register('skijaConfigBuild') {
+            dependsOn packaged
+            doLast { logger.lifecycle('Mapped acceptance artifact: ' + new File(workspace, 'dist/' + releaseName)) }
+        }
+        target.tasks.register('skijaConfigTooling') {
+            doLast {
+                def rows = target.tasks.findAll { it.name.toLowerCase().contains('remap') || it.name.toLowerCase().contains('reobf') }.collect { task -> [name: task.name, type: task.class.name, methods: task.class.methods.findAll { it.name =~ /get(Input|Output|.*Mapping|.*Namespace|Source|Target|Libraries|Classpath)/ }.collect { it.name + ':' + it.returnType.name }.unique().sort()] }
+                logger.lifecycle(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(rows)))
+            }
+        }
+        target.tasks.register('skijaConfigClasspath') {
+            doLast {
+                output.mkdirs()
+                new File(output, 'compile-classpath.txt').text = (main.output + main.compileClasspath).asPath
+                new File(output, 'runtime-classpath.txt').text = (main.output + main.runtimeClasspath).asPath
+            }
+        }
+    }
+}

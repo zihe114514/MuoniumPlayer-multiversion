@@ -1,0 +1,296 @@
+[
+  {
+    "lane": "1.20.1 recode",
+    "loader": "fabric",
+    "mc": "E:\\MUSIC\\1.20.1 recode\\.gradle\\loom-cache\\minecraftMaven\\net\\minecraft\\minecraft-merged-825aaf77bd\\1.20.1-loom.mappings.1_20_1.layered+hash.2198-v2\\minecraft-merged-825aaf77bd-1.20.1-loom.mappings.1_20_1.layered+hash.2198-v2.jar",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-glfw\\3.3.1\\cbac1b8d30cb4795149c1ef540f912671a8616d0\\lwjgl-glfw-3.3.1.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.lang.String getName();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public long getWindow();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static void nglfwGetWindowContentScale(long, long, long);\r",
+      "  public static void glfwGetWindowContentScale(long, java.nio.FloatBuffer, java.nio.FloatBuffer);\r",
+      "  public static void glfwGetWindowContentScale(long, float[], float[]);\r"
+    ]
+  },
+  {
+    "lane": "1.20.1 recode",
+    "loader": "forge",
+    "mc": "E:\\MUSIC\\1.20.1 recode\\forge\\build\\moddev\\artifacts\\forge-1.20.1-47.4.0.jar",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-glfw\\3.3.1\\cbac1b8d30cb4795149c1ef540f912671a8616d0\\lwjgl-glfw-3.3.1.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.lang.String getName();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public long getWindow();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static void nglfwGetWindowContentScale(long, long, long);\r",
+      "  public static void glfwGetWindowContentScale(long, java.nio.FloatBuffer, java.nio.FloatBuffer);\r",
+      "  public static void glfwGetWindowContentScale(long, float[], float[]);\r"
+    ]
+  },
+  {
+    "lane": "1.21.1",
+    "loader": "fabric",
+    "mc": "E:\\MUSIC\\1.21.1\\.gradle\\loom-cache\\minecraftMaven\\net\\minecraft\\minecraft-merged-c7fff42769\\1.21.1-loom.mappings.1_21_1.layered+hash.2198-v2\\minecraft-merged-c7fff42769-1.21.1-loom.mappings.1_21_1.layered+hash.2198-v2.jar",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-glfw\\3.3.3\\efa1eb78c5ccd840e9f329717109b5e892d72f8e\\lwjgl-glfw-3.3.3.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public java.lang.String getName();\r",
+      "  public long getWindow();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static void nglfwGetWindowContentScale(long, long, long);\r",
+      "  public static void glfwGetWindowContentScale(long, java.nio.FloatBuffer, java.nio.FloatBuffer);\r",
+      "  public static void glfwGetWindowContentScale(long, float[], float[]);\r"
+    ]
+  },
+  {
+    "lane": "1.21.1",
+    "loader": "neoforge",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-glfw\\3.3.3\\efa1eb78c5ccd840e9f329717109b5e892d72f8e\\lwjgl-glfw-3.3.3.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public java.lang.String getName();\r",
+      "  public long getWindow();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static void nglfwGetWindowContentScale(long, long, long);\r",
+      "  public static void glfwGetWindowContentScale(long, java.nio.FloatBuffer, java.nio.FloatBuffer);\r",
+      "  public static void glfwGetWindowContentScale(long, float[], float[]);\r"
+    ],
+    "mc": "E:\\MUSIC\\1.21.1\\neoforge\\build\\moddev\\artifacts\\neoforge-21.1.249.jar"
+  },
+  {
+    "lane": "1.21.10",
+    "loader": "fabric",
+    "mc": "E:\\MUSIC\\1.21.10\\.gradle\\loom-cache\\minecraftMaven\\net\\minecraft\\minecraft-merged-5243ed6022\\1.21.10-loom.mappings.1_21_10.layered+hash.2198-v2\\minecraft-merged-5243ed6022-1.21.10-loom.mappings.1_21_10.layered+hash.2198-v2.jar",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-glfw\\3.3.3\\efa1eb78c5ccd840e9f329717109b5e892d72f8e\\lwjgl-glfw-3.3.3.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public java.lang.String getName();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static void nglfwGetWindowContentScale(long, long, long);\r",
+      "  public static void glfwGetWindowContentScale(long, java.nio.FloatBuffer, java.nio.FloatBuffer);\r",
+      "  public static void glfwGetWindowContentScale(long, float[], float[]);\r"
+    ]
+  },
+  {
+    "lane": "1.21.10",
+    "loader": "neoforge",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-glfw\\3.3.3\\efa1eb78c5ccd840e9f329717109b5e892d72f8e\\lwjgl-glfw-3.3.3.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public java.lang.String getName();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static void nglfwGetWindowContentScale(long, long, long);\r",
+      "  public static void glfwGetWindowContentScale(long, java.nio.FloatBuffer, java.nio.FloatBuffer);\r",
+      "  public static void glfwGetWindowContentScale(long, float[], float[]);\r"
+    ],
+    "mc": "E:\\MUSIC\\1.21.10\\neoforge\\build\\moddev\\artifacts\\neoforge-21.10.64.jar"
+  },
+  {
+    "lane": "1.21.11 recode",
+    "loader": "fabric",
+    "mc": "E:\\MUSIC\\1.21.11 recode\\.gradle\\loom-cache\\minecraftMaven\\net\\minecraft\\minecraft-merged-480d24ca11\\1.21.11-loom.mappings.1_21_11.layered+hash.2198-v2\\minecraft-merged-480d24ca11-1.21.11-loom.mappings.1_21_11.layered+hash.2198-v2.jar",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-glfw\\3.3.3\\efa1eb78c5ccd840e9f329717109b5e892d72f8e\\lwjgl-glfw-3.3.3.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public java.lang.String getName();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static void nglfwGetWindowContentScale(long, long, long);\r",
+      "  public static void glfwGetWindowContentScale(long, java.nio.FloatBuffer, java.nio.FloatBuffer);\r",
+      "  public static void glfwGetWindowContentScale(long, float[], float[]);\r"
+    ]
+  },
+  {
+    "lane": "1.21.11 recode",
+    "loader": "neoforge",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-glfw\\3.3.3\\efa1eb78c5ccd840e9f329717109b5e892d72f8e\\lwjgl-glfw-3.3.3.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public java.lang.String getName();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static void nglfwGetWindowContentScale(long, long, long);\r",
+      "  public static void glfwGetWindowContentScale(long, java.nio.FloatBuffer, java.nio.FloatBuffer);\r",
+      "  public static void glfwGetWindowContentScale(long, float[], float[]);\r"
+    ],
+    "mc": "E:\\MUSIC\\1.21.11 recode\\neoforge\\build\\moddev\\artifacts\\neoforge-21.11.45.jar"
+  },
+  {
+    "lane": "26.1.2",
+    "loader": "fabric",
+    "mc": "E:\\MUSIC\\26.1.2\\.gradle\\loom-cache\\minecraftMaven\\net\\minecraft\\minecraft-merged-043a8b3edf\\26.1.2\\minecraft-merged-043a8b3edf-26.1.2.jar",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-glfw\\3.4.1\\a782b1ddd175c9107bf300fd92920579ea65e2a4\\lwjgl-glfw-3.4.1.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public java.lang.String getName();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static void nglfwGetWindowContentScale(long, long, long);\r",
+      "  public static void glfwGetWindowContentScale(long, java.nio.FloatBuffer, java.nio.FloatBuffer);\r",
+      "  public static void glfwGetWindowContentScale(long, float[], float[]);\r"
+    ]
+  },
+  {
+    "lane": "26.1.2",
+    "loader": "neoforge",
+    "mc": "E:\\MUSIC\\26.1.2\\neoforge\\build\\moddev\\artifacts\\minecraft-patched-26.1.2.126.jar",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-glfw\\3.4.1\\a782b1ddd175c9107bf300fd92920579ea65e2a4\\lwjgl-glfw-3.4.1.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public java.lang.String getName();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static void nglfwGetWindowContentScale(long, long, long);\r",
+      "  public static void glfwGetWindowContentScale(long, java.nio.FloatBuffer, java.nio.FloatBuffer);\r",
+      "  public static void glfwGetWindowContentScale(long, float[], float[]);\r"
+    ]
+  },
+  {
+    "lane": "26.2",
+    "loader": "fabric",
+    "mc": "E:\\MUSIC\\26.2\\.gradle\\loom-cache\\minecraftMaven\\net\\minecraft\\minecraft-merged-043a8b3edf\\26.2\\minecraft-merged-043a8b3edf-26.2.jar",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-glfw\\3.4.1\\a782b1ddd175c9107bf300fd92920579ea65e2a4\\lwjgl-glfw-3.4.1.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public java.lang.String getName();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static void nglfwGetWindowContentScale(long, long, long);\r",
+      "  public static void glfwGetWindowContentScale(long, java.nio.FloatBuffer, java.nio.FloatBuffer);\r",
+      "  public static void glfwGetWindowContentScale(long, float[], float[]);\r"
+    ]
+  },
+  {
+    "lane": "26.2",
+    "loader": "neoforge",
+    "mc": "E:\\MUSIC\\26.2\\neoforge\\build\\moddev\\artifacts\\minecraft-patched-26.2.0.72.jar",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-glfw\\3.4.1\\a782b1ddd175c9107bf300fd92920579ea65e2a4\\lwjgl-glfw-3.4.1.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public java.lang.String getName();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static void nglfwGetWindowContentScale(long, long, long);\r",
+      "  public static void glfwGetWindowContentScale(long, java.nio.FloatBuffer, java.nio.FloatBuffer);\r",
+      "  public static void glfwGetWindowContentScale(long, float[], float[]);\r"
+    ]
+  },
+  {
+    "lane": "26.3",
+    "loader": "fabric",
+    "mc": "E:\\MUSIC\\26.3\\.gradle\\loom-cache\\minecraftMaven\\net\\minecraft\\minecraft-merged-7e9a32a5b8\\26.3\\minecraft-merged-7e9a32a5b8-26.3.jar",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-sdl\\3.4.3\\c02146735d6ff70d070c73532b435e5c893a346b\\lwjgl-sdl-3.4.3.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public java.lang.String getName();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static float SDL_GetWindowDisplayScale(long);\r"
+    ]
+  },
+  {
+    "lane": "26.3",
+    "loader": "neoforge",
+    "mc": "E:\\MUSIC\\26.3\\neoforge\\build\\moddev\\artifacts\\minecraft-patched-26.3.0.16-beta.jar",
+    "input": "E:\\.gradle\\caches\\modules-2\\files-2.1\\org.lwjgl\\lwjgl-sdl\\3.4.3\\c02146735d6ff70d070c73532b435e5c893a346b\\lwjgl-sdl-3.4.3.jar",
+    "declarations": [
+      "  public net.minecraft.client.User getUser();\r",
+      "  public com.mojang.blaze3d.platform.Window getWindow();\r",
+      "  public java.util.UUID getProfileId();\r",
+      "  public java.lang.String getName();\r",
+      "  public int getWidth();\r",
+      "  public int getHeight();\r",
+      "  public int getScreenWidth();\r",
+      "  public int getScreenHeight();\r",
+      "  public java.lang.String getSelected();\r",
+      "  public static java.lang.String get(java.lang.String, java.lang.Object...);\r",
+      "  public static float SDL_GetWindowDisplayScale(long);\r"
+    ]
+  }
+]

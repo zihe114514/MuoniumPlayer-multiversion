@@ -1,0 +1,31 @@
+param(
+    [string]$Jdk = 'D:/JDK25',
+    [switch]$CompileOnly
+)
+$ErrorActionPreference = 'Stop'
+$textProject = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../../../../../'))
+$textSource = Join-Path $textProject 'src/main/java'
+$textOutput = Join-Path $textProject 'build/text-tests'
+$textClasspathFile = Join-Path $textProject 'build/host/26.3/fabric/compile-classpath.txt'
+if (!(Test-Path -LiteralPath $textClasspathFile)) { throw 'Missing actual 26.3/Fabric host compile classpath' }
+$textClasspath = (Get-Content -Raw -LiteralPath $textClasspathFile).Trim()
+$textFiles = @(Get-ChildItem -LiteralPath (Join-Path $textSource 'com/muoniumplayer/configskija/host/text') -Filter '*.java' | ForEach-Object FullName)
+$textFiles += Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.java' | ForEach-Object FullName
+New-Item -ItemType Directory -Path $textOutput -Force | Out-Null
+& (Join-Path $Jdk 'bin/javac.exe') --release 17 -encoding UTF-8 -proc:none -classpath $textClasspath -sourcepath $textSource -d $textOutput @textFiles
+if ($LASTEXITCODE -ne 0) { throw 'Text adapter Java 17 target compilation failed' }
+$textResources = Join-Path $textProject 'src/main/resources'
+$textRunClasspath = $textOutput + ';' + $textResources + ';' + $textClasspath
+& (Join-Path $Jdk 'bin/java.exe') -ea -cp $textRunClasspath com.muoniumplayer.configskija.text.HostTextContractTest $textProject $textOutput
+if ($LASTEXITCODE -ne 0) { throw 'Text adapter contract/resource/ownership guards failed' }
+if ($CompileOnly) { return }
+$textShared = $textClasspath.Split(';') | Where-Object { [IO.Path]::GetFileName($_) -like 'skija-shared-*.jar' } | Select-Object -First 1
+if (!$textShared) { throw 'No actual host Skija version in the classpath' }
+$textVersion = [IO.Path]::GetFileName($textShared).Replace('skija-shared-','').Replace('.jar','')
+$textGroup = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $textShared)))
+$textNativeRoot = Join-Path $textGroup "skija-windows-x64/$textVersion"
+$textNative = Get-ChildItem -LiteralPath $textNativeRoot -Filter '*.jar' -Recurse | Where-Object { $_.Name -notlike '*sources*' -and $_.Name -notlike '*javadoc*' } | Select-Object -First 1
+if (!$textNative) { throw "Matching host native runtime is not cached: $textVersion" }
+$textRunClasspath += ';' + $textNative.FullName
+& (Join-Path $Jdk 'bin/java.exe') --enable-native-access=ALL-UNNAMED -ea -cp $textRunClasspath com.muoniumplayer.configskija.text.HostTextRendererTest
+if ($LASTEXITCODE -ne 0) { throw 'CPU text draw/measure/lifecycle tests failed' }

@@ -1,0 +1,58 @@
+{
+  "ui.open": {
+    "sounds": [
+      "muoniumconfigskija:ui/open"
+    ]
+  },
+  "ui.close": {
+    "sounds": [
+      "muoniumconfigskija:ui/close"
+    ]
+  },
+  "ui.click": {
+    "sounds": [
+      "muoniumconfigskija:ui/click"
+    ]
+  },
+  "ui.slider": {
+    "sounds": [
+      "muoniumconfigskija:ui/slider"
+    ]
+  },
+  "ui.pad_loop": {
+    "sounds": [
+      {
+        "name": "muoniumconfigskija:ui/pad_loop",
+        "stream": true
+      }
+    ]
+  },
+  "ui.mc_ambient": {
+    "sounds": [
+      { "name": "muoniumconfigskija:ambient/trees", "stream": true },
+      { "name": "muoniumconfigskija:ambient/moog_1", "stream": true },
+      { "name": "muoniumconfigskija:ambient/moog_2", "stream": true },
+      { "name": "muoniumconfigskija:ambient/lullaby", "stream": true }
+    ]
+  },
+  "ui.mc_ambient.trees": {
+    "sounds": [
+      { "name": "muoniumconfigskija:ambient/trees", "stream": true }
+    ]
+  },
+  "ui.mc_ambient.moog_1": {
+    "sounds": [
+      { "name": "muoniumconfigskija:ambient/moog_1", "stream": true }
+    ]
+  },
+  "ui.mc_ambient.moog_2": {
+    "sounds": [
+      { "name": "muoniumconfigskija:ambient/moog_2", "stream": true }
+    ]
+  },
+  "ui.mc_ambient.lullaby": {
+    "sounds": [
+      { "name": "muoniumconfigskija:ambient/lullaby", "stream": true }
+    ]
+  }
+}

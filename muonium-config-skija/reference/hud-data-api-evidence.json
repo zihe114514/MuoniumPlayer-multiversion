@@ -1,0 +1,146 @@
+[
+  {
+    "lane": "1.20.1 recode",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean renderDebug;\r",
+      "  public boolean renderDebugCharts;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "1.20.1 recode",
+    "loader": "forge",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean renderDebug;\r",
+      "  public boolean renderDebugCharts;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "1.21.1",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "1.21.1",
+    "loader": "neoforge",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "1.21.10",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "1.21.10",
+    "loader": "neoforge",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "1.21.11 recode",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "1.21.11 recode",
+    "loader": "neoforge",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "26.1.2",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "26.1.2",
+    "loader": "neoforge",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "26.2",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "26.2",
+    "loader": "neoforge",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "26.3",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean isDown();\r"
+    ]
+  },
+  {
+    "lane": "26.3",
+    "loader": "neoforge",
+    "declarations": [
+      "  public final net.minecraft.client.Options options;\r",
+      "  public int getFps();\r",
+      "  public final net.minecraft.client.KeyMapping keyPlayerList;\r",
+      "  public boolean isDown();\r"
+    ]
+  }
+]

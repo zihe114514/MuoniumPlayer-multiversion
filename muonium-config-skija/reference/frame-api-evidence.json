@@ -1,0 +1,230 @@
+[
+  {
+    "lane": "1.20.1 recode",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public net.minecraft.client.gui.screens.Screen screen;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public double getGuiScale();\r"
+    ]
+  },
+  {
+    "lane": "1.20.1 recode",
+    "loader": "forge",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public net.minecraft.client.gui.screens.Screen screen;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public double getGuiScale();\r"
+    ]
+  },
+  {
+    "lane": "1.21.1",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public net.minecraft.client.gui.screens.Screen screen;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public double getGuiScale();\r",
+      "  public boolean showDebugScreen();\r"
+    ]
+  },
+  {
+    "lane": "1.21.1",
+    "loader": "neoforge",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public net.minecraft.client.gui.screens.Screen screen;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public double getGuiScale();\r",
+      "  public boolean showDebugScreen();\r"
+    ]
+  },
+  {
+    "lane": "1.21.10",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public net.minecraft.client.gui.screens.Screen screen;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public int getGuiScale();\r",
+      "  public boolean showDebugScreen();\r"
+    ]
+  },
+  {
+    "lane": "1.21.10",
+    "loader": "neoforge",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public net.minecraft.client.gui.screens.Screen screen;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public int getGuiScale();\r",
+      "  public boolean showDebugScreen();\r"
+    ]
+  },
+  {
+    "lane": "1.21.11 recode",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public net.minecraft.client.gui.screens.Screen screen;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public int getGuiScale();\r",
+      "  public boolean showDebugScreen();\r"
+    ]
+  },
+  {
+    "lane": "1.21.11 recode",
+    "loader": "neoforge",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public net.minecraft.client.gui.screens.Screen screen;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public int getGuiScale();\r",
+      "  public boolean showDebugScreen();\r"
+    ]
+  },
+  {
+    "lane": "26.1.2",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public net.minecraft.client.gui.screens.Screen screen;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public int getGuiScale();\r",
+      "  public boolean showDebugScreen();\r"
+    ]
+  },
+  {
+    "lane": "26.1.2",
+    "loader": "neoforge",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public net.minecraft.client.gui.screens.Screen screen;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public int getGuiScale();\r",
+      "  public boolean showDebugScreen();\r"
+    ]
+  },
+  {
+    "lane": "26.2",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public net.minecraft.client.gui.screens.Screen screen();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public int getGuiScale();\r",
+      "  public boolean showDebugScreen();\r"
+    ]
+  },
+  {
+    "lane": "26.2",
+    "loader": "neoforge",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public net.minecraft.client.gui.screens.Screen screen();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public int getGuiScale();\r",
+      "  public boolean showDebugScreen();\r"
+    ]
+  },
+  {
+    "lane": "26.3",
+    "loader": "fabric",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public net.minecraft.client.gui.screens.Screen screen();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public int getGuiScale();\r",
+      "  public boolean showDebugScreen();\r"
+    ]
+  },
+  {
+    "lane": "26.3",
+    "loader": "neoforge",
+    "declarations": [
+      "  public final net.minecraft.client.gui.Gui gui;\r",
+      "  public net.minecraft.client.multiplayer.ClientLevel level;\r",
+      "  public boolean isPaused();\r",
+      "  public boolean isWindowActive();\r",
+      "  public net.minecraft.client.gui.components.DebugScreenOverlay getDebugOverlay();\r",
+      "  public net.minecraft.client.gui.screens.Screen screen();\r",
+      "  public int getGuiScaledWidth();\r",
+      "  public int getGuiScaledHeight();\r",
+      "  public int getGuiScale();\r",
+      "  public boolean showDebugScreen();\r"
+    ]
+  }
+]

@@ -1,0 +1,124 @@
+[
+  {
+    "lane": "1.20.1 recode",
+    "loader": "fabric",
+    "methods": [
+      "  public void destroy();\r",
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "1.20.1 recode",
+    "loader": "forge",
+    "methods": [
+      "  public void destroy();\r",
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "1.21.1",
+    "loader": "fabric",
+    "methods": [
+      "  public void destroy();\r",
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "1.21.1",
+    "loader": "neoforge",
+    "methods": [
+      "  public void destroy();\r",
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "1.21.10",
+    "loader": "fabric",
+    "methods": [
+      "  public void destroy();\r",
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "1.21.10",
+    "loader": "neoforge",
+    "methods": [
+      "  public void destroy();\r",
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "1.21.11 recode",
+    "loader": "fabric",
+    "methods": [
+      "  public void destroy();\r",
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "1.21.11 recode",
+    "loader": "neoforge",
+    "methods": [
+      "  public void destroy();\r",
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "26.1.2",
+    "loader": "fabric",
+    "methods": [
+      "  public void destroy();\r",
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "26.1.2",
+    "loader": "neoforge",
+    "methods": [
+      "  public void destroy();\r",
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "26.2",
+    "loader": "fabric",
+    "methods": [
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "26.2",
+    "loader": "neoforge",
+    "methods": [
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "26.3",
+    "loader": "fabric",
+    "methods": [
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  },
+  {
+    "lane": "26.3",
+    "loader": "neoforge",
+    "methods": [
+      "  public void close();\r",
+      "  public void stop();\r"
+    ]
+  }
+]

@@ -1,0 +1,43 @@
+oneconfig.huds.edit=Edit HUD...
+
+oneconfig.huds.all=All
+oneconfig.huds.pvp=PvP
+oneconfig.huds.info=World & Server
+oneconfig.huds.player=Player
+
+oneconfig.hudeditor.title=HUD Editor
+oneconfig.hudeditor.designer.title=Designer
+oneconfig.hudeditor.settings.title=Settings
+oneconfig.hudeditor.general.title=Component Options
+oneconfig.hudeditor.choosesomething=Click on an element to continue.
+oneconfig.hudeditor.cantedit.aslegacy=This HUD is running in legacy compatibility mode and cannot be edited.
+
+oneconfig.hudeditor.padding.title=ALIGNMENT & PADDING
+oneconfig.hudeditor.padding.info=These settings control the distance between the edge of the background and the HUD, as well as its alignment.
+oneconfig.hudeditor.padding.between=Pad between
+oneconfig.hudeditor.padding.edges=Edge padding
+oneconfig.hudeditor.staticwidth=Static width
+oneconfig.hudeditor.corner.radius=Corner radius
+
+oneconfig.hudeditor.color.title=COLORS
+oneconfig.hudeditor.color.info=These settings control the color of the HUD element.
+oneconfig.hudeditor.bg.color.info=These settings control the color of the background.
+
+oneconfig.hudeditor.component.title=Component settings
+oneconfig.hudeditor.component.info=These settings control the size and alignment of the component.
+oneconfig.hudeditor.component.notimplemented=Unfortunately, this component is not currently supported by the HUD editor.\nIf you are a developer, please contact Polyfrost for more information.
+
+oneconfig.hudeditor.color.fill=Fill color
+oneconfig.hudeditor.color.border=Border color
+
+oneconfig.hudeditor.opacity=Opacity
+oneconfig.hudeditor.rotation=Rotation
+oneconfig.hudeditor.radii=Corner radius
+oneconfig.hudeditor.skew=Skew
+
+oneconfig.hudeditor.text.title=TEXT OPTIONS
+oneconfig.hudeditor.text.example=The quick brown fox jumps over the lazy dog
+oneconfig.hudeditor.text.size=Font size
+oneconfig.hudeditor.text.weight=Weight
+oneconfig.hudeditor.text.font=Font
+oneconfig.hudeditor.text.effects=Case type

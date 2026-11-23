@@ -1,0 +1,558 @@
+[
+  {
+    "path": "brand/oneconfig.svg",
+    "sha256": "cd2cc56bdbd41a60d12b66214dd66cebd3b7c8f6fab0e2a66ef71c98c9fde968"
+  },
+  {
+    "path": "brand/oneconfig-mc.svg",
+    "sha256": "cd2cc56bdbd41a60d12b66214dd66cebd3b7c8f6fab0e2a66ef71c98c9fde968"
+  },
+  {
+    "path": "brand/oneconfig-mc-light.svg",
+    "sha256": "ef4e400766dbfd08aef11a4ea87931094e02c2a68c3b6ead378960ba53016245"
+  },
+  {
+    "path": "brand/oneconfig-light.svg",
+    "sha256": "ef4e400766dbfd08aef11a4ea87931094e02c2a68c3b6ead378960ba53016245"
+  },
+  {
+    "path": "brand/oneconfig-icon.svg",
+    "sha256": "f4edde454bab8c007a86c6d2773b5a978b93bded6591e193a058f0b099e134d6"
+  },
+  {
+    "path": "ico/alert-circle.svg",
+    "sha256": "92351fba0bc41cafddc060a3145c4b52645cc0e59a88a3ed9c837d15ca8b44e5"
+  },
+  {
+    "path": "ico/external-link.svg",
+    "sha256": "aa9d27b9a0a0485bdd6f20ddcc747c42bdbda138dad9b441ae32856b2045acb2"
+  },
+  {
+    "path": "ico/down.svg",
+    "sha256": "0dbb3503c31cc221110207e2eb58051caf0771780eca896290f17262c22f4dcf"
+  },
+  {
+    "path": "ico/dots-vertical.svg",
+    "sha256": "8609fbf9a9d9683613c708e664c92c3bb45ab04e6f16bc72739874f050329167"
+  },
+  {
+    "path": "ico/dots-grid.svg",
+    "sha256": "8297f72b1791cb0720995cb15b6c95b3453daa0233a437d82f7a1d84ee1338bb"
+  },
+  {
+    "path": "ico/default_mod.svg",
+    "sha256": "bc618565809605a09eb518c503d2e760cba111ab82b75dce15cb8fbbc1f56cd2"
+  },
+  {
+    "path": "ico/copy.svg",
+    "sha256": "3b9fddb696b9509a4e9b54479e6032bea6da00b96dbcb54f45796f1a0c99ec48"
+  },
+  {
+    "path": "ico/copy-plus.svg",
+    "sha256": "a5714dc5922899ae01caf6c869fd6a80230e8aab10525e724846ac740455e256"
+  },
+  {
+    "path": "ico/console.svg",
+    "sha256": "74f42dcaa996385bfad2d36e263af9b4d11dedd248c8f4cd1f03467661adc87b"
+  },
+  {
+    "path": "ico/combat.svg",
+    "sha256": "861acbc627196fa99245860c119077922a0fc8e905acb9e6cbd60904826a9886"
+  },
+  {
+    "path": "ico/cog.svg",
+    "sha256": "840ffb01d6b5aaa08a290097159b41e85110d762e99d0d0b4413f5818025a10b"
+  },
+  {
+    "path": "ico/cloud.svg",
+    "sha256": "4a284dca5814a532331312d7f1202f88d3d6bec954763180fed7d04d0dd617f6"
+  },
+  {
+    "path": "ico/close.svg",
+    "sha256": "401ddc5b69bcffc2d1de4db32f78fe6fb93d185f97a5bd138d562edce82ce541"
+  },
+  {
+    "path": "ico/clipboard.svg",
+    "sha256": "81ffac2a2d98e82711c3e052376f37327301bb363eca5f73554dfd3c9378ba17"
+  },
+  {
+    "path": "ico/check-circle.svg",
+    "sha256": "ac8042115289b4f8074a4af870b58eca9e4d4fac4862a936a243f6f2ff8b8188"
+  },
+  {
+    "path": "ico/maximise.svg",
+    "sha256": "da3241b1620dfd97f5319138201310d28aea6b01618cfc28d052bf53917e4405"
+  },
+  {
+    "path": "ico/capitalized.svg",
+    "sha256": "1b6aea374e88f83ffd7e92fac9fffc9a7598e949592d8af121169de20986bdd7"
+  },
+  {
+    "path": "ico/lowercase.svg",
+    "sha256": "3391800a8feea6b7c32d4f9d2534094191dfcaef87052d51309c124166385da1"
+  },
+  {
+    "path": "ico/bold.svg",
+    "sha256": "21a684dc53f98f72b463268213348dd7acac8709a4118f921b7c7f67f68f1785"
+  },
+  {
+    "path": "ico/lock.svg",
+    "sha256": "36208ef00124caf0f17a2c4fca5c64ea6601f6a5c64c77a0b91d804a16ce672d"
+  },
+  {
+    "path": "ico/bell.svg",
+    "sha256": "d380d23f18a05087b7071c3fc4f7da9822ed09ade4a9e9077c6a29977c293335"
+  },
+  {
+    "path": "ico/lightning-01.svg",
+    "sha256": "e379b700ac7820a14d88a7c94f69636c78d4c550598c7edb7faee689c6264a03"
+  },
+  {
+    "path": "ico/align.svg",
+    "sha256": "a80482bb411f1e513d17e7fe8c385a21c9e87a98a58f2f40da0387d434d16ca0"
+  },
+  {
+    "path": "ico/left-arrow.svg",
+    "sha256": "c5547d160bf90cf89b015c21dfd42c6a44437f0a818dbe846610021ad4ad66b4"
+  },
+  {
+    "path": "ico/align-top.svg",
+    "sha256": "e4de7a7ba3f86fb41f673030db3357861a0c2af47517bdc6244db26cad4c979d"
+  },
+  {
+    "path": "ico/align-right.svg",
+    "sha256": "7eb953bcf6eb4cf4e3d7d7fe0d4d751f26491450c6f3747d5b950d0cdff251b9"
+  },
+  {
+    "path": "ico/align-middle.svg",
+    "sha256": "77e28627db951bf873eb832e84b6704c7df0686214107b796eeb6a07821f47c9"
+  },
+  {
+    "path": "ico/align-left.svg",
+    "sha256": "28207cca115d690ad0dbf5156d0f5307529263d87752f16b626dcc8fa803b6ae"
+  },
+  {
+    "path": "ico/align-center.svg",
+    "sha256": "154a3d217d2282dfc8843e9b9ac9fe42f96aaa1fc5291dd3d416c0403728cdfe"
+  },
+  {
+    "path": "ico/align-bottom.svg",
+    "sha256": "e2ef0acbe32492fd9fe633ba38731dd425dacb53ae52ff9f1ec56b24e256ebc8"
+  },
+  {
+    "path": "ico/hud.svg",
+    "sha256": "3468c581a3cfa00cd3993ca2200024c76e03fad02ae6e53f05fa6362fb4cc7a6"
+  },
+  {
+    "path": "ico/folder.svg",
+    "sha256": "f1ec146fc59151ef4e24164209d9b089fc564070a8fdb4a34bea1b37a6f0288a"
+  },
+  {
+    "path": "ico/eye.svg",
+    "sha256": "accde6ae89295e0594b01215904a2348c0397ae50c4ed0cd7d186a0fa6e42916"
+  },
+  {
+    "path": "ico/eye-off.svg",
+    "sha256": "37f193d882a8fd25439912ffc44aac02d8fb0eb476f73e4865e38c7a3e03200b"
+  },
+  {
+    "path": "ico/italic.svg",
+    "sha256": "b0dd1823dd0c92c46375489dbf8c6da962ca6f67a5a3ac79a5e48ce5f0478679"
+  },
+  {
+    "path": "ico/info.svg",
+    "sha256": "094dbd4d4d68fd5a6b02f5e862b27c8f20255017219d0ac901c657678e18df34"
+  },
+  {
+    "path": "ico/keyboard.svg",
+    "sha256": "1ed76e1b00ce859fd667e524f94ffa0e435441a30bb055aa011aa0fc87c765ed"
+  },
+  {
+    "path": "ico/pad-right.svg",
+    "sha256": "8a93fa4ef14ad9f706cb2b8ae1d9fc2f6304bf74e13913ae35d9d7223bec649f"
+  },
+  {
+    "path": "ico/pad-left.svg",
+    "sha256": "a208c6658f0262e2c4f744846a1e0458230dbbd5a8877aedb37fa0c5b6ef8e2f"
+  },
+  {
+    "path": "ico/pad-bottom.svg",
+    "sha256": "d03ebede1caa56d658da04cc6e38d46d04e77a1bbcbe031ac19c0b5bc984b40e"
+  },
+  {
+    "path": "ico/move.svg",
+    "sha256": "b54a299bd0357fd3de0714596121559bec1efe427a69c0e61f0ef1fcc3c64ad8"
+  },
+  {
+    "path": "ico/moon.svg",
+    "sha256": "93021285d5bd6140bc3b7e4cbcedaf852b95fa05b7bfa4a47dc5749c064fafe7"
+  },
+  {
+    "path": "ico/minus.svg",
+    "sha256": "8760708508b3d806d104245669069b370f8a6b4d90255b800789c4f9779f1cd1"
+  },
+  {
+    "path": "ico/layers.svg",
+    "sha256": "b54a299bd0357fd3de0714596121559bec1efe427a69c0e61f0ef1fcc3c64ad8"
+  },
+  {
+    "path": "ico/profiles.svg",
+    "sha256": "413f9c1b70cba2d51984a33492c4fb5618d107213c385beb2c60af8893fed8a2"
+  },
+  {
+    "path": "ico/plus.svg",
+    "sha256": "084ca4b3e43e6a725bce8ecda0722be929f3b3dfc3bc8eea0d51bf6b5b44bfe7"
+  },
+  {
+    "path": "ico/paintbrush.svg",
+    "sha256": "d4a8fe9aefb532c48c248d62212ffb70ca9ecfa1f00aebf1f80a5c257aab1d17"
+  },
+  {
+    "path": "ico/pad-top.svg",
+    "sha256": "a2c43a5b2c556f3c95bd0409d4197e83c0ffaa05e9bbcfe2dc386396c8065bcc"
+  },
+  {
+    "path": "ico/redo.svg",
+    "sha256": "24a019efdb7ed6183439aea7e1582f2b7d470873b603ee8c2d92fe87a93b08f0"
+  },
+  {
+    "path": "ico/qol.svg",
+    "sha256": "60ab79a0b6630428020e03dbb2532d05ec0177865f7fe9c8fb8e0882ec44a8f1"
+  },
+  {
+    "path": "ico/refresh.svg",
+    "sha256": "63a777878077532ccbc28303003074273e096efcb5bea26e4ac996d3d6c90c49"
+  },
+  {
+    "path": "ico/right-arrow.svg",
+    "sha256": "a7dd6d87454b7bb72829b80ec78fa89edcbbec9305ca41cb7ee41908fe5c009c"
+  },
+  {
+    "path": "ico/scissors.svg",
+    "sha256": "39f5f5f8b030862f4fc33e4d5d43ff0fbc14c50ae040ebad056c93d2b68caa64"
+  },
+  {
+    "path": "ico/x-circle.svg",
+    "sha256": "96fe24053e7ba988bdbcc5e377329c73c84a09c1f5fb09a46bd1c7fba7648b3f"
+  },
+  {
+    "path": "ico/uppercase.svg",
+    "sha256": "d91db8e35f2a0404eb6e625bd3aa69bfe397998617e135f9801820c7f67c8b19"
+  },
+  {
+    "path": "ico/up.svg",
+    "sha256": "a3804a824abc82f0e7d7e8994a3a6d6d00548d6499b9ad7055cbf3d31410c6f7"
+  },
+  {
+    "path": "ico/unlock.svg",
+    "sha256": "3d49fee2bac2dc9f520d6e76459d1fbc8008f83cd09f27e2d6ef6ff4f4bdc2d1"
+  },
+  {
+    "path": "ico/undo.svg",
+    "sha256": "8498c0dc2650665461c5538d4cae0a5e74aabcb9016ece134ea4fe093959ce2d"
+  },
+  {
+    "path": "ico/underline.svg",
+    "sha256": "01b577a6e2c3e2d4d84e0f3ee34ee219634b76610fae8f6f01ebfea78d17b4ea"
+  },
+  {
+    "path": "ico/trash.svg",
+    "sha256": "04bfda276380c42cd79ee4cbda951c8f62180978ca45f96fd13f0643143e0488"
+  },
+  {
+    "path": "ico/tick.svg",
+    "sha256": "408aef47b0615091aa20d06aef6785a00035169d1ef97fa49c8790b86fe0410f"
+  },
+  {
+    "path": "ico/text.svg",
+    "sha256": "e8893b4a08643ec5a8857202bd6754dd2c310688745d361d09592a8bd1e28767"
+  },
+  {
+    "path": "ico/text-input.svg",
+    "sha256": "c1635719f41db8f09b4288f08701734c437fe3271ca405f0fa266fa872275022"
+  },
+  {
+    "path": "ico/sun.svg",
+    "sha256": "16466452fbaddb479beb77e22d4bc9a27c9f6eb77a581dcfc01b1f105f362027"
+  },
+  {
+    "path": "ico/strikethrough.svg",
+    "sha256": "2f00d21bda863a80c5b65f1520c3ba876ffac0d34e825d46e8711f80d79f455b"
+  },
+  {
+    "path": "ico/star.svg",
+    "sha256": "ee3788499be165a52bab6483e09ac3e75230172e12b3936f5fbf32da86e02803"
+  },
+  {
+    "path": "ico/star-filled.svg",
+    "sha256": "776d0176e2a2057214acfb1bfb901b9d29e6a42a26d0a1d9824c28e61acf22da"
+  },
+  {
+    "path": "ico/spanner.svg",
+    "sha256": "ed8599fd248e07ee1e0a24f636ef71248c26fe000d89db56d69347dd00cfdae0"
+  },
+  {
+    "path": "ico/shuffle.svg",
+    "sha256": "c7686db223760d96f30963b28d9312e98f86fcc93f6bf92bd2eaaf0868b21139"
+  },
+  {
+    "path": "ico/settings.svg",
+    "sha256": "6ac1578d936cad4a3ca8f685e3680dbe57d9a9b095edc97117da519e17cf44d5"
+  },
+  {
+    "path": "ico/select-all.svg",
+    "sha256": "a98124b657be9b3e18765a96e446cc024bf5ce01c2449fa958e774c750d58e98"
+  },
+  {
+    "path": "ico/search.svg",
+    "sha256": "950259d7efc50445d5592ed5a0da619ab7b8aea737cc9e0b16253725c67f6595"
+  },
+  {
+    "path": "ico/minecraft/x-circle.svg",
+    "sha256": "05c9d4e20d20b6bab51f955b806cf3f6d8427099960b90dec30dfcadd12e19e8"
+  },
+  {
+    "path": "ico/minecraft/uppercase.svg",
+    "sha256": "08fceca5230f5486db2d6b005c01acc32b843e40a32df8ddac95d7add3d3b598"
+  },
+  {
+    "path": "ico/minecraft/up.svg",
+    "sha256": "f5ac6738fd5cc59d00dbf29a4553b4dc3692fcc8d18b3c19ad89fd295952af3f"
+  },
+  {
+    "path": "ico/minecraft/unlock.svg",
+    "sha256": "c527ff307c228cad012114c3b2fae4fa98eb4fe4403c5a82ce9f79c071187275"
+  },
+  {
+    "path": "ico/minecraft/underline.svg",
+    "sha256": "2789c3bf65ce484876bac0659a544a4075c9ddb7d7f07d330a580370c76dc22e"
+  },
+  {
+    "path": "ico/minecraft/trash.svg",
+    "sha256": "a52212361057b82262c73c3d62fdd3fafecc43baf43125ceec888d8672661d5c"
+  },
+  {
+    "path": "ico/minecraft/tick.svg",
+    "sha256": "826d936697d1fbf27b63221b7a420e46bedeb43b9d757def262228d47ea8036a"
+  },
+  {
+    "path": "ico/minecraft/text.svg",
+    "sha256": "f90ef17abe5501f537117b853297c919428ae2c4aeb400a18add4f5e0720fb1f"
+  },
+  {
+    "path": "ico/minecraft/text-input.svg",
+    "sha256": "4977aefe4ff5c63494faa6237fef4d6571d7837ef62966ace3fb0a326379c8bb"
+  },
+  {
+    "path": "ico/minecraft/sun.svg",
+    "sha256": "8a955ca052092fca4df76790731c3eaa99346ee614f15dd7174883afc5ae1393"
+  },
+  {
+    "path": "ico/minecraft/strikethrough.svg",
+    "sha256": "3ba1252cae68096137f60aff7b17a7558cb908b2e4323f8a68e5621cccf009f9"
+  },
+  {
+    "path": "ico/minecraft/star.svg",
+    "sha256": "1612ef3b47bbef53a0499ff79f82907da176993175abfed27e2655bb7833b3ee"
+  },
+  {
+    "path": "ico/minecraft/star-filled.svg",
+    "sha256": "914fe32f6dfb34b59cc194b9a4a4059bab7e190b72b71ff1595c645477908d90"
+  },
+  {
+    "path": "ico/minecraft/spanner.svg",
+    "sha256": "652fabb64d31fabb3dfe784b895908cad8a2ae704dbe81e8555f86062eb4059d"
+  },
+  {
+    "path": "ico/minecraft/shuffle.svg",
+    "sha256": "128e0d124a1e5f016b7d8830a74cc736388b04e16c1400c148802f420ca8af0a"
+  },
+  {
+    "path": "ico/minecraft/settings.svg",
+    "sha256": "f35d36e785a2e367ade2f950f7661cac93625de77bb1751adf0d97e64f3a6df3"
+  },
+  {
+    "path": "ico/minecraft/select-all.svg",
+    "sha256": "aa06a6db22d919b42fd7e48811d9d8f740c5c43709d614625e779d26aa200037"
+  },
+  {
+    "path": "ico/minecraft/search.svg",
+    "sha256": "954830021fbf2cb9b6e2146e19100f00f583a7a496a681b899b972ed58171d35"
+  },
+  {
+    "path": "ico/minecraft/scissors.svg",
+    "sha256": "d2a46460e490f20f27fda84d17d99204ba99c7cfa5fa44e41243c7de055af7b1"
+  },
+  {
+    "path": "ico/minecraft/right-arrow.svg",
+    "sha256": "b681ec859904824a000dbac2213c79f28d625834f3631e70f6aa8cde44f6aa18"
+  },
+  {
+    "path": "ico/minecraft/refresh.svg",
+    "sha256": "614aa6d7101950e5500db66c7f5299dcb2d3c2ac0bfe2b8a4dfa89e051ff64a4"
+  },
+  {
+    "path": "ico/minecraft/qol.svg",
+    "sha256": "652fabb64d31fabb3dfe784b895908cad8a2ae704dbe81e8555f86062eb4059d"
+  },
+  {
+    "path": "ico/minecraft/profiles.svg",
+    "sha256": "f35e27f3bde919fc29e56c0d76de01e4ca9c0645232a504c0f4bb186f4d567d6"
+  },
+  {
+    "path": "ico/minecraft/preferences.svg",
+    "sha256": "8481eaa73b5f8594c19fa9b913922bd54a2c077eb2a1d75264cf79d11df9ea84"
+  },
+  {
+    "path": "ico/minecraft/plus.svg",
+    "sha256": "f8f74a47a8fe90faf1ed53cde10ba66ce9c2f16fe5962366742b377ad43d19d0"
+  },
+  {
+    "path": "ico/minecraft/paintbrush.svg",
+    "sha256": "a7b2b4f9482d0cb128363d83d6b99cc3d047bd7fc484aaf2959913e15a5c73b6"
+  },
+  {
+    "path": "ico/minecraft/move.svg",
+    "sha256": "9f174b4ea705a9acbb756ea1db8d95836997f1f83c2edd8e8c316cba788c2e1e"
+  },
+  {
+    "path": "ico/minecraft/moon.svg",
+    "sha256": "0bda405828aba0a17727efcd6ed611ede5cd2c9dbb52b8a01c1901d0d671971c"
+  },
+  {
+    "path": "ico/minecraft/minus.svg",
+    "sha256": "a67af882f144249e3f83d11f95a5107db39dc3c15cc090984f156765cf979074"
+  },
+  {
+    "path": "ico/minecraft/maximise.svg",
+    "sha256": "c9462229268088ed249ad0762b195bbeccb2ad3167dca752620de292c233f2c5"
+  },
+  {
+    "path": "ico/minecraft/lowercase.svg",
+    "sha256": "1c1ce64f9939f4cf0c32af3714ff792b3018a08c093ddc428b3e4af8943f37bb"
+  },
+  {
+    "path": "ico/minecraft/lock.svg",
+    "sha256": "949de8ab1798e7cf1b4676777cfd19ca0059e6161faca9730f4f134c53b02731"
+  },
+  {
+    "path": "ico/minecraft/lightning-01.svg",
+    "sha256": "5587bdc0cfce18372a1e2791ab301be832ee7a2ddb5e726088bc1407eaa24e48"
+  },
+  {
+    "path": "ico/minecraft/left-arrow.svg",
+    "sha256": "65a6c7e2cf6999a85f6e9bb2071fb2007a65dfde5330df6b222f2f5d1602f020"
+  },
+  {
+    "path": "ico/minecraft/layers.svg",
+    "sha256": "9f174b4ea705a9acbb756ea1db8d95836997f1f83c2edd8e8c316cba788c2e1e"
+  },
+  {
+    "path": "ico/minecraft/keyboard.svg",
+    "sha256": "833c38d96b460698fcac4ad28193f0d94b1b8f8b11e2ae705602396723b36a34"
+  },
+  {
+    "path": "ico/minecraft/italic.svg",
+    "sha256": "46c9e8bd697d244bc2b47c120454577d24c02b5d143d445d494ce9d3641090c7"
+  },
+  {
+    "path": "ico/minecraft/info.svg",
+    "sha256": "9015bd714c2fe3c9b187b886acdaecff776e70a4d5f3479a7d58146e6aa9f7f1"
+  },
+  {
+    "path": "ico/minecraft/hud.svg",
+    "sha256": "913b2401325dcf215352f7c696f396afe640be79d2779704dbc8a5f5dc3ee635"
+  },
+  {
+    "path": "ico/minecraft/eye.svg",
+    "sha256": "0fd970fb0b3919de00ac00eb11aede5f5818fe4a287ef0f8625ad42d5aaa96fa"
+  },
+  {
+    "path": "ico/minecraft/eye-off.svg",
+    "sha256": "85f217bdd625a571b88224d8426ab84c2146a296172396f8e55eb048a43c96bb"
+  },
+  {
+    "path": "ico/minecraft/external-link.svg",
+    "sha256": "ddc937bc25fbd69ff0d82d2de39860e21810d2700735457fbea5d27534947c92"
+  },
+  {
+    "path": "ico/minecraft/down.svg",
+    "sha256": "c3897aa2bef549b47e52d0c5c51d110f088e8633c5b33146a2384f2f6b03cb26"
+  },
+  {
+    "path": "ico/minecraft/dots-vertical.svg",
+    "sha256": "8609fbf9a9d9683613c708e664c92c3bb45ab04e6f16bc72739874f050329167"
+  },
+  {
+    "path": "ico/minecraft/dots-grid.svg",
+    "sha256": "d089f3f6dd5986dd30ce2bb562834d188592a801809be87f4648279aa0110c56"
+  },
+  {
+    "path": "ico/minecraft/copy.svg",
+    "sha256": "0891c50464362375319bbfcbe4bf83b36a1e253dbe93e2d920aad5281c2ba19d"
+  },
+  {
+    "path": "ico/minecraft/copy-plus.svg",
+    "sha256": "3e914d51a47dab7d12cf90b4882e92157c25eeb8bd7c2529cbc9d2c7ed4d3786"
+  },
+  {
+    "path": "ico/minecraft/console.svg",
+    "sha256": "f260e17453cda064d7ac96ce5017b6295e7156b7e71cfbf666abbc9145a03c96"
+  },
+  {
+    "path": "ico/minecraft/combat.svg",
+    "sha256": "f260e17453cda064d7ac96ce5017b6295e7156b7e71cfbf666abbc9145a03c96"
+  },
+  {
+    "path": "ico/minecraft/cog.svg",
+    "sha256": "ca878b1ddfd67b6baf4a3a7967b958b2df5ac299374cb2c43275cd58714b3d46"
+  },
+  {
+    "path": "ico/minecraft/cloud.svg",
+    "sha256": "a70966be5344ef7d867bfb8f0b6c75167e365be3bf49c0e45beac0f8e2df95ea"
+  },
+  {
+    "path": "ico/minecraft/close.svg",
+    "sha256": "37df2b2a3f9cfd15e10aa861ec028afe95dbb9b958ec99be6e793f1f93109cd0"
+  },
+  {
+    "path": "ico/minecraft/clipboard.svg",
+    "sha256": "387c1699aa876c7479f4d00c725f9616e5a217dc50b97529b5996e52b5909d59"
+  },
+  {
+    "path": "ico/minecraft/check-circle.svg",
+    "sha256": "0480226ef60cd94ade657001785b7aea53ffe9db4e3f51bd6f032d65978b6852"
+  },
+  {
+    "path": "ico/minecraft/capitalized.svg",
+    "sha256": "0ca8c80b262ca8f2802d369da8b23940af4644aecf1a9b4dddcc27f3e98f7810"
+  },
+  {
+    "path": "ico/minecraft/bold.svg",
+    "sha256": "b070924446899bdf4ebddb35a85b4e579e0127b9f77ff8e0cd78849dc9d2e964"
+  },
+  {
+    "path": "ico/minecraft/bell.svg",
+    "sha256": "f106c3147f5789a969116b61c2fa06ddf9662afb46e2a73f906d07a409acf0d8"
+  },
+  {
+    "path": "ico/minecraft/align.svg",
+    "sha256": "5bb630a2f69b1d542e7a22fa2dd2fdd6549a6ac766e7a5dba17247981e4d0c72"
+  },
+  {
+    "path": "ico/minecraft/align-right.svg",
+    "sha256": "31216e280876444aa223fe97c35ca81140d5367c6bcec259022cb200eb930e18"
+  },
+  {
+    "path": "ico/minecraft/align-left.svg",
+    "sha256": "1f4e82d6586ee842e49c9e6ab2c8531acd671b2e72736d3206353381809ed7ef"
+  },
+  {
+    "path": "ico/minecraft/align-center.svg",
+    "sha256": "5fb52feb756047c14e9babc6ba8702f47a42dce4daa71fe872b1e32c2bc91276"
+  },
+  {
+    "path": "ico/minecraft/alert-circle.svg",
+    "sha256": "053064fab4d498eee74f4b976d8b84917829dfbc50b139f3b8c4a3b5c18a7317"
+  }
+]
