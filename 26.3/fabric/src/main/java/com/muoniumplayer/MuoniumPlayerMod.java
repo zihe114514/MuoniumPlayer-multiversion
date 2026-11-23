@@ -80,7 +80,7 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // 两个形参（extractor / deltaTracker）都用不上：本渲染层不走原版 GUI 批次，
         // 自己开 Skia 帧画到离屏图上，帧末再合成（见 GlSurfaceMixin）。
         HudElementRegistry.addLast(
-                Identifier.fromNamespaceAndPath(MuoniumPlayerClient.MOD_ID, "player_hud"),
+                Identifier.fromNamespaceAndPath(MuoniumPlayerClient.MOD_ID, MuoniumPlayerClient.PLAYER_HUD_PATH),
                 (extractor, deltaTracker) -> {
                     client.onHudRender();
                     // 第二行是给「渲染层没起来」时的原版 GUI 提示：Skia 那条路整个跳过时，

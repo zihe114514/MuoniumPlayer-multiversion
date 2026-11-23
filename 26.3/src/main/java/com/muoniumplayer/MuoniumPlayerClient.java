@@ -72,6 +72,7 @@ public final class MuoniumPlayerClient {
      * minecraft_version 一致，改一处漏另一处会直接构建失败。
      */
     public static final String MC_VERSION = "26.3";
+    static final String PLAYER_HUD_PATH = "player_hud";
 
     /**
      * 加载器 id（{@code fabric} / {@code forge} / {@code neoforge}），由入口外壳在 {@link #init()}
@@ -238,13 +239,14 @@ public final class MuoniumPlayerClient {
         // 类加载器）。这里每 tick 试一次，成功后就只是空判断。
         com.muoniumplayer.core.screens.hud.MuoniumFavorites.ensureRegistered();
 
-        // ---- Gnetum 共存兼容：检测 + 自动关其「muonium」HUD 元素缓存 + 聊天栏告知 ----
+        // ---- Gnetum 共存兼容：检测 + 自动关 Muonium HUD 元素缓存 + 聊天栏告知 ----
         // Gnetum 的 HUD 分帧缓存只认走原版 GUI 管线的回调；本 mod 的 HUD 是 Skija 离屏 +
         // 帧末合成的旁路渲染，它的缓存 FBO 里没有我们的像素，回调被跳帧 = HUD 整块消失
-        //（闪烁）。进世界后第一个 tick 查一次，改 gnetum.json 并反射 reload 即时生效。
+        //（闪烁）。Fabric 走完整元素 ID，原地更新 Gnetum 缓存开关以保留分帧计时。
         // 内部自带「本次启动只查一次」「已关就不说话」闸门，未装 Gnetum 时零成本。
         com.muoniumplayer.core.thirdparty.GnetumCompat.clientTick(
-                mc.player != null && mc.level != null, this.api);
+                mc.player != null && mc.level != null, this.api,
+                "fabric".equals(loaderId) ? MOD_ID + ":" + PLAYER_HUD_PATH : null);
 
         // ---- 驱动所有注册的 EventHandler（如 MuoniumPlayerEventHandler 的调度队列）----
         for (EventHandler handler : this.api.getEventHandlers()) {
