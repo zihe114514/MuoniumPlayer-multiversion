@@ -468,6 +468,64 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 收尾；{@code color(int)} 单参重载与 {@code vertex(Matrix4f, float, float, float)}
      * 便捷重载在 1.20.1 已存在，直接用。lightmap 拆两个坐标走 {@code uv2(int, int)}。</p>
      */
+    @Override
+    public void drawOutlinedGlyph(char c, float x, float y, float sizePx,
+                                  int rgb, float alpha, float rot, float dx, float dy, float sc,
+                                  float strokeWidthPx) {
+        drawDecorativeGlyph(c, x, y, rgb, alpha, rot, dx, dy, sc, strokeWidthPx, true);
+    }
+
+    @Override
+    public void drawTintedGlyph(char c, float x, float y, float sizePx,
+                                int rgb, float alpha, float rot, float dx, float dy, float sc) {
+        drawDecorativeGlyph(c, x, y, rgb, alpha, rot, dx, dy, sc, 0f, false);
+    }
+
+    private void drawDecorativeGlyph(char c, float x, float y, int rgb, float alpha,
+                                    float rot, float dx, float dy, float sc,
+                                    float strokeWidthPx, boolean outline) {
+        if (poseStack == null || buffers == null) return;
+        LyricGlyphAtlas.GlyphCell cell = outline
+                ? LyricGlyphAtlas.getOutlineCell(c, strokeWidthPx)
+                : LyricGlyphAtlas.getTintCell(c);
+        if (cell == null || !(cell.page instanceof LyricGlyphAtlasBridge.PageHandle)) return;
+        ResourceLocation rl = ((LyricGlyphAtlasBridge.PageHandle) cell.page).resourceLocation();
+        if (pendingGlyphPage != cell.page) {
+            if (pendingGlyphPage != null) {
+                buffers.endBatch(currentGlyphType(
+                        ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
+            }
+            pendingGlyphPage = cell.page;
+            pendingGlyphCount = 0;
+        }
+        pendingGlyphCount++;
+
+        float inv = 1f / cell.scale;
+        float left = x - cell.inkX * inv;
+        float top = y - cell.inkY * inv;
+        float right = left + cell.w * inv;
+        float bottom = top + cell.h * inv;
+        float cx = x + cell.advance * inv * 0.5f;
+        float cy = y + cell.inkHeight * inv * 0.5f;
+        boolean transformed = rot != 0f || sc != 1f;
+        float cos = transformed ? (float) Math.cos(Math.toRadians(rot)) : 1f;
+        float sin = transformed ? (float) Math.sin(Math.toRadians(rot)) : 0f;
+        float scale = transformed ? sc : 1f;
+        float halfTexel = 0.5f / LyricGlyphAtlas.PAGE_SIZE;
+        float u0 = cell.x / (float) LyricGlyphAtlas.PAGE_SIZE + halfTexel;
+        float v0 = cell.y / (float) LyricGlyphAtlas.PAGE_SIZE + halfTexel;
+        float u1 = (cell.x + cell.w) / (float) LyricGlyphAtlas.PAGE_SIZE - halfTexel;
+        float v1 = (cell.y + cell.h) / (float) LyricGlyphAtlas.PAGE_SIZE - halfTexel;
+        int argb = (((int) (Math.max(0f, Math.min(1f, alpha)) * 255f) & 0xFF) << 24)
+                | (rgb & 0xFFFFFF);
+        VertexConsumer vc = buffers.getBuffer(currentGlyphType(rl));
+        Matrix4f mat = poseStack.last().pose();
+        putGlyphVertex(vc, mat, left + dx, top + dy, cx + dx, cy + dy, cos, sin, scale, argb, u0, v0);
+        putGlyphVertex(vc, mat, left + dx, bottom + dy, cx + dx, cy + dy, cos, sin, scale, argb, u0, v1);
+        putGlyphVertex(vc, mat, right + dx, bottom + dy, cx + dx, cy + dy, cos, sin, scale, argb, u1, v1);
+        putGlyphVertex(vc, mat, right + dx, top + dy, cx + dx, cy + dy, cos, sin, scale, argb, u1, v0);
+    }
+
     private static void putGlyphVertex(VertexConsumer vc, Matrix4f mat,
                                        float px, float py, float cx, float cy,
                                        float cos, float sin, float s, int argb,

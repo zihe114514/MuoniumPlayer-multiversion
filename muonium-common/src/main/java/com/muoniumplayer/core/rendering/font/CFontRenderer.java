@@ -730,6 +730,23 @@ public class CFontRenderer implements Closeable, SharedConstants {
         return true;
     }
 
+    /** Draw cached glyph geometry as a true Skia stroke; used for 3D lyric outline cells. */
+    public boolean drawGlyphsOutlineOn(Canvas canvas, String s, double x, double y,
+                                       int argb, float strokeWidth) {
+        if (s == null || s.isEmpty() || canvas == null || skFonts.length == 0) return true;
+        if (s.length() > 1024 || s.indexOf('\u00a7') >= 0 || s.indexOf('\n') >= 0) return false;
+        TextBlob blob = plainTextBlobs.get(s);
+        if (blob == null) {
+            blob = buildPlainBlob(s);
+            if (blob != null) plainTextBlobs.put(s, blob);
+        }
+        if (blob != null) {
+            canvas.drawTextBlob(blob, (float) x, (float) (y - 2.0),
+                    SkijaGfx.stroke(argb, Math.max(0.1f, strokeWidth)));
+        }
+        return true;
+    }
+
     private TextBlob buildPlainBlob(String text) {
         RunAccumulator runs = new RunAccumulator(0f, null);
         try {

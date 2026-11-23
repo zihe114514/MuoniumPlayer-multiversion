@@ -391,6 +391,11 @@ public final class HudConfig {
     public static boolean worldLyricsCadenza = false;
     /** 绘光动效模式（现代化引擎）：换句逐字飞行重排 + 径迹拖尾 + 卡拉OK点亮（绘光移植）。 */
     public static boolean worldLyricsHuiguang = false;
+    public static boolean worldLyricsSonnet = false;
+    /** 商籁词边引导线、粒子与矩形包边子开关。 */
+    public static boolean worldLyricsSonnetDecorations = true;
+    /** 商籁描边字、空心回声与色散边缘子开关。 */
+    public static boolean worldLyricsSonnetGlyphEffects = true;
     /** 绘光关键字表（keywordColors）：格式「词:RRGGBB,词:RRGGBB,…」；空 = 无关键字。 */
     public static String worldLyricsKeywordColors = "";
 
@@ -831,6 +836,9 @@ public final class HudConfig {
         worldLyricsTextFlash = false;
         worldLyricsCadenza = false;
         worldLyricsHuiguang = false;
+        worldLyricsSonnet = false;
+        worldLyricsSonnetDecorations = true;
+        worldLyricsSonnetGlyphEffects = true;
         worldLyricsKeywordColors = "";
         worldLyricsQualityTier = 0;
         worldLyricsStayOnScreen = false;
@@ -1046,6 +1054,9 @@ public final class HudConfig {
             worldLyricsTextFlash = getBoolean(o, "worldLyricsTextFlash", worldLyricsTextFlash);
             worldLyricsCadenza = getBoolean(o, "worldLyricsCadenza", worldLyricsCadenza);
             worldLyricsHuiguang = getBoolean(o, "worldLyricsHuiguang", worldLyricsHuiguang);
+            worldLyricsSonnet = getBoolean(o, "worldLyricsSonnet", worldLyricsSonnet);
+            worldLyricsSonnetDecorations = getBoolean(o, "worldLyricsSonnetDecorations", worldLyricsSonnetDecorations);
+            worldLyricsSonnetGlyphEffects = getBoolean(o, "worldLyricsSonnetGlyphEffects", worldLyricsSonnetGlyphEffects);
             worldLyricsKeywordColors = getString(o, "worldLyricsKeywordColors", worldLyricsKeywordColors);
             worldLyricsQualityTier = (int) clamp(getInt(o, "worldLyricsQualityTier", worldLyricsQualityTier), 0, 7);
             worldLyricsStayOnScreen = getBoolean(o, "worldLyricsStayOnScreen", worldLyricsStayOnScreen);
@@ -1281,6 +1292,9 @@ public final class HudConfig {
             o.addProperty("worldLyricsTextFlash", worldLyricsTextFlash);
             o.addProperty("worldLyricsCadenza", worldLyricsCadenza);
             o.addProperty("worldLyricsHuiguang", worldLyricsHuiguang);
+            o.addProperty("worldLyricsSonnet", worldLyricsSonnet);
+            o.addProperty("worldLyricsSonnetDecorations", worldLyricsSonnetDecorations);
+            o.addProperty("worldLyricsSonnetGlyphEffects", worldLyricsSonnetGlyphEffects);
             o.addProperty("worldLyricsKeywordColors", worldLyricsKeywordColors);
             o.addProperty("worldLyricsQualityTier", worldLyricsQualityTier);
             o.addProperty("worldLyricsStayOnScreen", worldLyricsStayOnScreen);

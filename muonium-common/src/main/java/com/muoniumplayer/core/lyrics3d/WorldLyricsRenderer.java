@@ -109,6 +109,17 @@ public final class WorldLyricsRenderer {
                              int rgb, float alpha, float rot, float dx, float dy, float sc,
                              float glowMul, boolean glowOn, int glowColorRgb, int inkRgb);
 
+        /** Hollow glyph outline from the cached Skija stroke atlas; optional typography accent. */
+        default void drawOutlinedGlyph(char c, float x, float y, float sizePx,
+                                       int rgb, float alpha, float rot, float dx, float dy, float sc,
+                                       float strokeWidthPx) {
+        }
+
+        /** Vertex-tinted filled glyph mask for chromatic fringe copies. */
+        default void drawTintedGlyph(char c, float x, float y, float sizePx,
+                                     int rgb, float alpha, float rot, float dx, float dy, float sc) {
+        }
+
         /**
          * 绘光拖尾（径迹）：把一条折线画成圆头描边（folia trackLayer 的
          * stroke(width 1.2, round, round) 等价物）。xs/ys 是折线顶点（文字像素
@@ -343,11 +354,11 @@ public final class WorldLyricsRenderer {
             if (smooth && LyricGlyphAtlas.isFunctional()) {
                 widthOf = WorldLyricsState.cachedTextMetrics(f, widthOf, host, LyricGlyphAtlas.fontGeneration());
             }
-            // 心象动效仅在现代化引擎生效（原版像素风格不受影响）。
-            // 两个动效都开时绘光优先（与设置界面的「此处优先」文案一致）——
-            // 绘光是用户点名要的模式，心象作为兜底回退。
-            boolean huiguang = settings.huiguang && smooth;
-            boolean cadenza = settings.cadenza && smooth && !huiguang;
+            // 文字 PV 动效仅在现代化引擎生效。旧配置多开时按商籁 > 绘光 > 心象解析；
+            // 设置界面是互斥单选，新写入不会出现冲突。
+            boolean sonnet = settings.sonnet && smooth;
+            boolean huiguang = settings.huiguang && smooth && !sonnet;
+            boolean cadenza = settings.cadenza && smooth && !huiguang && !sonnet;
             // 关键字表解析（按设置字符串缓存）+ 本句匹配（folia
             // resolveGlyphKeywordColors 的字符区间精确命中）
             parseKeywordTable(settings.keywordColors);
@@ -358,7 +369,7 @@ public final class WorldLyricsRenderer {
             int coverMain = coverMainColor(settings);
             WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphsForRender(
                     f, songNowMs, row.alpha, settings.wordPop, !row.active, widthOf,
-                    cadenza, huiguang, keywordMatch, coverLut);
+                    cadenza, huiguang, sonnet, keywordMatch, coverLut);
             // 心象模式的分块配色基准色：取色器自定义过的色原样用，没动过时纯白
             //（TEXT_RGB）—— 块的 hero/柔色/白三层关系在 CadenzaMotion.tokenColor
             // 里按基准色派生。
@@ -866,6 +877,71 @@ public final class WorldLyricsRenderer {
                         }
                         continue;
                     }
+                    if (sonnet) {
+                        if (g.rgbOverride == 0 && g.sonnetHero && g.sonnetActive) {
+                            rgb = CadenzaMotion.brighten(rgb, 0.18);
+                        }
+                        float sonnetGlowMul = glowMul * g.sonnetGlow;
+                        boolean sonnetGlowOn = glowOn && sonnetGlowMul > 0.02f;
+                        int sonnetGlowColor = sonnetGlowOn
+                                ? resolveGlowColor(settings, rgb, g.keywordRgb, g.rgbOverride)
+                                : 0;
+                        int sonnetAccent = mixRgb(rgb, 0x8DEBFF, 0.52f) & 0xFFFFFF;
+                        float centerX = g.x + host.smoothCharWidth(g.c, WorldLyricsState.LYRIC_SIZE)
+                                * g.pop * 0.5f;
+                        float centerY = g.y + WorldLyricsState.LYRIC_SIZE * g.pop * 0.5f;
+
+                        if (settings.sonnetGlyphEffects) {
+                            if (g.sonnetHero) {
+                                drawSonnetHeroOutline(host, g, sonnetAccent);
+                            }
+                            drawSonnetChromaticFringe(host, g, rgb);
+                        }
+
+                        if (settings.sonnetDecorations && g.sonnetDecorationOwner
+                                && ((g.sonnetGuideAlpha > 0.02f && g.sonnetGuideProgress > 0.01f)
+                                || (g.sonnetFrameAlpha > 0.02f && g.sonnetFrameProgress > 0.01f))) {
+                            drawSonnetDecorations(host, g, sonnetAccent);
+                        }
+
+                        // Text-only kinetic streak and afterimage; no scene or background pass.
+                        if (g.sonnetTrailOwner && g.sonnetTrailAlpha > 0.02f) {
+                            TRAIL_XS[0] = centerX + g.dx;
+                            TRAIL_YS[0] = centerY + g.dy;
+                            TRAIL_XS[1] = centerX + g.dx + g.sonnetEchoDx;
+                            TRAIL_YS[1] = centerY + g.dy + g.sonnetEchoDy;
+                            int trailArgb = ((int) (Math.min(1f,
+                                    g.alpha * g.sonnetTrailAlpha * 0.75f) * 255f) << 24)
+                                    | sonnetAccent;
+                            host.drawTrail(TRAIL_XS, TRAIL_YS, 2, trailArgb,
+                                    WorldLyricsState.LYRIC_SIZE * 0.12f);
+                        }
+                        if (g.sonnetEchoAlpha > 0.02f) {
+                            if (settings.sonnetGlyphEffects && g.sonnetSemiHero) {
+                                drawSonnetHollowEchoes(host, g, sonnetAccent);
+                            } else {
+                                host.drawSmoothGlyph(g.c, g.x, g.y, WorldLyricsState.LYRIC_SIZE,
+                                        sonnetAccent, g.alpha * g.sonnetEchoAlpha,
+                                        g.rot, g.dx + g.sonnetEchoDx, g.dy + g.sonnetEchoDy,
+                                        g.pop * 0.98f, sonnetGlowMul * 0.28f,
+                                        false, 0, sonnetAccent);
+                            }
+                        }
+                        if (g.sonnetTrailOwner && g.sonnetSpark > 0.02f) {
+                            float starSize = WorldLyricsState.LYRIC_SIZE
+                                    * (0.68f + 0.52f * g.sonnetSpark);
+                            int starArgb = ((int) (Math.min(1f,
+                                    row.alpha * g.sonnetSpark * 0.62f) * 255f) << 24)
+                                    | 0xFFFFFF;
+                            host.drawStar(centerX + g.dx, centerY + g.dy, starSize,
+                                    g.rot + g.k * 17f, starArgb);
+                        }
+                        host.drawSmoothGlyph(g.c, g.x, g.y, WorldLyricsState.LYRIC_SIZE,
+                                rgb, g.alpha, g.rot, g.dx, g.dy, g.pop, sonnetGlowMul,
+                                sonnetGlowOn, sonnetGlowColor,
+                                g.rgbOverride != 0 ? g.rgbOverride : (rgb & 0xFFFFFF));
+                        continue;
+                    }
                     host.drawSmoothGlyph(g.c, g.x, g.y, WorldLyricsState.LYRIC_SIZE,
                             rgb, g.alpha, g.rot, g.dx, g.dy, g.pop, glowMul,
                             glowOn && glowMul > 0.02f, glowColor,
@@ -957,6 +1033,215 @@ public final class WorldLyricsRenderer {
         int g = (int) (((a >> 8) & 0xFF) + (((b >> 8) & 0xFF) - ((a >> 8) & 0xFF)) * t);
         int b2 = (int) ((a & 0xFF) + ((b & 0xFF) - (a & 0xFF)) * t);
         return (r << 16) | (g << 8) | b2;
+    }
+
+    private static final float[] SONNET_DECOR_XS = new float[10];
+    private static final float[] SONNET_DECOR_YS = new float[10];
+
+    static void drawSonnetDecorations(Host host, WorldLyricsState.LyricGlyph glyph,
+                                      int accentRgb) {
+        float centerX = glyph.sonnetDecorX + glyph.dx;
+        float centerY = glyph.sonnetDecorY + glyph.dy;
+        float radians = (float) Math.toRadians(glyph.rot);
+        float cos = (float) Math.cos(radians);
+        float sin = (float) Math.sin(radians);
+        float halfWidth = Math.max(WorldLyricsState.LYRIC_SIZE * 0.38f,
+                glyph.sonnetDecorWidth * 0.5f);
+        float halfHeight = Math.max(WorldLyricsState.LYRIC_SIZE * 0.32f,
+                glyph.sonnetDecorHeight * 0.5f);
+        float pad = WorldLyricsState.LYRIC_SIZE * 0.16f;
+
+        if (glyph.sonnetGuideAlpha > 0.02f && glyph.sonnetGuideProgress > 0.01f) {
+            drawSonnetGuide(host, glyph, accentRgb, centerX, centerY, cos, sin,
+                    halfWidth, halfHeight, pad);
+        }
+        if (glyph.sonnetFrameAlpha > 0.02f && glyph.sonnetFrameProgress > 0.01f) {
+            drawSonnetFrame(host, glyph, accentRgb, centerX, centerY, cos, sin,
+                    halfWidth + pad, halfHeight + pad);
+        }
+    }
+
+    private static void drawSonnetHeroOutline(Host host, WorldLyricsState.LyricGlyph glyph,
+                                              int accentRgb) {
+        float scale = 2.25f;
+        float x = glyph.sonnetDecorX + (glyph.x - glyph.sonnetDecorX) * scale
+                - glyph.sonnetDecorDirection * WorldLyricsState.LYRIC_SIZE * 0.16f;
+        float y = glyph.sonnetDecorY + (glyph.y - glyph.sonnetDecorY) * scale
+                - WorldLyricsState.LYRIC_SIZE * 0.36f;
+        float alpha = glyph.alpha * (glyph.sonnetActive ? 0.22f : 0.15f);
+        host.drawOutlinedGlyph(glyph.c, x, y, WorldLyricsState.LYRIC_SIZE,
+                mixRgb(accentRgb, 0xFFFFFF, 0.14f), alpha,
+                glyph.rot - 5.5f, 0f, 0f, glyph.pop * scale, 0.78f);
+    }
+
+    private static void drawSonnetChromaticFringe(Host host, WorldLyricsState.LyricGlyph glyph,
+                                                  int rgb) {
+        float strength = glyph.sonnetHero ? 0.44f : glyph.sonnetSemiHero ? 0.30f : 0.12f;
+        float offset = WorldLyricsState.LYRIC_SIZE * glyph.pop
+                * (glyph.sonnetHero ? 0.026f : glyph.sonnetSemiHero ? 0.014f : 0.008f);
+        int red = mixRgb(rgb & 0xFFFFFF, 0xFF245E, 0.72f);
+        int cyan = mixRgb(rgb & 0xFFFFFF, 0x20E8FF, 0.72f);
+        host.drawTintedGlyph(glyph.c, glyph.x - offset, glyph.y, WorldLyricsState.LYRIC_SIZE,
+                red, glyph.alpha * strength, glyph.rot, 0f, 0f, glyph.pop);
+        host.drawTintedGlyph(glyph.c, glyph.x + offset, glyph.y, WorldLyricsState.LYRIC_SIZE,
+                cyan, glyph.alpha * strength, glyph.rot, 0f, 0f, glyph.pop);
+    }
+
+    private static void drawSonnetHollowEchoes(Host host, WorldLyricsState.LyricGlyph glyph,
+                                               int accentRgb) {
+        float radians = (float) Math.toRadians(glyph.rot);
+        float normalX = -(float) Math.sin(radians) * glyph.sonnetDecorDirection;
+        float normalY = (float) Math.cos(radians) * glyph.sonnetDecorDirection;
+        float near = WorldLyricsState.LYRIC_SIZE * glyph.pop * 0.48f;
+        float far = WorldLyricsState.LYRIC_SIZE * glyph.pop * 0.82f;
+        float baseX = glyph.x + glyph.sonnetEchoDx;
+        float baseY = glyph.y + glyph.sonnetEchoDy;
+        float alpha = glyph.alpha * glyph.sonnetEchoAlpha;
+        host.drawOutlinedGlyph(glyph.c, baseX + normalX * near, baseY + normalY * near,
+                WorldLyricsState.LYRIC_SIZE, accentRgb, alpha * 0.78f,
+                glyph.rot, 0f, 0f, glyph.pop, 0.62f);
+        host.drawOutlinedGlyph(glyph.c, baseX + normalX * far, baseY + normalY * far,
+                WorldLyricsState.LYRIC_SIZE, accentRgb, alpha * 0.42f,
+                glyph.rot, 0f, 0f, glyph.pop, 0.62f);
+    }
+
+    private static void drawSonnetGuide(Host host, WorldLyricsState.LyricGlyph glyph,
+                                        int accentRgb, float centerX, float centerY,
+                                        float cos, float sin, float halfWidth,
+                                        float halfHeight, float pad) {
+        float side = glyph.sonnetDecorDirection;
+        float x0 = -side * halfWidth * 0.72f;
+        float y0 = -halfHeight - pad - WorldLyricsState.LYRIC_SIZE * 0.32f;
+        int count = writeSonnetCurve(centerX, centerY, cos, sin,
+                x0, y0, -side * halfWidth * 0.24f,
+                y0 - WorldLyricsState.LYRIC_SIZE * 0.58f,
+                side * halfWidth * 0.22f, y0 + WorldLyricsState.LYRIC_SIZE * 0.34f,
+                side * halfWidth * 0.72f, y0, glyph.sonnetGuideProgress);
+        int guideArgb = withAlpha(accentRgb, glyph.sonnetGuideAlpha * 0.82f);
+        host.drawTrail(SONNET_DECOR_XS, SONNET_DECOR_YS, count, guideArgb,
+                WorldLyricsState.LYRIC_SIZE * 0.075f);
+        host.drawStar(SONNET_DECOR_XS[count - 1], SONNET_DECOR_YS[count - 1],
+                WorldLyricsState.LYRIC_SIZE * 0.34f, glyph.rot + 24f, guideArgb);
+        float burst = glyph.sonnetGuideProgress * WorldLyricsState.LYRIC_SIZE * 0.28f;
+        float particleAlpha = glyph.sonnetGuideAlpha * (1f - glyph.sonnetGuideProgress * 0.35f);
+        drawSonnetParticle(host, centerX, centerY, cos, sin,
+                -side * (halfWidth * 0.64f + burst), y0 - burst * 0.45f,
+                WorldLyricsState.LYRIC_SIZE * 0.15f, glyph.rot - 35f,
+                withAlpha(accentRgb, particleAlpha * 0.68f));
+        drawSonnetParticle(host, centerX, centerY, cos, sin,
+                side * (halfWidth * 0.64f + burst * 0.7f), y0 + burst * 0.25f,
+                WorldLyricsState.LYRIC_SIZE * 0.12f, glyph.rot + 48f,
+                withAlpha(0xFFFFFF, particleAlpha * 0.82f));
+    }
+
+    private static void drawSonnetFrame(Host host, WorldLyricsState.LyricGlyph glyph,
+                                        int accentRgb, float centerX, float centerY,
+                                        float cos, float sin, float halfWidth, float halfHeight) {
+        int count = writeSonnetFrame(centerX, centerY, cos, sin, halfWidth, halfHeight,
+                glyph.sonnetFrameProgress);
+        host.drawTrail(SONNET_DECOR_XS, SONNET_DECOR_YS, count,
+                withAlpha(accentRgb, glyph.sonnetFrameAlpha),
+                WorldLyricsState.LYRIC_SIZE * 0.065f);
+        int variant = Math.floorMod(glyph.k, 4);
+        float ornamentSize = WorldLyricsState.LYRIC_SIZE * (variant == 1 ? 0.22f : 0.16f);
+        float cornerAlpha = glyph.sonnetFrameAlpha * 0.9f;
+        for (int i = 0; i < 4; i++) {
+            float cornerX = i == 0 || i == 3 ? -halfWidth : halfWidth;
+            float cornerY = i < 2 ? -halfHeight : halfHeight;
+            drawSonnetParticle(host, centerX, centerY, cos, sin, cornerX, cornerY,
+                    ornamentSize, glyph.rot + (variant == 3 ? 45f : i * 90f),
+                    withAlpha(accentRgb, cornerAlpha));
+        }
+        if (variant == 2) {
+            float sideSize = WorldLyricsState.LYRIC_SIZE * 0.12f;
+            for (int i = 0; i < 4; i++) {
+                float angle = (float) (Math.PI * 0.5 * i);
+                drawSonnetParticle(host, centerX, centerY, cos, sin,
+                        (float) Math.cos(angle) * halfWidth,
+                        (float) Math.sin(angle) * halfHeight,
+                        sideSize, glyph.rot + 45f,
+                        withAlpha(0xFFFFFF, cornerAlpha * 0.8f));
+            }
+        }
+    }
+
+    private static int writeSonnetCurve(float centerX, float centerY, float cos, float sin,
+                                        float x0, float y0, float x1, float y1,
+                                        float x2, float y2, float x3, float y3,
+                                        float progress) {
+        float end = Math.max(0f, Math.min(1f, progress));
+        int count = 0;
+        for (int i = 0; i <= 8; i++) {
+            float t = i / 8f;
+            if (t >= end) break;
+            setSonnetPoint(count++, centerX, centerY, cos, sin,
+                    cubic(x0, x1, x2, x3, t), cubic(y0, y1, y2, y3, t));
+        }
+        setSonnetPoint(count++, centerX, centerY, cos, sin,
+                cubic(x0, x1, x2, x3, end), cubic(y0, y1, y2, y3, end));
+        return count;
+    }
+
+    private static float cubic(float a, float b, float c, float d, float t) {
+        float u = 1f - t;
+        return u * u * u * a + 3f * u * u * t * b + 3f * u * t * t * c + t * t * t * d;
+    }
+
+    private static int writeSonnetFrame(float centerX, float centerY, float cos, float sin,
+                                        float halfWidth, float halfHeight, float progress) {
+        float distance = Math.max(0f, Math.min(1f, progress)) * 4f;
+        int completedSides = Math.min(4, (int) distance);
+        int count = 0;
+        setSonnetFrameCorner(count++, 0, centerX, centerY, cos, sin, halfWidth, halfHeight);
+        for (int i = 1; i <= completedSides; i++) {
+            setSonnetFrameCorner(count++, i, centerX, centerY, cos, sin, halfWidth, halfHeight);
+        }
+        if (completedSides < 4) {
+            float partial = distance - completedSides;
+            if (partial > 0.001f) {
+                float x0 = sonnetFrameX(completedSides, halfWidth);
+                float y0 = sonnetFrameY(completedSides, halfHeight);
+                float x1 = sonnetFrameX(completedSides + 1, halfWidth);
+                float y1 = sonnetFrameY(completedSides + 1, halfHeight);
+                float x = x0 + (x1 - x0) * partial;
+                float y = y0 + (y1 - y0) * partial;
+                setSonnetPoint(count++, centerX, centerY, cos, sin, x, y);
+            }
+        }
+        return count;
+    }
+
+    private static void setSonnetFrameCorner(int index, int corner,
+                                             float centerX, float centerY, float cos, float sin,
+                                             float halfWidth, float halfHeight) {
+        setSonnetPoint(index, centerX, centerY, cos, sin,
+                sonnetFrameX(corner, halfWidth), sonnetFrameY(corner, halfHeight));
+    }
+
+    private static float sonnetFrameX(int corner, float halfWidth) {
+        return corner == 0 || corner == 3 || corner == 4 ? -halfWidth : halfWidth;
+    }
+
+    private static float sonnetFrameY(int corner, float halfHeight) {
+        return corner <= 1 || corner == 4 ? -halfHeight : halfHeight;
+    }
+
+    private static void drawSonnetParticle(Host host, float centerX, float centerY,
+                                           float cos, float sin, float x, float y,
+                                           float size, float rotation, int argb) {
+        host.drawStar(centerX + x * cos - y * sin,
+                centerY + x * sin + y * cos, size, rotation, argb);
+    }
+
+    private static void setSonnetPoint(int index, float centerX, float centerY,
+                                       float cos, float sin, float x, float y) {
+        SONNET_DECOR_XS[index] = centerX + x * cos - y * sin;
+        SONNET_DECOR_YS[index] = centerY + x * sin + y * cos;
+    }
+
+    private static int withAlpha(int rgb, float alpha) {
+        int a = (int) (Math.max(0f, Math.min(1f, alpha)) * 255f);
+        return (a << 24) | (rgb & 0xFFFFFF);
     }
 
     /**

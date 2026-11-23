@@ -131,9 +131,21 @@ class LyricGlyphAtlasTest {
     @DisplayName("invalidateAll 推进字体世代：同参数同字符的缓存键跨世代必变")
     void cacheKeyChangesAcrossGenerations() {
         String before = LyricGlyphAtlas.cacheKey('字', 0xF7E1D7, 0.35f, 1.30f, 0xFFFFFF);
+        String outlineBefore = LyricGlyphAtlas.outlineKey('字', 29);
         LyricGlyphAtlas.invalidateAll();
         String after = LyricGlyphAtlas.cacheKey('字', 0xF7E1D7, 0.35f, 1.30f, 0xFFFFFF);
+        String outlineAfter = LyricGlyphAtlas.outlineKey('字', 29);
         assertNotEquals(before, after, "世代必须进键：字体切换后旧格绝不能复用");
+        assertNotEquals(outlineBefore, outlineAfter, "描边格也必须按字体世代作废");
+    }
+
+    @Test
+    @DisplayName("描边格键区分字符与描边宽度，但不含颜色")
+    void outlineKeyTracksShapeButNotTint() {
+        String base = LyricGlyphAtlas.outlineKey('字', 29);
+        assertEquals(base, LyricGlyphAtlas.outlineKey('字', 29));
+        assertNotEquals(base, LyricGlyphAtlas.outlineKey('词', 29));
+        assertNotEquals(base, LyricGlyphAtlas.outlineKey('字', 30));
     }
 
     // ==================== 晕格键：Ultra 档不吃墨色 ====================

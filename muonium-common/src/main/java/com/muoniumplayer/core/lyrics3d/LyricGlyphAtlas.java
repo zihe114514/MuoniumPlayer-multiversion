@@ -188,6 +188,8 @@ public final class LyricGlyphAtlas {
      */
     private static final int INK_BAKES_PER_FRAME_BUDGET = 8;
     private static final long INK_BAKE_NANOS_BUDGET = 5_000_000L;
+    private static final int DECOR_BAKES_PER_FRAME_BUDGET = 2;
+    private static final long DECOR_BAKE_NANOS_BUDGET = 1_500_000L;
     /**
      * 预算记账。帧边界由 {@link #beginFrame()} 显式重置 —— <b>不能用 nanoTime
      * 当帧标记</b>：之前写的是「每次取格现读 nanoTime，与上次不相同就认为换了
@@ -196,6 +198,8 @@ public final class LyricGlyphAtlas {
      */
     private static int inkBakesThisFrame;
     private static long inkBakeNanosThisFrame;
+    private static int decorBakesThisFrame;
+    private static long decorBakeNanosThisFrame;
     private static int bakesThisFrame;
     private static long bakeNanosThisFrame;
     /** 上次页逐出的时刻（防抖：刚逐出过就不再建新页）。 */
@@ -220,6 +224,8 @@ public final class LyricGlyphAtlas {
             bakeNanosThisFrame = 0;
             inkBakesThisFrame = 0;
             inkBakeNanosThisFrame = 0;
+            decorBakesThisFrame = 0;
+            decorBakeNanosThisFrame = 0;
             if (!RETIRED_PAGES.isEmpty()) {
                 retired = new ArrayList<>(RETIRED_PAGES);
                 RETIRED_PAGES.clear();
@@ -380,6 +386,48 @@ public final class LyricGlyphAtlas {
         }
     }
 
+    /** Outline-only mask, tinted by the renderer at draw time; the glyph interior stays transparent. */
+    public static GlyphCell getOutlineCell(char ch, float strokeWidthDesignPx) {
+        if (!Float.isFinite(strokeWidthDesignPx) || strokeWidthDesignPx <= 0f) return null;
+        int strokeKey = Math.max(1, Math.round(strokeWidthDesignPx * 32f));
+        return getDecorCell(ch, outlineKey(ch, strokeKey), strokeKey / 32f, true);
+    }
+
+    /** White filled mask for vertex-tinted color-fringe copies; independent of lyric color. */
+    public static GlyphCell getTintCell(char ch) {
+        return getDecorCell(ch, tintKey(ch), 0f, false);
+    }
+
+    private static GlyphCell getDecorCell(char ch, String key, float strokeWidthDesignPx,
+                                         boolean outline) {
+        Host h = host;
+        if (h == null) return null;
+        synchronized (LOCK) {
+            ensureBakeFontLocked();
+            CFontRenderer font = bakeFont;
+            if (font == null || font.fontHeight <= 0) return null;
+
+            GlyphCell cell = CELLS.get(key);
+            if (cell != null) {
+                touchLocked(cell);
+                return cell;
+            }
+            if (decorBakesThisFrame >= DECOR_BAKES_PER_FRAME_BUDGET
+                    || decorBakeNanosThisFrame >= DECOR_BAKE_NANOS_BUDGET) {
+                return null;
+            }
+            decorBakesThisFrame++;
+            long start = System.nanoTime();
+            GlyphCell made = outline
+                    ? bakeOutlineLocked(h, font, key, ch, strokeWidthDesignPx)
+                    : bakeInkLocked(h, font, key, ch, 0xFFFFFF);
+            decorBakeNanosThisFrame += System.nanoTime() - start;
+            if (made == null) return null;
+            CELLS.put(key, made);
+            return made;
+        }
+    }
+
     /**
      * 取独立晕格（只含高斯光形，无字本体）。渲染层把晕格 quad 画在墨格之下、
      * 以<b>加色</b>混合 —— 加色只增不减，是「真发光不糊」的混合模型（详见
@@ -533,6 +581,14 @@ public final class LyricGlyphAtlas {
                 + "|" + fontGeneration;
     }
 
+    static String outlineKey(char ch, int strokeWidth32) {
+        return "o|" + ch + "|" + strokeWidth32 + "|" + fontGeneration;
+    }
+
+    static String tintKey(char ch) {
+        return "t|" + ch + "|" + fontGeneration;
+    }
+
     /**
      * 晕格键。spread 上限 3.0（16 档量化 → 每档 0.167）；strength 64 档。
      * 光色烘死进晕格像素。
@@ -613,6 +669,51 @@ public final class LyricGlyphAtlas {
         }
         if (pixelsArgb == null) return null;
 
+        try {
+            h.uploadCell(page.handle, cellX, cellY, cellW, cellH, pixelsArgb);
+        } catch (Throwable t) {
+            return null;
+        }
+        page.commit(cellX, cellY, cellW, cellH);
+        page.lastUseNanos = System.nanoTime();
+        return new GlyphCell(page.handle, cellX, cellY, cellW, cellH,
+                pad, pad, advanceBake, inkH, bakeScale);
+    }
+
+    private static GlyphCell bakeOutlineLocked(Host h, CFontRenderer font, String key, char ch,
+                                               float strokeWidthDesignPx) {
+        if (!SkijaNatives.ensureLoaded()) return null;
+        float advanceBake = (float) font.getStringWidthD(String.valueOf(ch));
+        if (advanceBake <= 0.01f) return null;
+        int inkH = Math.max(1, font.lineBox());
+        if (inkH <= 0) return null;
+
+        float strokeBake = strokeWidthDesignPx * bakeScale;
+        int pad = minPadBake() + (int) Math.ceil(strokeBake * 0.5f) + 1;
+        int cellW = (int) Math.ceil(advanceBake) + pad * 2;
+        int cellH = inkH + pad * 2;
+        if (cellW > PAGE_SIZE || cellH > PAGE_SIZE) return null;
+
+        int[] at = probeOrMakePageLocked(h, cellW, cellH);
+        if (at == null) return null;
+        Page page = PAGES.get(at[2]);
+        int cellX = at[0], cellY = at[1];
+        int[] pixelsArgb;
+        try (Bitmap bitmap = new Bitmap()) {
+            if (!bitmap.allocPixels(ImageInfo.makeN32Premul(cellW, cellH))) return null;
+            Canvas canvas = new Canvas(bitmap);
+            try {
+                canvas.clear(0x00000000);
+                if (!font.drawGlyphsOutlineOn(canvas, String.valueOf(ch), pad, pad + 2f,
+                        0xFFFFFFFF, strokeBake)) return null;
+            } finally {
+                canvas.close();
+            }
+            pixelsArgb = readPixelsArgb(bitmap, cellW, cellH);
+        } catch (Throwable t) {
+            return null;
+        }
+        if (pixelsArgb == null) return null;
         try {
             h.uploadCell(page.handle, cellX, cellY, cellW, cellH, pixelsArgb);
         } catch (Throwable t) {

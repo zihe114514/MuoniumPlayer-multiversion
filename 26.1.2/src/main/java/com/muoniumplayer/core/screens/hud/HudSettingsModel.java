@@ -858,7 +858,7 @@ public final class HudSettingsModel {
                 }, blossomStyleChoices(), HudSettingsModel::setBlossomStyle,
                 new String[] {"旧版逐行描边歌词。",
                         "毛玻璃卡片，逐字扫光。"});
-        Entry quickWorldEffect = choice("动效风格", "歌词的表现花样：无 / 逐词弹出 / 心象 / 绘光。后两种要先开「现代化渲染」。",
+        Entry quickWorldEffect = choice("动效风格", "歌词文字 PV 表现：无 / 逐词弹出 / 心象 / 绘光 / 商籁。后三种需要「现代化渲染」。",
                 new Supplier<String>() {
                     public String get() {
                         return worldEffectName();
@@ -867,13 +867,26 @@ public final class HudSettingsModel {
                     public void run() {
                         cycleWorldEffect();
                     }
-                }, new String[] {"无", "逐词弹出", "心象", "绘光"},
+                }, new String[] {"无", "逐词弹出", "心象", "绘光", "商籁"},
                 HudSettingsModel::setWorldEffect,
                 () -> HudConfig.worldLyricsEnabled,
                 new String[] {"静态歌词，不加动效。",
                         "Word Pop：词被唱到的瞬间弹一下。",
                         "Cadenza：整行分块，每块随机出入场动画 + 呼吸 + 提亮脉冲。",
-                        "Huiguang：换句逐字飞行重排 + 发光径迹 + 卡拉OK点亮。"});
+                        "Huiguang：换句逐字飞行重排 + 发光径迹 + 卡拉OK点亮。",
+                        "Sonnet：主词排版、词块飞入、描边装饰字/回声、色散、边缘曲线与包边；不加背景，两类装饰可分别关闭。"});
+        Entry quickSonnetDecorations = toggle("商籁文字装饰",
+                "控制词块周围的入场曲线、粒子与矩形包边。关闭可减少额外绘制，文字动画仍保留。",
+                () -> HudConfig.worldLyricsSonnetDecorations,
+                () -> { HudConfig.worldLyricsSonnetDecorations = !HudConfig.worldLyricsSonnetDecorations; saveNow(); },
+                () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsModernStyle
+                        && HudConfig.worldLyricsSonnet);
+        Entry quickSonnetGlyphEffects = toggle("商籁字形特效",
+                "主词描边装饰字、副主词空心回声和青红色散。关闭可减少额外字形绘制。",
+                () -> HudConfig.worldLyricsSonnetGlyphEffects,
+                () -> { HudConfig.worldLyricsSonnetGlyphEffects = !HudConfig.worldLyricsSonnetGlyphEffects; saveNow(); },
+                () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsModernStyle
+                        && HudConfig.worldLyricsSonnet);
         Entry quickIslandStyle = choice("灵动岛样式", "胶囊长什么样，六种风格任选。",
                 new Supplier<String>() {
                     public String get() {
@@ -1015,6 +1028,8 @@ public final class HudSettingsModel {
                                         }),
                                 // 高频档位紧跟总开关（「常用」组里还有一份同一对象的引用）。
                                 quickWorldEffect,
+                                quickSonnetDecorations,
+                                quickSonnetGlyphEffects,
                                 slider(HudSetting.WORLD_LYRICS_DISTANCE, "歌词飘在眼前多远（格）。",
                                         () -> HudConfig.worldLyricsEnabled),
                                 toggle("距离保持", "走动时歌词跟着你，始终保持那么远。关掉就钉在原地；开着它，「自动避让」不生效。",
@@ -2449,12 +2464,13 @@ public final class HudSettingsModel {
 
     // ==================== HUD 设置界面样式 ====================
 
-    // ---------- 3D 歌词动效风格（四档单选，取代以前的三个独立开关） ----------
+    // ---------- 3D 歌词动效风格（五档单选） ----------
 
-    private static final String[] WORLD_EFFECTS = { "无", "逐词弹出", "心象", "绘光" };
+    private static final String[] WORLD_EFFECTS = { "无", "逐词弹出", "心象", "绘光", "商籁" };
 
-    /** 当前动效档位的中文名。绘光优先于心象（渲染端的既定语义），老的「两个都开」读到绘光。 */
+    /** 老配置异常多开时按商籁 > 绘光 > 心象 > 逐词弹出读取；新界面写入时保持互斥。 */
     static String worldEffectName() {
+        if (HudConfig.worldLyricsSonnet) return WORLD_EFFECTS[4];
         if (HudConfig.worldLyricsHuiguang) return WORLD_EFFECTS[3];
         if (HudConfig.worldLyricsCadenza) return WORLD_EFFECTS[2];
         if (HudConfig.worldLyricsWordPop) return WORLD_EFFECTS[1];
@@ -2476,6 +2492,7 @@ public final class HudSettingsModel {
         HudConfig.worldLyricsWordPop = WORLD_EFFECTS[1].equals(value);
         HudConfig.worldLyricsCadenza = WORLD_EFFECTS[2].equals(value);
         HudConfig.worldLyricsHuiguang = WORLD_EFFECTS[3].equals(value);
+        HudConfig.worldLyricsSonnet = WORLD_EFFECTS[4].equals(value);
         saveNow();
     }
 

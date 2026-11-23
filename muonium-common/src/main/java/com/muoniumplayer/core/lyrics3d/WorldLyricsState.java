@@ -4,6 +4,7 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -180,6 +181,11 @@ public final class WorldLyricsState {
         /** 布局所依据的整句渲染宽（量宽变化时布局失效重建）。 */
         float cadenzaLayoutWidth = -1f;
 
+        // ---- 商籁文字 PV 布局缓存（只含文字，不含背景/镜头资源）----
+        List<CadenzaMotion.Token> sonnetTokens;
+        SonnetMotion.Layout sonnetLayout;
+        float sonnetLayoutWidth = -1f;
+
         // ---- 绘光动效的换句交接（见 HuiguangMotion）----
         /** 入场飞行的来源句：换句瞬间的上一句（null = 无上一句，落位入场）。 */
         SpawnedLine huiguangPrev;
@@ -260,6 +266,8 @@ public final class WorldLyricsState {
         default boolean cadenza() { return false; }
         /** 绘光动效模式（换句飞行重排 + 径迹拖尾 + 卡拉OK点亮）。 */
         default boolean huiguang() { return false; }
+        /** 商籁文字 PV：主词构图、词块飞入、字面残影/拖尾与星芒。 */
+        default boolean sonnet() { return false; }
 
         /** 回屏保持（stayOnScreen）：转开视角时歌词滑回视野边缘。 */
         default boolean stayOnScreen() { return false; }
@@ -454,6 +462,16 @@ public final class WorldLyricsState {
         public boolean flyingWhite;
         /** 绘光模式：关键字色（0xRRGGBB；0 = 无关键字，走全局墨色）。 */
         public int keywordRgb;
+        /** 商籁模式：入场多重曝光残影与反向位移。 */
+        public float sonnetEchoAlpha, sonnetEchoDx, sonnetEchoDy;
+        /** 商籁模式：文字入场拖尾、主词闪点和发光倍率。 */
+        public float sonnetTrailAlpha, sonnetSpark, sonnetGlow = 1f;
+        /** 商籁模式：词块周边线条/粒子、矩形包边的单字装饰锚点。 */
+        public float sonnetGuideAlpha, sonnetGuideProgress, sonnetFrameAlpha, sonnetFrameProgress;
+        public float sonnetDecorX, sonnetDecorY, sonnetDecorWidth, sonnetDecorHeight;
+        public float sonnetDecorDirection;
+        public boolean sonnetHero, sonnetSemiHero, sonnetActive, sonnetTrailOwner;
+        public boolean sonnetDecorationOwner;
 
         private LyricGlyph(char c, float x, float y, float alpha, int k, float pop) {
             reset(c, x, y, alpha, k, pop);
@@ -475,6 +493,14 @@ public final class WorldLyricsState {
             huiguangLit = huiguangFlash = 0f;
             flyingWhite = false;
             keywordRgb = 0;
+            sonnetEchoAlpha = sonnetEchoDx = sonnetEchoDy = 0f;
+            sonnetTrailAlpha = sonnetSpark = 0f;
+            sonnetGlow = 1f;
+            sonnetGuideAlpha = sonnetGuideProgress = sonnetFrameAlpha = sonnetFrameProgress = 0f;
+            sonnetDecorX = sonnetDecorY = sonnetDecorWidth = sonnetDecorHeight = 0f;
+            sonnetDecorDirection = 0f;
+            sonnetHero = sonnetSemiHero = sonnetActive = sonnetTrailOwner = false;
+            sonnetDecorationOwner = false;
         }
     }
 
@@ -1953,14 +1979,14 @@ public final class WorldLyricsState {
                                           boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
                                           boolean cadenza) {
         return buildGlyphsInternal(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf,
-                cadenza, false, null, null, null);
+                cadenza, false, false, null, null, null);
     }
 
     public static LyricGlyphs buildGlyphs(SpawnedLine f, long songNowMs, float alphaMul,
                                           boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
                                           boolean cadenza, boolean huiguang, int[] keywordMatch) {
         return buildGlyphsInternal(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf,
-                cadenza, huiguang, keywordMatch, null, null);
+                cadenza, huiguang, false, keywordMatch, null, null);
     }
 
     public static LyricGlyphs buildGlyphs(SpawnedLine f, long songNowMs, float alphaMul,
@@ -1968,7 +1994,7 @@ public final class WorldLyricsState {
                                           boolean cadenza, boolean huiguang, int[] keywordMatch,
                                           int[] gradientLut) {
         return buildGlyphsInternal(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf,
-                cadenza, huiguang, keywordMatch, gradientLut, null);
+                cadenza, huiguang, false, keywordMatch, gradientLut, null);
     }
 
     static LyricGlyphs buildGlyphsForRender(SpawnedLine f, long songNowMs, float alphaMul,
@@ -1976,16 +2002,26 @@ public final class WorldLyricsState {
                                             boolean cadenza, boolean huiguang, int[] keywordMatch,
                                             int[] gradientLut) {
         return buildGlyphsInternal(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf,
-                cadenza, huiguang, keywordMatch, gradientLut, LyricGlyphs.RENDER_SCRATCH);
+                cadenza, huiguang, false, keywordMatch, gradientLut, LyricGlyphs.RENDER_SCRATCH);
+    }
+
+    static LyricGlyphs buildGlyphsForRender(SpawnedLine f, long songNowMs, float alphaMul,
+                                            boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
+                                            boolean cadenza, boolean huiguang, boolean sonnet,
+                                            int[] keywordMatch, int[] gradientLut) {
+        return buildGlyphsInternal(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf,
+                cadenza, huiguang, sonnet, keywordMatch, gradientLut, LyricGlyphs.RENDER_SCRATCH);
     }
 
     private static LyricGlyphs buildGlyphsInternal(SpawnedLine f, long songNowMs, float alphaMul,
                                                    boolean wordPop, boolean exiting,
                                                    PixelWidthOf pixelWidthOf, boolean cadenza,
-                                                   boolean huiguang, int[] keywordMatch,
+                                                   boolean huiguang, boolean sonnet, int[] keywordMatch,
                                                    int[] gradientLut, LyricGlyphs reuse) {
         List<String> lines = f.lines;
         long elapsedMs = songNowMs - f.startMs;
+        sonnet = sonnet && !huiguang;
+        cadenza = cadenza && !huiguang && !sonnet;
         // 逐字轴在 → 逐字点亮（卡拉OK扫掠）。原门控是 wordPop（弹跳设置），
         // 默认关 —— 用户实证：关掉 Word Pop 后整句 250ms 内一起点亮（均分
         // appearAt + 300ms 窗口取代了真实逐字时刻）。逐字点亮是卡拉OK的核心
@@ -2029,9 +2065,26 @@ public final class WorldLyricsState {
             cadenzaTokens = f.cadenzaTokens;
             cadenzaStage = f.cadenzaStage;
         }
+        SonnetMotion.Layout sonnetLayout = null;
+        if (sonnet) {
+            float sonnetWidth = 0f;
+            for (String line : lines) sonnetWidth += pixelWidthOf.widthOf(line);
+            if (f.sonnetLayout == null || Math.abs(f.sonnetLayoutWidth - sonnetWidth) > 1.0f) {
+                f.sonnetTokens = buildSonnetTokens(lines, f.charTimes);
+                f.sonnetLayout = SonnetMotion.layout(f.sonnetTokens,
+                        c -> pixelWidthOf.charWidth(c), WRAP_WIDTH, LINE_H * 6f, LINE_H, seed);
+                f.sonnetLayoutWidth = sonnetWidth;
+            }
+            sonnetLayout = f.sonnetLayout;
+        }
         int cadenzaIndex = 0;
         int cadenzaHero = cadenza ? heroIndexOf(cadenzaTokens) : 0;
         CadenzaMotion.Pose cadenzaPose = cadenza ? new CadenzaMotion.Pose() : null;
+        int sonnetIndex = 0;
+        int sonnetN = 0;
+        int lastSonnetSlot = -1;
+        float sonnetTokenCursor = 0f;
+        SonnetMotion.Pose sonnetPose = sonnet ? new SonnetMotion.Pose() : null;
 
         // ---- 绘光交接的起飞点（本句平面坐标）：上一句的落点投到本句平面。
         //      投影依赖交接瞬间定格的几何快照，首帧算好缓存在句身 —— 之后
@@ -2312,6 +2365,85 @@ public final class WorldLyricsState {
                         continue;
                     }
 
+                    if (sonnet) {
+                        while (sonnetLayout != null && sonnetIndex < sonnetLayout.slots.size()) {
+                            SonnetMotion.Slot current = sonnetLayout.slots.get(sonnetIndex);
+                            if (sonnetN < current.token.charOffset + current.token.charCount) break;
+                            sonnetIndex++;
+                            lastSonnetSlot = -1;
+                            sonnetTokenCursor = 0f;
+                        }
+                        SonnetMotion.Slot slot = sonnetLayout != null
+                                && sonnetIndex < sonnetLayout.slots.size()
+                                ? sonnetLayout.slots.get(sonnetIndex) : null;
+                        if (slot != null && sonnetN >= slot.token.charOffset) {
+                            if (lastSonnetSlot != slot.index) {
+                                lastSonnetSlot = slot.index;
+                                sonnetTokenCursor = 0f;
+                            }
+                            int localChar = sonnetN - slot.token.charOffset;
+                            float charWidth = pixelWidthOf.charWidth(c);
+                            float gx;
+                            float gy;
+                            if (slot.vertical) {
+                                gx = slot.x - charWidth * slot.fontScale * 0.5f;
+                                gy = slot.y - slot.height * 0.5f
+                                        + localChar * LINE_H * 0.88f * slot.fontScale;
+                            } else {
+                                gx = slot.x - slot.width * 0.5f + sonnetTokenCursor * slot.fontScale;
+                                gy = slot.y - LYRIC_SIZE * slot.fontScale * 0.5f;
+                            }
+                            SonnetMotion.pose(slot, localChar, elapsedMs, appearAt,
+                                    alphaMul, exiting, sonnetPose);
+                            if (sonnetPose.alpha > 0.02f) {
+                                LyricGlyph g = out.addGlyph(c, gx, gy, sonnetPose.alpha, k,
+                                        slot.fontScale * sonnetPose.scale);
+                                g.position = layoutPosition(x, w, pixelWidthOf);
+                                if (gradientLut != null) g.rgbOverride = lutSample(gradientLut, g.position);
+                                g.rot = sonnetPose.rotation + slot.rotation;
+                                g.dx = sonnetPose.dx;
+                                g.dy = sonnetPose.dy;
+                                g.sonnetHero = slot.hero;
+                                g.sonnetSemiHero = slot.semiHero;
+                                g.sonnetActive = sonnetPose.active;
+                                g.sonnetEchoAlpha = sonnetPose.echoAlpha;
+                                g.sonnetEchoDx = sonnetPose.echoDx;
+                                g.sonnetEchoDy = sonnetPose.echoDy;
+                                g.sonnetTrailAlpha = sonnetPose.trailAlpha;
+                                g.sonnetTrailOwner = sonnetPose.trailOwner;
+                                g.sonnetSpark = sonnetPose.spark;
+                                g.sonnetGlow = sonnetPose.glowMul;
+                                g.sonnetDecorationOwner = sonnetPose.decorationOwner;
+                                g.sonnetGuideAlpha = sonnetPose.guideAlpha;
+                                g.sonnetGuideProgress = sonnetPose.guideProgress;
+                                g.sonnetFrameAlpha = sonnetPose.frameAlpha;
+                                g.sonnetFrameProgress = sonnetPose.frameProgress;
+                                g.sonnetDecorX = slot.x;
+                                g.sonnetDecorY = slot.y;
+                                g.sonnetDecorWidth = slot.width * sonnetPose.scale;
+                                g.sonnetDecorHeight = slot.height * sonnetPose.scale;
+                                g.sonnetDecorDirection = slot.direction;
+                                out.addAppearAt(appearAt);
+                            }
+                            sonnetTokenCursor += charWidth;
+                        } else {
+                            float progress = (elapsedMs - appearAt) / ENTER_MS;
+                            if (progress > 0f) {
+                                float alpha = (float) clamp01(progress / 0.6f) * alphaMul;
+                                if (alpha > 0.02f) {
+                                    LyricGlyph g = out.addGlyph(c, x, y, alpha, k, 1f);
+                                    g.position = layoutPosition(x, w, pixelWidthOf);
+                                    if (gradientLut != null) g.rgbOverride = lutSample(gradientLut, g.position);
+                                    out.addAppearAt(appearAt);
+                                }
+                            }
+                        }
+                        sonnetN++;
+                        x += pixelWidthOf.charWidth(c);
+                        k++;
+                        continue;
+                    }
+
                     if (cadenza) {
                         // ---- 心象模式：块姿态 + 词云落点 + 镜头位移 ----
                         CadenzaMotion.Token token = currentToken(cadenzaTokens, cadenzaIndex, n, k);
@@ -2391,7 +2523,7 @@ public final class WorldLyricsState {
         //      逐字点亮档（translationCharTimes 非空）：副行走与主行同款点亮——
         //      扫光按主行演唱进度同步推进，唱到的字弹一下（word pop 同款回弹）
         //      并带小幅上浮入场；恒显档（null）维持整行淡入。
-        if (!cadenza && f.translationLines != null) {
+        if (!cadenza && !sonnet && f.translationLines != null) {
             // 逐字点亮分支的定格（spawn 时已按「显示翻译 = 逐字点亮档」算好轴；
             // 整行淡入档轴为 null）。修掉旧问题：此前只看轴非空，FADE 档从未生效。
             boolean transKaraoke = f.transKaraokeMode;
@@ -2604,6 +2736,28 @@ public final class WorldLyricsState {
                 t.charOffset + nonWsShift, t.charCount);
     }
 
+    private static List<CadenzaMotion.Token> buildSonnetTokens(List<String> lines, long[] charTimes) {
+        List<CadenzaMotion.Token> tokens = new ArrayList<>();
+        int nonWsOffset = 0;
+        for (String line : lines) {
+            int lineNonWs = 0;
+            for (int i = 0; i < line.length(); i++) {
+                if (!Character.isWhitespace(line.charAt(i))) lineNonWs++;
+            }
+            long[] lineTimes = null;
+            if (charTimes != null) {
+                int from = Math.min(nonWsOffset, charTimes.length);
+                int to = Math.min(charTimes.length, from + lineNonWs);
+                lineTimes = Arrays.copyOfRange(charTimes, from, to);
+            }
+            for (CadenzaMotion.Token token : CadenzaMotion.splitTokens(line, lineTimes, line)) {
+                tokens.add(shiftToken(token, nonWsOffset));
+            }
+            nonWsOffset += lineNonWs;
+        }
+        return tokens;
+    }
+
     /** 心象 hero 块下标（渲染层配色用同一函数，保持一致）。 */
     private static int heroIndexOf(List<CadenzaMotion.Token> tokens) {
         if (tokens == null) return 0;
@@ -2657,6 +2811,9 @@ public final class WorldLyricsState {
             // Equal total widths do not imply identical advances after a font/resource change.
             line.cadenzaTokens = null;
             line.cadenzaStage = null;
+            line.sonnetTokens = null;
+            line.sonnetLayout = null;
+            line.sonnetLayoutWidth = -1f;
             line.huiguangLayoutCache = null;
             line.huiguangLayoutScalesCache = null;
             line.huiguangEntry = null;

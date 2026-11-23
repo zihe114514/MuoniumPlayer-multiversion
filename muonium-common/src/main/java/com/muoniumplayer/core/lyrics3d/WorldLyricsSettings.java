@@ -21,6 +21,7 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     @Override public boolean splitLines() { return splitLines; }
     @Override public boolean cadenza() { return cadenza; }
     @Override public boolean huiguang() { return huiguang; }
+    @Override public boolean sonnet() { return sonnet; }
     @Override public boolean stayOnScreen() { return stayOnScreen; }
     @Override public boolean aboveGround() { return aboveGround; }
     @Override public boolean keepDistance() { return keepDistance; }
@@ -58,6 +59,12 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     public boolean cadenza;
     /** 绘光动效模式（仅现代化引擎生效）：换句逐字飞行重排 + 径迹拖尾 + 卡拉OK点亮。 */
     public boolean huiguang;
+    /** 商籁文字 PV：海报构图、词块动入场、字面回声与 hero 闪点；不绘制背景。 */
+    public boolean sonnet;
+    /** 商籁文字装饰：词块引导线/粒子与矩形包边；可关闭以减少额外几何提交。 */
+    public boolean sonnetDecorations = true;
+    /** 商籁字形特效：描边装饰字、空心回声与色散边缘。 */
+    public boolean sonnetGlyphEffects = true;
     /** 回屏保持（stayOnScreen）：转开视角时歌词滑回视野边缘。 */
     public boolean stayOnScreen;
     /** 距离保持：移动时锚点随玩家整体平移（含上下），径向距离恒收敛到设定值。 */
@@ -106,6 +113,9 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
         s.textFlash = HudConfig.worldLyricsTextFlash;
         s.cadenza = HudConfig.worldLyricsCadenza;
         s.huiguang = HudConfig.worldLyricsHuiguang;
+        s.sonnet = HudConfig.worldLyricsSonnet;
+        s.sonnetDecorations = HudConfig.worldLyricsSonnetDecorations;
+        s.sonnetGlyphEffects = HudConfig.worldLyricsSonnetGlyphEffects;
         s.stayOnScreen = HudConfig.worldLyricsStayOnScreen;
         s.keepDistance = HudConfig.worldLyricsKeepDistance;
         s.aboveGround = HudConfig.worldLyricsAboveGround;

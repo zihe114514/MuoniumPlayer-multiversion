@@ -60,6 +60,17 @@ class CFontRendererCacheTest {
         }
     }
 
+    private static byte[] renderOutline(CFontRenderer font, String text, double x, double y,
+                                        int color, float strokeWidth) throws Exception {
+        try (Surface surface = Surface.makeRasterN32Premul(360, 110); Bitmap bitmap = new Bitmap()) {
+            surface.getCanvas().clear(0);
+            assertTrue(font.drawGlyphsOutlineOn(surface.getCanvas(), text, x, y, color, strokeWidth));
+            assertTrue(bitmap.allocPixels(ImageInfo.makeN32Premul(360, 110)));
+            assertTrue(surface.readPixels(bitmap, 0, 0));
+            return bitmap.readPixels();
+        }
+    }
+
     @Test void cachedLayoutMatchesUncachedPathAtPixelLevel() throws Exception {
         try (CFontRenderer font = new CFontRenderer(latin, 18f, cjk)) {
             for (String text : new String[]{"AV Music 2026", "网易云 Music（1）・", "First line\n第二行", "\nleading\n"}) {
@@ -85,6 +96,26 @@ class CFontRendererCacheTest {
             render(font, text, 10, 10, 0xAAFFCC44, 2.0, null);
             assertSame(blob, cache(font).get(text));
             assertFalse(blob.isClosed());
+        }
+    }
+
+    @Test void trueStrokeDrawingUsesTheSameCachedGlyphBlob() throws Exception {
+        try (CFontRenderer font = new CFontRenderer(latin, 28f, cjk)) {
+            byte[] fill = render(font, "Hollow", 20, 24, 0xFFFFFFFF, 0, null);
+            TextBlob blob = cache(font).get("Hollow");
+            assertNotNull(blob);
+
+            byte[] outline = renderOutline(font, "Hollow", 20, 24, 0xFF76E7FF, 1.2f);
+            assertSame(blob, cache(font).get("Hollow"), "描边和填充应复用同一字形布局缓存");
+            assertFalse(java.util.Arrays.equals(fill, outline), "描边图像必须不同于实心字");
+            boolean visible = false;
+            for (int i = 3; i < outline.length; i += 4) {
+                if ((outline[i] & 0xFF) > 0) {
+                    visible = true;
+                    break;
+                }
+            }
+            assertTrue(visible, "Skia stroke 必须实际绘出字形轮廓");
         }
     }
 

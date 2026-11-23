@@ -34,7 +34,7 @@ public final class HudPresetDomain implements PresetDomain {
             .facet(Facet.WORLD, "worldLyricsDistance", "worldLyricsFacePlayer", "worldLyricsKeepAway", "worldLyricsSpreadDeg", "worldLyricsScale",
                     "worldLyricsModernStyle", "worldLyricsSplitLines", "worldLyricsGlowEnabled", "worldLyricsGlowStrength", "worldLyricsGlowSpread",
                     "worldLyricsGlowColorRgb", "worldLyricsGlowColorMode", "worldLyricsColorRgb", "worldLyricsColorCustom", "worldLyricsWordPop",
-                    "worldLyricsTextFlash", "worldLyricsCadenza", "worldLyricsHuiguang", "worldLyricsKeywordColors", "worldLyricsStayOnScreen",
+                    "worldLyricsTextFlash", "worldLyricsCadenza", "worldLyricsHuiguang", "worldLyricsSonnet", "worldLyricsSonnetDecorations", "worldLyricsSonnetGlyphEffects", "worldLyricsKeywordColors", "worldLyricsStayOnScreen",
                     "worldLyricsKeepDistance", "worldLyricsAboveGround", "worldLyricsTranslation", "worldLyricsTransEffects", "worldLyricsCoverColorMode",
                     "worldLyricsCoverGradient", "worldLyricsCoverPaletteRgb0", "worldLyricsCoverPaletteRgb1", "worldLyricsCoverPaletteRgb2",
                     "worldLyricsCoverPaletteRgb3", "worldLyricsGlowMode")
@@ -130,7 +130,10 @@ public final class HudPresetDomain implements PresetDomain {
             /* 165 */ "fullscreenLyricFluidStatic", "worldLyricsGlowMode",
             /* 167 */ "islandMiniCardScale", "islandMusicShowsLyric", "islandHoverExpand",
             /* 170 */ "islandExpandTrigger",
-            /* 171 */ "islandMusicCapsuleMaxWidth"));
+            /* 171 */ "islandMusicCapsuleMaxWidth",
+            /* 172 */ "worldLyricsSonnet",
+            /* 173 */ "worldLyricsSonnetDecorations",
+            /* 174 */ "worldLyricsSonnetGlyphEffects"));
     public String id() { return ID; }
     public String displayName() { return "HUD 与歌词"; }
     public int fragmentVersion() { return 1; }
