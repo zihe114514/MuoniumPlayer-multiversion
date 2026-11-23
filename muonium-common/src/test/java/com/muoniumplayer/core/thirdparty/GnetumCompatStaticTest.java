@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>这一层会<b>改写另一个 mod 的配置文件</b>，写错了不是难看是事故（把用户的
  * gnetum.json 写成半残、或者把无关元素一并关掉），所以两路都钉：
- * JSON 改写逻辑用真对象跑（{@link #patchElementMap} 是纯函数、不落盘），
+ * JSON 改写逻辑用真对象跑（仅修改内存对象），
  * 闸门与五树接线用源码形状钉（与 GameRestart / 公告同一路数）。</p>
  */
 class GnetumCompatStaticTest {
@@ -40,11 +40,11 @@ class GnetumCompatStaticTest {
                 {"enabled": {"value": "ON"},
                  "map": {"muonium": {"enabled": {"value": "AUTO"}}}}
                 """);
-        assertEquals("muonium", GnetumCompat.patchElementMap(root));
+        assertEquals("muonium", GnetumCompat.patchElementMap(root, null));
         assertEquals("OFF", valueOf(root, "muonium"), "AUTO 必须被改写成 OFF（Gnetum 语义 = 不缓存、每帧渲染）");
 
         // 第二遍：已经是 OFF，必须原样返回 null —— 重复启动不重写文件、不发聊天
-        assertNull(GnetumCompat.patchElementMap(root));
+        assertNull(GnetumCompat.patchElementMap(root, null));
         assertEquals("OFF", valueOf(root, "muonium"));
     }
 
@@ -54,7 +54,7 @@ class GnetumCompatStaticTest {
         JsonObject root = parse("""
                 {"map": {"_unknown_listeners_": {"enabled": {"value": "AUTO"}}}}
                 """);
-        assertEquals("_unknown_listeners_", GnetumCompat.patchElementMap(root));
+        assertEquals("_unknown_listeners_", GnetumCompat.patchElementMap(root, null));
         assertEquals("OFF", valueOf(root, "_unknown_listeners_"));
     }
 
@@ -65,7 +65,7 @@ class GnetumCompatStaticTest {
                 {"map": {"sodium": {"enabled": {"value": "AUTO"}},
                          "journeymap": {"enabled": {"value": "ON"}}}}
                 """);
-        assertEquals("muonium", GnetumCompat.patchElementMap(root));
+        assertEquals("muonium", GnetumCompat.patchElementMap(root, null));
         assertEquals("OFF", valueOf(root, "muonium"));
         assertEquals("AUTO", valueOf(root, "sodium"), "不许动无关元素的缓存设置");
         assertEquals("ON", valueOf(root, "journeymap"));
@@ -78,13 +78,29 @@ class GnetumCompatStaticTest {
         JsonObject missingEnabled = parse("""
                 {"map": {"muonium": {}}}
                 """);
-        assertEquals("muonium", GnetumCompat.patchElementMap(missingEnabled));
+        assertEquals("muonium", GnetumCompat.patchElementMap(missingEnabled, null));
         assertEquals("OFF", valueOf(missingEnabled, "muonium"));
 
         // 没有 map：放弃（返回 null），不瞎建结构
         JsonObject noMap = parse("{\"enabled\": {\"value\": \"ON\"}}");
-        assertNull(GnetumCompat.patchElementMap(noMap));
+        assertNull(GnetumCompat.patchElementMap(noMap, null));
         assertFalse(noMap.has("map"), "没有元素表时不许凭空造一个");
+    }
+
+    @Test
+    void patchesOnlyTheExactHudElement() {
+        JsonObject root = parse("""
+                {"map": {"muonium:player_hud": {"enabled": {"value": "AUTO"}},
+                         "muonium": {"enabled": {"value": "ON"}},
+                         "_unknown_listeners_": {"enabled": {"value": "AUTO"}}}}
+                """);
+        assertEquals("muonium:player_hud", GnetumCompat.patchElementMap(root, "muonium:player_hud"));
+        assertEquals("OFF", valueOf(root, "muonium:player_hud"));
+        assertEquals("ON", valueOf(root, "muonium"));
+        assertEquals("AUTO", valueOf(root, "_unknown_listeners_"));
+        assertNull(GnetumCompat.patchElementMap(root, "muonium:player_hud"));
+        assertNull(GnetumCompat.patchElementMap(root, "muonium:missing_hud"));
+        assertFalse(root.getAsJsonObject("map").has("muonium:missing_hud"));
     }
 
     @Test
@@ -114,9 +130,9 @@ class GnetumCompatStaticTest {
         assertFalse(src.contains("isModLoaded") || src.contains("ModList") || src.contains("FabricLoader"),
                 "装没装 Gnetum 由 Class.forName 回答，不许引入加载器 API");
 
-        // 即时生效：反射调 GnetumConfig.reload()（public static），失败降级为「重启后生效」
+        // 旧宿主保留 reload，完整元素 ID 走独立的原地更新路径。
         assertTrue(src.contains("me.decce.gnetum.GnetumConfig"), "reload 反射目标类");
-        assertTrue(src.contains("getMethod(\"reload\")"), "必须反射 reload 让修改即时生效");
+        assertTrue(src.contains("getMethod(\"reload\")"), "旧宿主继续使用 reload");
 
         // 配置文件路径与 Gnetum 自身逐字节同源：CWD 相对路径，不是加载器 configDir
         assertTrue(src.contains("Paths.get(\"config\", \"gnetum.json\")"),
@@ -136,9 +152,9 @@ class GnetumCompatStaticTest {
         String src = read(ProjectPaths.sourceFile(
                 Paths.get("com", "muoniumplayer", "core", "thirdparty", "GnetumCompat.java")));
 
-        // 先落闸再跑：checked = true 出现在 run(api) 之前，失败也不会每 tick 重试刷屏
+        // 先落闸再跑，失败也不会每 tick 重试刷屏。
         int gate = src.indexOf("checked = true;");
-        int run = src.indexOf("run(api);");
+        int run = src.indexOf("run(api, elementId);");
         assertTrue(gate >= 0 && run > gate, "必须先把「只查一次」的闸落下再执行检查");
 
         assertTrue(src.contains("if (checked || !inGame || api == null)"),

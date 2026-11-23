@@ -9,10 +9,12 @@ import com.muoniumplayer.api.enums.EnumChatColor;
 import com.muoniumplayer.core.utils.logging.LogManager;
 import com.muoniumplayer.core.utils.logging.Logger;
 
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.Map;
 
 /**
  * Gnetum（HUD 分帧缓存 mod，mod id {@code gnetum}）共存兼容。
@@ -31,11 +33,11 @@ import java.nio.file.StandardOpenOption;
  * 这么定位的，不是加载器 configDir）里 {@code map.<键>.enabled.value} 为
  * {@code "OFF"} 时该元素每帧照常渲染。键的取值：
  * <ul>
- *   <li>Fabric：按回调类的 modid 解析，即 {@code "muonium"}；</li>
+ *   <li>Fabric：有序 HUD 注册使用完整元素 ID，早期回调使用 {@code "muonium"}；</li>
  *   <li>NeoForge：解析不出监听器归属时落到 {@code "_unknown_listeners_"} 兜底键。</li>
  * </ul>
- * 改完文件后反射调 {@code GnetumConfig.reload()}（public static）即时生效，无需重启。
- * 反射失败（Gnetum 版本变动）也不影响文件修改，重启后照常生效。
+ * 提供完整元素 ID 的宿主直接更新对应缓存对象的开关，保留 Gnetum 的渲染计时状态。
+ * 旧宿主沿用 {@code GnetumConfig.reload()}。即时应用失败时，文件修改在重启后生效。
  *
  * <h2>闸门</h2>
  * <ul>
@@ -76,18 +78,25 @@ public final class GnetumCompat {
      * @param api    客户端 OpenAPI（聊天提示走 {@link OpenAPI#printMessage}）
      */
     public static void clientTick(boolean inGame, OpenAPI api) {
+        clientTick(inGame, api, null);
+    }
+
+    /**
+     * @param elementId Gnetum 元素表里的完整 ID，提供时按该 ID 单独改写和应用
+     */
+    public static void clientTick(boolean inGame, OpenAPI api, String elementId) {
         if (checked || !inGame || api == null) {
             return;
         }
         checked = true; // 先落闸再跑：失败也不重试刷屏，下次启动再查
         try {
-            run(api);
+            run(api, elementId);
         } catch (Throwable t) {
             logger.warn("Gnetum 共存检查失败（不影响游戏运行）: " + t);
         }
     }
 
-    private static void run(OpenAPI api) throws Exception {
+    private static void run(OpenAPI api, String elementId) throws Exception {
         if (!isGnetumInstalled()) {
             return;
         }
@@ -103,7 +112,7 @@ public final class GnetumCompat {
             return; // Gnetum 总开关关着：HUD 没被它接管，不存在闪烁，别打扰用户
         }
 
-        String patchedKey = patchElementMap(root);
+        String patchedKey = patchElementMap(root, elementId);
         if (patchedKey == null) {
             return; // 已经是 OFF（或形状读不出来）：什么都不做也不说话（幂等，重复启动不刷屏）
         }
@@ -113,24 +122,41 @@ public final class GnetumCompat {
                 StandardOpenOption.CREATE, StandardOpenOption.WRITE,
                 StandardOpenOption.TRUNCATE_EXISTING);
 
-        boolean instant;
+        boolean instant = false;
         try {
-            Class.forName(GNETUM_CONFIG_CLASS, false, GnetumCompat.class.getClassLoader())
-                    .getMethod("reload")
-                    .invoke(null);
-            instant = true;
+            if (elementId != null) {
+                instant = disableLiveElement(elementId);
+            } else {
+                Class.forName(GNETUM_CONFIG_CLASS, false, GnetumCompat.class.getClassLoader())
+                        .getMethod("reload")
+                        .invoke(null);
+                instant = true;
+            }
         } catch (Throwable t) {
-            // 文件已改好，只是运行中的 Gnetum 没重读 —— 重启后照常生效
-            instant = false;
-            logger.info("调用 GnetumConfig.reload() 未成功（Gnetum 版本变动?），修改将在重启后生效: " + t);
+            logger.info("未能即时更新 Gnetum HUD 缓存，修改将在重启后生效: " + t);
         }
 
         api.printMessage(EnumChatColor.YELLOW
-                + "检测到 Gnetum：已自动关闭它对 muonium HUD 元素的缓存（config/gnetum.json），"
+                + "检测到 Gnetum：已在 config/gnetum.json 中关闭 " + patchedKey + " 的 HUD 缓存，"
                 + "避免 MuoniumPlayer 的 HUD 界面闪烁。");
         api.printMessage(EnumChatColor.GRAY + (instant
-                ? "已即时生效，无需重启。想改回去：Gnetum 视频设置里把 muonium 一项的缓存开回「开」。"
-                : "重启游戏后生效。想改回去：Gnetum 视频设置里把 muonium 一项的缓存开回「开」。"));
+                ? "已即时生效，无需重启。"
+                : "重启游戏后生效。") + "想改回去：在 Gnetum 视频设置中重新开启该元素的缓存。");
+    }
+
+    private static boolean disableLiveElement(String elementId) throws ReflectiveOperationException {
+        Class<?> gnetum = Class.forName(GNETUM_MAIN_CLASS, false, GnetumCompat.class.getClassLoader());
+        Object config = gnetum.getField("config").get(null);
+        Map<?, ?> elements = (Map<?, ?>) config.getClass().getField("map").get(config);
+        Object element = elements.get(elementId);
+        if (element == null) {
+            return false;
+        }
+        // 与 Gnetum 的 Sodium 设置相同：改写现有元素的值，保留计时数组和 pass。
+        Object enabled = element.getClass().getField("enabled").get(element);
+        Field value = enabled.getClass().getField("value");
+        value.set(enabled, value.getType().getField("OFF").get(null));
+        return true;
     }
 
     /**
@@ -138,16 +164,21 @@ public final class GnetumCompat {
      *
      * @return 被修改（或新建）的元素键；无需修改（已是 OFF / 形状读不出来）返回 {@code null}
      */
-    static String patchElementMap(JsonObject root) {
+    static String patchElementMap(JsonObject root, String elementId) {
         JsonElement mapRaw = root.get("map");
         if (mapRaw == null || !mapRaw.isJsonObject()) {
             return null;
         }
         JsonObject map = mapRaw.getAsJsonObject();
 
-        // 键的优先级：我们的 modid 优先；NeoForge 解析不出归属时才落到未知监听器兜底键
-        String key = map.has(KEY_MUONIUM) ? KEY_MUONIUM
-                : map.has(KEY_UNKNOWN_LISTENERS) ? KEY_UNKNOWN_LISTENERS : null;
+        String key = elementId;
+        if (key == null) {
+            // 旧宿主按 modid 查找，NeoForge 解析不出归属时才落到未知监听器兜底键。
+            key = map.has(KEY_MUONIUM) ? KEY_MUONIUM
+                    : map.has(KEY_UNKNOWN_LISTENERS) ? KEY_UNKNOWN_LISTENERS : null;
+        } else if (!map.has(key)) {
+            return null;
+        }
         if (key == null) {
             // 元素表里还没有我们（极早期边缘）。补一个键是安全的：
             // Gnetum gather 重建元素表时对已有键只拷贝 enabled、不会覆盖。
