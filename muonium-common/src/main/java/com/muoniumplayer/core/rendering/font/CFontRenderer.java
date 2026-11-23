@@ -661,7 +661,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
                 }
             }
             if (blob != null) {
-                drawBlob(canvas, blob, x, y - 2.0, baseArgb, glowSigma, shader);
+                drawBlob(canvas, blob, x, y - 2.0 + (needsUnicodeShaping(s) ? baselineOffset : 0), baseArgb, glowSigma, shader);
             }
             return true;
         }
@@ -730,6 +730,38 @@ public class CFontRenderer implements Closeable, SharedConstants {
         return true;
     }
 
+    /**
+     * Draws cached plain-text geometry with a caller-owned paint. The caller controls
+     * outline/screen blending without changing the shared GUI paint or blend state.
+     * No native object ownership is transferred; use only on the render thread.
+     */
+    public boolean drawPlainTextWithPaintOn(Canvas canvas, String text, float x, float y, Paint paint) {
+        if (canvas == null || paint == null || text == null || text.isEmpty()
+                || text.length() > 1024 || text.indexOf('\u00a7') >= 0 || skFonts.length == 0) return false;
+        TextBlob blob = plainTextBlobs.get(text);
+        if (blob == null) {
+            blob = buildPlainBlob(text);
+            if (blob != null) plainTextBlobs.put(text, blob);
+        }
+        if (blob == null) return false;
+        canvas.drawTextBlob(blob, x, y - 2f + (needsUnicodeShaping(text) ? baselineOffset : 0), paint);
+        return true;
+    }
+
+    /** Unicode shaping for a complete grapheme; the caller owns and closes the returned line. */
+    public io.github.humbleui.skija.TextLine shapeUnicodeLine(String text) {
+        if (text == null || text.isEmpty() || skFonts.length == 0) return null;
+        int selected = 0, most = -1;
+        int[] codePoints = text.codePoints().toArray();
+        for (int i = 0; i < skTypefaces.length; i++) {
+            int coverage = 0;
+            for (int cp : codePoints) if (skTypefaces[i].getUTF32Glyph(cp) != 0) coverage++;
+            if (coverage > most) { most = coverage; selected = i; }
+            if (coverage == codePoints.length) break;
+        }
+        return io.github.humbleui.skija.TextLine.make(text, skFonts[selected]);
+    }
+
     /** Draw cached glyph geometry as a true Skia stroke; used for 3D lyric outline cells. */
     public boolean drawGlyphsOutlineOn(Canvas canvas, String s, double x, double y,
                                        int argb, float strokeWidth) {
@@ -741,13 +773,42 @@ public class CFontRenderer implements Closeable, SharedConstants {
             if (blob != null) plainTextBlobs.put(s, blob);
         }
         if (blob != null) {
-            canvas.drawTextBlob(blob, (float) x, (float) (y - 2.0),
+            canvas.drawTextBlob(blob, (float) x, (float) (y - 2.0 + (needsUnicodeShaping(s) ? baselineOffset : 0)),
                     SkijaGfx.stroke(argb, Math.max(0.1f, strokeWidth)));
         }
         return true;
     }
 
+    private static final ThreadLocal<java.text.BreakIterator> UNICODE_CLUSTERS =
+            ThreadLocal.withInitial(java.text.BreakIterator::getCharacterInstance);
+
+    private static boolean needsUnicodeShaping(String text) {
+        if (text.indexOf('\n') >= 0) return false;
+        boolean complex = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            int type = Character.getType(c);
+            if (Character.isSurrogate(c) || type == Character.NON_SPACING_MARK
+                    || type == Character.COMBINING_SPACING_MARK || type == Character.ENCLOSING_MARK) {
+                complex = true;
+                break;
+            }
+        }
+        if (!complex) return false;
+        // One font can shape one connected grapheme. Keep multi-font sentences on
+        // the existing run/fallback path rather than choosing a single face for all text.
+        java.text.BreakIterator clusters = UNICODE_CLUSTERS.get();
+        clusters.setText(text);
+        clusters.first();
+        return clusters.next() == text.length();
+    }
+
     private TextBlob buildPlainBlob(String text) {
+        if (needsUnicodeShaping(text)) {
+            try (io.github.humbleui.skija.TextLine line = shapeUnicodeLine(text)) {
+                return line == null ? null : line.getTextBlob();
+            }
+        }
         RunAccumulator runs = new RunAccumulator(0f, null);
         try {
             double penX = 0.0;
@@ -1027,9 +1088,19 @@ public class CFontRenderer implements Closeable, SharedConstants {
         if (f != null)
             return f;
 
+        String plain = stripControlCodes(text);
+        if (needsUnicodeShaping(plain)) {
+            try (io.github.humbleui.skija.TextLine line = shapeUnicodeLine(plain)) {
+                if (line == null) return 0;
+                double width = line.getWidth();
+                if (this.stringWidthMapD.size() >= STRING_WIDTH_CACHE_LIMIT) this.stringWidthMapD.clear();
+                this.stringWidthMapD.put(text, width);
+                return width;
+            }
+        }
         boolean shouldntAdd = false;
 
-        char[] c = stripControlCodes(text).toCharArray();
+        char[] c = plain.toCharArray();
         double currentLine = 0;
         double maxPreviousLines = 0;
         for (int i = 0; i < c.length; i++) {

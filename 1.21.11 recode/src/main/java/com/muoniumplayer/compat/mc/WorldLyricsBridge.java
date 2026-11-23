@@ -85,10 +85,14 @@ public final class WorldLyricsBridge {
      * 由两个加载器的 END_MAIN/AfterLevel 事件调用，无参数 —— 相机与矩阵自己取。
      */
     public static void worldRenderEnd() {
+        if (!HudConfig.worldLyricsEnabled) WorldLyricsRenderer.releaseResources();
         if (broken || !HudConfig.worldLyricsEnabled) return;
         try {
             Minecraft mc = Minecraft.getInstance();
-            if (mc == null || mc.player == null || mc.level == null) return;
+            if (mc == null || mc.player == null || mc.level == null) {
+                WorldLyricsRenderer.releaseResources();
+                return;
+            }
             if (mc.gameRenderer == null) return;
             Camera camera = mc.gameRenderer.getMainCamera();
             if (camera == null) return;
@@ -233,6 +237,7 @@ public final class WorldLyricsBridge {
      * 就地改即生效、无 applyModelViewMatrix）。GUI 正交投影先备份后还原。</p>
      */
     public static void hudPhaseDraw() {
+        if (!HudConfig.worldLyricsEnabled) WorldLyricsRenderer.releaseResources();
         if (broken || !HudConfig.worldLyricsEnabled) return;
         if (TRACE && hudDiagFrame++ % 60 == 0) {
             Minecraft mc0 = Minecraft.getInstance();
@@ -249,7 +254,10 @@ public final class WorldLyricsBridge {
         }
         try {
             Minecraft mc = Minecraft.getInstance();
-            if (mc == null || mc.player == null || mc.level == null) return;
+            if (mc == null || mc.player == null || mc.level == null) {
+                WorldLyricsRenderer.releaseResources();
+                return;
+            }
             if (mc.gameRenderer == null) return;
             Camera camera = mc.gameRenderer.getMainCamera();
             if (camera == null) return;
@@ -408,6 +416,7 @@ public final class WorldLyricsBridge {
         WorldLyricsBridge.currentSettings = settings;
 
         if (!WorldLyricsState.hasLyrics()) {
+            WorldLyricsRenderer.releaseResources();
             if (TRACE && !tracedNoLyrics) {
                 tracedNoLyrics = true;
                 System.out.println("[WorldLyrics/trace] 开关已开、世界正常，但当前没有已加载的歌词"

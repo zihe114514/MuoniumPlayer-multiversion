@@ -172,6 +172,7 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/LyricPresentRendererUploadTest.java",
             "com/muoniumplayer/compat/mc/WorldBillboardCanvasPixelsTest.java",
             "com/muoniumplayer/render/skija/SkijaTrailGpuTest.java",
+            "com/muoniumplayer/core/lyrics3d/SonnetGpuProbeTest.java",
             "com/muoniumplayer/render/skija/RasterFrames.java"));
 
     // 仅铺设 Kotlin 源根，不迁移既有 Java 留守类；未来新增差异类需同步登记工具与本表。

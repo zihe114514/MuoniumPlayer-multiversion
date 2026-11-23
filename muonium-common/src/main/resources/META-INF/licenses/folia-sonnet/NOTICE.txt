@@ -1,0 +1,17 @@
+Folia Sonnet typography adaptations
+
+Original project: https://github.com/chthollyphile/folia-major
+Reference revision: ccfe821
+Copyright (c) 2026 chthollyphile and Folia contributors.
+
+The SonnetProgram, SonnetTypography, SonnetFlowLayout, SonnetPosterLayout,
+SonnetDecorations, SonnetFixedGeometry, SonnetTextMotion, SonnetTextScene,
+SonnetTextTransitions, SonnetStaff and associated Sonnet canvas integration
+are Java/Skija adaptations of the original Sonnet typography modules.
+Original licensing: GNU Affero General Public License, version 3.
+The full license is included alongside this notice in AGPL-3.0.txt.
+
+MuoniumPlayer changes: transparent 3D lyric plane integration, user switches,
+renderer lifecycle, actual font measurement, deterministic particle choices,
+existing GPU replay with equivalent raster fallback, and regression probes.
+No upstream scene background, image asset or music recording is included.

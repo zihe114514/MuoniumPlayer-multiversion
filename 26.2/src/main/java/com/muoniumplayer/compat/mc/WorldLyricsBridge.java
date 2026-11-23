@@ -121,11 +121,15 @@ public final class WorldLyricsBridge {
      * private，{@code LevelRenderer} 不实现 collector 接口）。
      */
     public static void worldRenderCollect(OrderedSubmitNodeCollector collector) {
+        if (!HudConfig.worldLyricsEnabled) WorldLyricsRenderer.releaseResources();
         if (broken || !HudConfig.worldLyricsEnabled) return;
         if (collector == null) return;
         try {
             Minecraft mc = Minecraft.getInstance();
-            if (mc == null || mc.player == null || mc.level == null) return;
+            if (mc == null || mc.player == null || mc.level == null) {
+                WorldLyricsRenderer.releaseResources();
+                return;
+            }
             if (mc.gameRenderer == null) return;
             Camera camera = mc.gameRenderer.mainCamera();
             if (camera == null) return;
@@ -188,6 +192,7 @@ public final class WorldLyricsBridge {
         WorldLyricsBridge.currentSettings = settings;
 
         if (!WorldLyricsState.hasLyrics()) {
+            WorldLyricsRenderer.releaseResources();
             if (TRACE && !tracedNoLyrics) {
                 tracedNoLyrics = true;
                 System.out.println("[WorldLyrics/trace] 开关已开、世界正常，但当前没有已加载的歌词"

@@ -97,6 +97,7 @@ public final class WorldLyricsBridge {
      * 用它做单点入口即可，加载器侧不再重复调用（重复会因加色混合叠两遍）。</p>
      */
     public static void worldRenderEnd() {
+        if (!HudConfig.worldLyricsEnabled) WorldLyricsRenderer.releaseResources();
         if (broken || !HudConfig.worldLyricsEnabled) {
             hudCameraValid = false;
             return;
@@ -255,6 +256,7 @@ public final class WorldLyricsBridge {
      * 矩阵；模型视图照常推单位矩阵。GUI 正交投影先备份后还原。</p>
      */
     public static void hudPhaseDraw() {
+        if (!HudConfig.worldLyricsEnabled) WorldLyricsRenderer.releaseResources();
         if (broken || !HudConfig.worldLyricsEnabled) return;
         if (!hudCameraValid || !hudProjectionValid) return;
         hudCameraValid = false; // 每帧只画一次；世界阶段下一帧会重新置位
@@ -268,7 +270,10 @@ public final class WorldLyricsBridge {
         }
         try {
             Minecraft mc = Minecraft.getInstance();
-            if (mc == null || mc.player == null || mc.level == null) return;
+            if (mc == null || mc.player == null || mc.level == null) {
+                WorldLyricsRenderer.releaseResources();
+                return;
+            }
 
             org.joml.Matrix4f previousProjection = new org.joml.Matrix4f(RenderSystem.getProjectionMatrix());
             RenderSystem.setProjectionMatrix(new org.joml.Matrix4f(hudProjection),
@@ -436,6 +441,7 @@ public final class WorldLyricsBridge {
                                                 CameraAccess cameraAccess,
                                                 WorldLyricsSettings settings) {
         if (!WorldLyricsState.hasLyrics()) {
+            WorldLyricsRenderer.releaseResources();
             if (TRACE && !tracedNoLyrics) {
                 tracedNoLyrics = true;
                 System.out.println("[WorldLyrics/trace] 开关已开、世界正常，但当前没有已加载的歌词"

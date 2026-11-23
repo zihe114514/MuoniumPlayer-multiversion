@@ -889,13 +889,13 @@ public final class HudSettingsModel {
                         "Huiguang：换句逐字飞行重排 + 发光径迹 + 卡拉OK点亮。",
                         "Sonnet：主词排版、词块飞入、描边装饰字/回声、色散、边缘曲线与包边；不加背景，两类装饰可分别关闭。"});
         Entry quickSonnetDecorations = toggle("商籁文字装饰",
-                "控制词块周围的入场曲线、粒子与矩形包边。关闭可减少额外绘制，文字动画仍保留。",
+                "引导曲线、绕字丝带、几何粒子、矩形扫线、开放包边和贴字几何。关闭可减少装饰绘制，文字动画仍保留。",
                 () -> HudConfig.worldLyricsSonnetDecorations,
                 () -> { HudConfig.worldLyricsSonnetDecorations = !HudConfig.worldLyricsSonnetDecorations; saveNow(); },
                 () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsModernStyle
                         && HudConfig.worldLyricsSonnet);
         Entry quickSonnetGlyphEffects = toggle("商籁字形特效",
-                "主词描边装饰字、副主词空心回声和青红色散。关闭可减少额外字形绘制。",
+                "巨型描边字、副主词空心回声、入场色散与镜头转场。关闭可减少额外绘制，排版和文字入场仍保留。",
                 () -> HudConfig.worldLyricsSonnetGlyphEffects,
                 () -> { HudConfig.worldLyricsSonnetGlyphEffects = !HudConfig.worldLyricsSonnetGlyphEffects; saveNow(); },
                 () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsModernStyle

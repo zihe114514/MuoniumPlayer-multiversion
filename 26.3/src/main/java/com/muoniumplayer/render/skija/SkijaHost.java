@@ -231,6 +231,7 @@ public final class SkijaHost {
      * 因此上层即使 push/pop 不配对也不会污染下一帧）。
      */
     public static Canvas beginFrame() {
+        com.muoniumplayer.core.lyrics3d.WorldLyricsRenderer.releaseIdleResources();
         if (inFrame) {
             return null;
         }
@@ -1232,6 +1233,7 @@ public final class SkijaHost {
 
     /** 游戏关闭 / 渲染层重载时释放 GPU 资源。 */
     public static void shutdown() {
+        com.muoniumplayer.core.lyrics3d.WorldLyricsRenderer.releaseResources();
         // 过渡内容快照必须在离屏目标与 DirectContext 释放前关闭；调用方仍须接线退出/重载。
         com.muoniumplayer.core.screens.ncm.PlayerTransitionContentCache.clearAll();
         // 背景采集与折射各自持有一个绑在<b>当前</b> GL 上下文 / DirectContext 上的对象：

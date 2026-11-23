@@ -99,6 +99,67 @@ class CFontRendererCacheTest {
         }
     }
 
+    @Test void composedGraphemeUsesOneShapedBlobAndTheSameMeasurementAsDrawing() throws Exception {
+        try (CFontRenderer font = new CFontRenderer(latin, 28f, cjk);
+             Surface surface = Surface.makeRasterN32Premul(140, 70);
+             Paint paint = new Paint().setColor(0xFFFFFFFF);
+             Bitmap bitmap = new Bitmap()) {
+            String text = "A\u0301";
+            try (TextLine line = font.shapeUnicodeLine(text)) {
+                assertNotNull(line);
+                assertEquals(line.getWidth(), font.getStringWidthD(text), 1e-5);
+                assertEquals(1, line.getGlyphs().length, "The accent should be shaped with its base");
+            }
+            assertTrue(font.drawPlainTextWithPaintOn(surface.getCanvas(), text, 25, 15, paint));
+            assertTrue(bitmap.allocPixels(ImageInfo.makeN32Premul(140, 70)));
+            assertTrue(surface.readPixels(bitmap, 0, 0));
+            boolean visible = false;
+            byte[] pixels = bitmap.readPixels();
+            for (int i = 3; i < pixels.length; i += 4) if ((pixels[i] & 255) > 10) visible = true;
+            assertTrue(visible);
+            TextBlob cached = cache(font).get(text);
+            assertNotNull(cached);
+            assertTrue(font.drawPlainTextWithPaintOn(surface.getCanvas(), text, 30, 15, paint));
+            assertSame(cached, cache(font).get(text));
+        }
+    }
+
+    @Test void supportedSupplementaryCodePointIsNotSplitIntoTwoMissingGlyphs() throws Exception {
+        String supplementary = "\ud835\udc00"; // Mathematical bold A, U+1D400.
+        java.awt.Font math = new java.awt.Font("Cambria Math", java.awt.Font.PLAIN, 28);
+        org.junit.jupiter.api.Assumptions.assumeTrue(math.canDisplay(0x1D400), "Requires a host font covering U+1D400");
+        Typeface typeface = FontMgr.getDefault().matchFamilyStyle("Cambria Math", FontStyle.NORMAL);
+        assertNotNull(typeface);
+        SkijaText.registerTypeface(math, typeface);
+        try (CFontRenderer font = new CFontRenderer(math, 28f);
+             Surface surface = Surface.makeRasterN32Premul(120, 70);
+             Paint paint = new Paint().setColor(0xFFFFFFFF);
+             Bitmap bitmap = new Bitmap()) {
+            try (TextLine line = font.shapeUnicodeLine(supplementary)) {
+                assertNotNull(line);
+                assertEquals(1, line.getGlyphs().length);
+                assertNotEquals(0, line.getGlyphs()[0]);
+                assertEquals(line.getWidth(), font.getStringWidthD(supplementary), 1e-5);
+            }
+            assertTrue(font.drawPlainTextWithPaintOn(surface.getCanvas(), supplementary, 20, 15, paint));
+            assertTrue(bitmap.allocPixels(ImageInfo.makeN32Premul(120, 70)));
+            assertTrue(surface.readPixels(bitmap, 0, 0));
+            int visible = 0;
+            byte[] pixels = bitmap.readPixels();
+            for (int i = 3; i < pixels.length; i += 4) if ((pixels[i] & 255) > 10) visible++;
+            assertTrue(visible > 20);
+        }
+    }
+
+    @Test void aComplexGlyphInsideAMixedSentenceDoesNotSwitchTheWholeFallbackRun() throws Exception {
+        try (CFontRenderer font = new CFontRenderer(latin, 18f, cjk)) {
+            String text = "Music A\u0301 世界";
+            byte[] cached = render(font, text, 12, 15, 0xFFFFFFFF, 0, null);
+            byte[] originalRuns = render(font, "§r" + text, 12, 15, 0xFFFFFFFF, 0, null);
+            assertArrayEquals(originalRuns, cached, "A glyph-specific improvement must not replace multi-font layout");
+        }
+    }
+
     @Test void trueStrokeDrawingUsesTheSameCachedGlyphBlob() throws Exception {
         try (CFontRenderer font = new CFontRenderer(latin, 28f, cjk)) {
             byte[] fill = render(font, "Hollow", 20, 24, 0xFFFFFFFF, 0, null);

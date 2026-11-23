@@ -61,3 +61,10 @@
 ```
 
 保留 `Port263StaticTest`、布局、输入、渲染与打包守卫。按影响实测启动/切歌/切屏、SDL 输入、resize/失焦、世界歌词/光影及资源释放；性能结论记录场景、基线和测量数据。
+
+
+### 商籁文字平面验证（2026-11-23）
+
+商籁主体位于共享 `core/lyrics3d/Sonnet*`；正常渲染为透明 Skija Picture，经本树既有 `drawGpuTrailCanvas` / CPU 回放口送进 3D 平面，不新增背景或 MC 挂点。字体、Picture、画笔、滤镜在渲染线程拥有/释放，`WorldLyricsBridge` 关闭/无世界/无歌词及 `SkijaHost.shutdown` 均接入共享清理。
+
+`SonnetGpuProbeTest` 留在本树：它依赖本树 `SkijaTrailGpuTest` 的隐藏 SDL/OpenGL 和 MC RenderSystem 夹具，并实际执行 GPU 回读对照。需要显式 `-Dmuonium.ci.skipSkijaNative=false -Dmuonium.test.gpuTrails=true` 传进测试 JVM；普通 test 跳过它不构成 GPU 通过。此探针与源码/单测通过仍不等于 Minecraft 实际场景、光影或其他版本/加载器实测通过。验证范围仍遵守用户当轮授权，禁止自行扩展构建。

@@ -284,11 +284,23 @@ public final class WorldLyricsRenderer {
         consecutiveFailures = 0;
     }
 
+    /** Render-thread teardown before Skija shutdown, on world exit, or when lyrics are disabled. */
+    public static void releaseResources() {
+        SonnetCanvasRenderer.release();
+    }
+
+    /** GUI heartbeat releases the word plane after world rendering has stopped (e.g. title screen). */
+    public static void releaseIdleResources() {
+        SonnetCanvasRenderer.releaseIfIdle(System.nanoTime());
+    }
+
     private static void renderGuarded(WorldLyricsState state, WorldLyricsState.CameraView camera,
                                       WorldLyricsSettings settings, Host host, long nowNanos) {
         if (broken || !settings.enabled || !WorldLyricsState.hasLyrics() || camera == null || host == null) {
+            SonnetCanvasRenderer.release();
             return;
         }
+        if (!settings.sonnet || !settings.styleModern) SonnetCanvasRenderer.release();
         // 一次取整份快照：分开调 getSnapshot()/positionMsNow() 可能跨切歌边界，
         // 「上一首的 playing」配上「下一首的 position」会把换行判定搅乱。
         com.muoniumplayer.core.ncm.music.CloudMusic.PlaybackSnapshot snap =
@@ -296,6 +308,7 @@ public final class WorldLyricsRenderer {
         WorldLyricsState.Frame frame = state.update(camera, settings, nowNanos,
                 snap.playing, snap.positionMs);
         if (frame == null || frame.rows.isEmpty()) {
+            SonnetCanvasRenderer.release();
             if (TRACE && !traceThrottled()) {
                 System.out.println("[WorldLyrics/trace] hasLyrics=true 但本帧无行可画"
                         + "（playing=" + snap.playing + " posMs=" + snap.positionMs + "）");
@@ -304,6 +317,12 @@ public final class WorldLyricsRenderer {
         }
 
         long songNowMs = snap.positionMs;
+
+        if (settings.sonnet && settings.styleModern
+                && SonnetCanvasRenderer.render(frame, settings, host, snap)) {
+            HuiguangTrailCanvas.close();
+            return;
+        }
 
         // 淡出中的先画（下层），active 后画（上层）。
         // 画布槽位：active 行 0、淡出行从 1 起 —— 同帧两行都进拖尾窗口时
@@ -1285,7 +1304,7 @@ public final class WorldLyricsRenderer {
      * 生效色板（4 色 0xRRGGBB，主色在前）：来源档为「自动提取」走封面快照，
      * 「手动」走 HudConfig 的 4 个手动 RGB 字段。快照/手动都不可用时返回 null。
      */
-    private static int[] effectiveCoverPalette(WorldLyricsSettings settings) {
+    static int[] effectiveCoverPalette(WorldLyricsSettings settings) {
         if (settings.coverColorMode == 0) return null;
         if (settings.coverColorMode == 1) {
             int[] snap = com.muoniumplayer.core.ncm.music.CoverGradientColors.snapshot();

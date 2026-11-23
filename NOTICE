@@ -51,7 +51,11 @@ ytmusicapi
 
 folia-major
   https://github.com/chthollyphile/folia-major
-  视觉灵感来源（绘光歌词样式），未复制其代码。
+  作者：chthollyphile 及 Folia 贡献者。
+  商籁文字 PV 的排版、语义时间线、文字运动及贴字装饰模块改编自该项目，
+  沿用其 GNU Affero General Public License v3.0 许可说明。
+  随包原始许可见 META-INF/licenses/folia-sonnet/AGPL-3.0.txt。
+  绘光样式的独立实现与本次商籁源码改编分别说明，不以“未复制”概括商籁模块。
 
 ────────────────────────────────────────
 说明

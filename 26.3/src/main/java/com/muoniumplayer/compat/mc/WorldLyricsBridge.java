@@ -118,6 +118,7 @@ public final class WorldLyricsBridge {
      * @param collector 本帧的世界 submit 收集器（原版 submitFeatures 同款）
      */
     public static void collectWorldLyrics(SubmitNodeCollector collector) {
+        if (!HudConfig.worldLyricsEnabled) WorldLyricsRenderer.releaseResources();
         if (broken || !HudConfig.worldLyricsEnabled || collector == null) return;
         // always-on-top 门旗标（见 fabric 侧 LyricOnTopSubmitter.submittedThisFrame 的
         // 注释）：帧头复位 —— 本帧没提交就保持 vanilla 门。fabric 的
@@ -125,7 +126,10 @@ public final class WorldLyricsBridge {
         LyricOnTopSubmitter.submittedThisFrame = false;
         try {
             Minecraft mc = Minecraft.getInstance();
-            if (mc == null || mc.player == null || mc.level == null) return;
+            if (mc == null || mc.player == null || mc.level == null) {
+                WorldLyricsRenderer.releaseResources();
+                return;
+            }
             if (mc.gameRenderer == null) return;
             Camera camera = mc.gameRenderer.mainCamera();
             if (camera == null) return;
@@ -189,6 +193,7 @@ public final class WorldLyricsBridge {
         WorldLyricsBridge.currentSettings = settings;
 
         if (!WorldLyricsState.hasLyrics()) {
+            WorldLyricsRenderer.releaseResources();
             if (TRACE && !tracedNoLyrics) {
                 tracedNoLyrics = true;
                 System.out.println("[WorldLyrics/trace] 开关已开、世界正常，但当前没有已加载的歌词"
