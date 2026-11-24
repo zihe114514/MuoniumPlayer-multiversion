@@ -14,6 +14,9 @@ final class SonnetFrameSurface implements AutoCloseable {
     private Canvas rasterCanvas;
     private int rasterWidth, rasterHeight;
     private int[] pixels;
+    private String presentationRoute = "尚未提交";
+
+    String presentationRoute() { return presentationRoute; }
 
     Canvas begin(int width, int height) {
         if (width < 1 || height < 1 || width > 1600 || height > 1600) {
@@ -31,14 +34,19 @@ final class SonnetFrameSurface implements AutoCloseable {
         if (host.supportsGpuTrailCanvas()) {
             try {
                 if (host.drawGpuTrailCanvas(picture, width, height,
-                        -designWidth / 2, -designHeight / 2, designWidth, designHeight, alpha, slot)) return true;
+                        -designWidth / 2, -designHeight / 2, designWidth, designHeight, alpha, slot)) {
+                    presentationRoute = "GPU";
+                    return true;
+                }
             } catch (Throwable failure) {
                 // GPU acceleration is optional; raster replays the very same commands below.
             }
         }
         int[] rgba = rasterize(picture, width, height);
-        return rgba != null && host.drawTrailCanvas(rgba, width, height,
+        boolean presented = rgba != null && host.drawTrailCanvas(rgba, width, height,
                 -designWidth / 2, -designHeight / 2, designWidth, designHeight, alpha, slot);
+        presentationRoute = presented ? "CPU" : "提交失败";
+        return presented;
     }
 
     int[] rasterize(Picture picture, int width, int height) {

@@ -4,6 +4,8 @@ import com.muoniumplayer.render.skija.SkijaGfx;
 
 import io.github.humbleui.skija.BlendMode;
 import io.github.humbleui.skija.Canvas;
+import io.github.humbleui.skija.Paint;
+import io.github.humbleui.skija.TextBlob;
 
 /**
  * 文字的高斯光晕，全项目歌词发光的唯一实现。
@@ -708,6 +710,15 @@ public final class TextGlow {
     private TextGlow() {
     }
 
+    /** Prepare the configured blur filters during the lyric lead-in, before the first glyph is visible. */
+    public static void prepareGlowMasks(double spread, int tier) {
+        double scale = 64.0 * Math.max(.05, spread);
+        int t = Math.max(GLOW_TIER_STANDARD, Math.min(GLOW_TIER_ULTRA, tier));
+        for (double sigma : TIER_SIGMAS[t]) {
+            SkijaGfx.fillBlurred(0xFFFFFFFF, (float) (scale * sigma));
+        }
+    }
+
     public static void draw(CFontRenderer font, String text, double x, double y,
                             int rgb, double alpha, double strength) {
         draw(font, text, x, y, rgb, alpha, strength, 1.0);
@@ -844,6 +855,40 @@ public final class TextGlow {
                 }
                 font.drawGlyphsOn(canvas, text, x, y, withAlpha(layerRgb, layerAlpha), 255,
                         (float) (scale * sigmas[layer]), null);
+            }
+        } finally {
+            SkijaGfx.setBlendMode(previousBlend);
+        }
+    }
+
+    /** Same glow stack as drawGlowOn, applied to one pre-positioned glyph batch. */
+    public static void drawGlowBlobOn(Canvas canvas, TextBlob blob, double fontSizePx,
+                                      double x, double y, int rgb, int ink,
+                                      double strength, double spread, int tier) {
+        if (canvas == null || blob == null) return;
+        double clampedStrength = clamp01(strength);
+        if (clampedStrength <= .004) return;
+        double scale = fontSizePx * Math.max(.05, spread);
+        BlendMode previousBlend = SkijaGfx.blendMode();
+        SkijaGfx.setBlendMode(BlendMode.PLUS);
+        try {
+            int t = Math.max(GLOW_TIER_STANDARD, Math.min(GLOW_TIER_ULTRA, tier));
+            double[] sigmas = TIER_SIGMAS[t];
+            double[] alphas = TIER_ALPHAS[t];
+            int light = rgb & 0xFFFFFF;
+            int inkC = ink & 0xFFFFFF;
+            for (int layer = 0; layer < sigmas.length; layer++) {
+                double layerAlpha = clampedStrength * alphas[layer];
+                if (layerAlpha <= .003) continue;
+                int layerRgb = light;
+                if (t == GLOW_TIER_HIGH && layer == 1 && inkC != 0) layerRgb = mixRgb(light, inkC, 0.55f);
+                if (t == GLOW_TIER_ULTRA && layer == 2 && inkC != 0) {
+                    int recovered = mixRgb(light, inkC, 0.55f);
+                    layerRgb = mixRgb(recovered, 0xFFFFFF, 0.35f);
+                }
+                if (t == GLOW_TIER_ULTRA && layer == 3) layerRgb = 0xFFFFFF;
+                Paint paint = SkijaGfx.fillBlurred(withAlpha(layerRgb, layerAlpha), (float) (scale * sigmas[layer]));
+                canvas.drawTextBlob(blob, (float) x, (float) y, paint);
             }
         } finally {
             SkijaGfx.setBlendMode(previousBlend);

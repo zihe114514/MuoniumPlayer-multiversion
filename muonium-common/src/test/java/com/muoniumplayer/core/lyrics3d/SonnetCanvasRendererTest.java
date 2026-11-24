@@ -70,6 +70,63 @@ class SonnetCanvasRendererTest {
         } finally { SonnetDecorations.close(); }
     }
 
+    @Test void stableGlyphBatchMatchesPerGlyphRasterWithAllTextEffects() throws Exception {
+        assertTrue(SkijaNatives.ensureLoaded());
+        Font latin = font("/muonium/fonts/sfregular.otf"), cjk = font("/muonium/fonts/pf_normal.ttf");
+        List<LyricLine> lines = fixture();
+        String seed = seedFor(lines, SonnetTypography.Kind.TYPE_IMPACT);
+        try (CFontRenderer bold = new CFontRenderer(font("/muonium/fonts/sfbold.otf"), 25,
+                font("/muonium/fonts/pf_middleblack.ttf"));
+             CFontRenderer regular = new CFontRenderer(latin, 25, cjk);
+             SonnetCanvasRenderer renderer = new SonnetCanvasRenderer(new SonnetTextFonts(bold, regular));
+             SonnetFrameSurface raster = new SonnetFrameSurface()) {
+            renderer.updateProgram(lines, 1, seed);
+            WorldLyricsSettings settings = settings();
+            settings.glowEnabled = true;
+            settings.glowStrength = 0.32f;
+            settings.glowSpread = 0.8f;
+            boolean compared = false;
+            for (double now : new double[]{1900, 2300, 2700, 3100, 3500, 3900}) {
+                renderer.stableGlyphBatching = true;
+                int[] batched = render(renderer, raster, now, settings);
+                int batchedCount = renderer.stableGlyphCountLastFrame;
+                if (batchedCount < 2) continue;
+                renderer.stableGlyphBatching = false;
+                int[] legacy = render(renderer, raster, now, settings);
+                double error = premultipliedMeanError(batched, legacy);
+                assertTrue(error < 1.25, "Stable RSXform batch changed the rendered frame at " + now
+                        + "ms; premultiplied mean error=" + error + ", batched glyphs=" + batchedCount);
+                compared = true;
+            }
+            assertTrue(compared, "Fixture must reach a stable multi-glyph prefix for comparison");
+        } finally { SonnetDecorations.close(); }
+    }
+
+    @Test void prewarmedStableBlobIsPromotedWithoutRebuildingAtTheRevealBoundary() throws Exception {
+        Font latin = font("/muonium/fonts/sfregular.otf"), cjk = font("/muonium/fonts/pf_normal.ttf");
+        try (CFontRenderer source = new CFontRenderer(latin, 25, cjk);
+             SonnetTextFonts fonts = new SonnetTextFonts(source, source)) {
+            SonnetProgram program = SonnetProgram.compile(fixture(),
+                    seedFor(fixture(), SonnetTypography.Kind.TYPE_IMPACT));
+            SonnetTextScene scene = new SonnetTextScene(program.shots.get(0), fonts, 1280, 720);
+            try {
+                SonnetTextScene.Segment segment = scene.segments.stream()
+                        .filter(candidate -> !candidate.staff && candidate.glyphs.size() >= 2)
+                        .findFirst().orElseThrow();
+                double ghostDuration = SonnetTextMotion.ghostDuration(scene.shot.endMs - scene.shot.startMs);
+                double ready = segment.stableReadyMs(2, ghostDuration);
+                scene.update(ready - 200);
+                io.github.humbleui.skija.TextBlob prepared = segment.prewarmStableBlob(fonts, 2);
+                assertNotNull(prepared, "The future stable prefix should be built during the lead-in");
+                scene.update(ready + 1);
+                assertSame(prepared, segment.stableBlob(fonts, 2),
+                        "The reveal boundary must promote the prewarmed native blob instead of rebuilding it");
+            } finally {
+                scene.close();
+            }
+        }
+    }
+
     @Test void everyShotRendersThroughTheSameCanvasPipelineWithoutMissingGraphemes() throws Exception {
         Font latin = font("/muonium/fonts/sfregular.otf"), cjk = font("/muonium/fonts/pf_normal.ttf");
         List<LyricLine> lines = fixture();
@@ -98,6 +155,85 @@ class SonnetCanvasRendererTest {
                 ImageIO.write(contact, "png", Path.of(output).resolve("seven-layouts.png").toFile());
             }
         } finally { SonnetDecorations.close(); }
+    }
+
+    @Test void allSevenLayoutsKeepSettledWordsStillWithoutPanningZoomRotationOrParallax() throws Exception {
+        Font latin = font("/muonium/fonts/sfregular.otf"), cjk = font("/muonium/fonts/pf_normal.ttf");
+        LyricLine line = new LyricLine(1000, "微光 穿过 漫长 夜色 落在 你的 肩上");
+        line.duration = 10000;
+        for (String word : line.lyric.split(" ")) line.words.add(new LyricLine.Word(word, 1000, 300));
+        List<LyricLine> lyrics = List.of(line);
+        try (CFontRenderer bold = new CFontRenderer(latin, 25, cjk);
+             CFontRenderer regular = new CFontRenderer(latin, 25, cjk);
+             SonnetTextFonts fonts = new SonnetTextFonts(bold, regular);
+             SonnetCanvasRenderer renderer = new SonnetCanvasRenderer(new SonnetTextFonts(bold, regular));
+             SonnetFrameSurface raster = new SonnetFrameSurface()) {
+            WorldLyricsSettings options = settings();
+            options.sonnetDecorations = false; // Artwork may breathe; settled text and outline copies may not move.
+            BufferedImage contact = new BufferedImage(WIDTH * 4, HEIGHT * 2, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = contact.createGraphics();
+            int index = 0;
+            for (SonnetTypography.Kind kind : SonnetTypography.Kind.values()) {
+                String seed = seedFor(lyrics, kind);
+                SonnetProgram program = SonnetProgram.compile(lyrics, seed);
+                SonnetTextScene scene = new SonnetTextScene(program.shots.get(0), fonts, 1280, 720);
+                float centerX = scene.layoutCenterX, centerY = scene.layoutCenterY, scale = scene.layoutScale;
+                scene.update(4000);
+                for (SonnetTextScene.Segment segment : scene.segments) {
+                    for (SonnetTextScene.Glyph glyph : segment.glyphs) {
+                        assertEquals(glyph.baseX, glyph.x, 1e-5, kind + " must settle at its layout X");
+                        assertEquals(glyph.baseY, glyph.y, 1e-5, kind + " must settle at its layout Y");
+                        assertEquals(1, glyph.scale, 1e-6, kind + " must not keep a camera/depth scale");
+                        assertEquals(segment.box.rotationRad, glyph.rotation, 1e-6);
+                    }
+                    if (segment.box.role == SonnetTypography.Role.DECORATION) continue;
+                    assertTrue((segment.x - segment.box.width / 2 - centerX) * scale >= -1280 * 0.43f - 0.01f);
+                    assertTrue((segment.x + segment.box.width / 2 - centerX) * scale <= 1280 * 0.43f + 0.01f);
+                    assertTrue((segment.y - segment.box.height / 2 - centerY) * scale >= -720 * 0.4f - 0.01f);
+                    assertTrue((segment.y + segment.box.height / 2 - centerY) * scale <= 720 * 0.4f + 0.01f);
+                }
+                scene.update(8000);
+                assertEquals(centerX, scene.layoutCenterX); assertEquals(centerY, scene.layoutCenterY);
+                assertEquals(scale, scene.layoutScale, "Placement is determined once from the complete layout");
+                renderer.updateProgram(lyrics, 1, seed);
+                int[] settled = render(renderer, raster, 4000, options);
+                assertTrue(visible(settled) > 100, kind + " must keep the whole core layout visible");
+                assertArrayEquals(settled, render(renderer, raster, 8000, options),
+                        kind + " pixels must not drift as playback advances after entry");
+                assertFalse(Arrays.equals(settled, render(renderer, raster, 1150, options)),
+                        "Removing the camera must retain the actual text entrance animation");
+                graphics.drawImage(image(settled), index % 4 * WIDTH, index / 4 * HEIGHT, null);
+                graphics.setColor(java.awt.Color.WHITE); graphics.setFont(new Font("Dialog", Font.PLAIN, 18));
+                graphics.drawString(kind.name(), index % 4 * WIDTH + 18, index / 4 * HEIGHT + 28);
+                index++;
+            }
+            graphics.dispose();
+            String output = System.getenv("MUONIUM_SONNET_RENDER_PROBE_DIR");
+            if (output != null && !output.isEmpty()) {
+                Files.createDirectories(Path.of(output));
+                ImageIO.write(contact, "png", Path.of(output).resolve("static-seven-layouts.png").toFile());
+            }
+        } finally { SonnetDecorations.close(); }
+    }
+
+    @Test void earlierWordsDoNotFollowLaterWordRevealsInTheSameLayout() throws Exception {
+        Font latin = font("/muonium/fonts/sfregular.otf"), cjk = font("/muonium/fonts/pf_normal.ttf");
+        try (CFontRenderer source = new CFontRenderer(latin, 25, cjk);
+             SonnetTextFonts fonts = new SonnetTextFonts(source, source)) {
+            for (SonnetTypography.Kind kind : SonnetTypography.Kind.values()) {
+                SonnetProgram program = SonnetProgram.compile(fixture(), seedFor(fixture(), kind));
+                SonnetTextScene scene = new SonnetTextScene(program.shots.get(0), fonts, 1280, 720);
+                SonnetTextScene.Glyph first = scene.segments.stream()
+                        .filter(segment -> segment.box.role != SonnetTypography.Role.DECORATION)
+                        .flatMap(segment -> segment.glyphs.stream())
+                        .min(java.util.Comparator.comparingDouble(glyph -> glyph.startMs)).orElseThrow();
+                scene.update(first.settleMs + 1);
+                float x = first.x, y = first.y, scale = first.scale, rotation = first.rotation;
+                scene.update(first.settleMs + 450);
+                assertEquals(x, first.x); assertEquals(y, first.y);
+                assertEquals(scale, first.scale); assertEquals(rotation, first.rotation);
+            }
+        }
     }
 
     @Test void gpuRejectionReplaysIdenticalPremultipliedCommandsWithStraightAbgrPixels() {
@@ -160,7 +296,8 @@ class SonnetCanvasRendererTest {
                     0, 0, 73, 0.15f, 0, true, 0.5f);
             assertTrue(renderer.draw(new WorldLyricsState.Frame(List.of(next), true), settings, host, snap));
             assertEquals(expectedScale, values[0], 1e-6, "Another row must not resize a fixed shot plane");
-            assertEquals(0.3f, values[1], 1e-6, "Pause/resume alpha must remain after protection is removed");
+            assertEquals(1f, values[1], 1e-6,
+                    "Single-row fades cannot dim or truncate the independently animated shot");
             assertEquals(pushes[0], pops[0], "The production host stack must be balanced");
         } finally {
             com.muoniumplayer.core.ncm.music.CloudMusic.lyrics.clear();
@@ -247,6 +384,19 @@ class SonnetCanvasRendererTest {
         int count = 0;
         for (int pixel : pixels) if ((pixel >>> 24) > 10) count++;
         return count;
+    }
+
+    private static double premultipliedMeanError(int[] first, int[] second) {
+        double error = 0;
+        for (int i = 0; i < first.length; i++) {
+            int alphaA = first[i] >>> 24, alphaB = second[i] >>> 24;
+            error += Math.abs(alphaA - alphaB);
+            for (int shift : new int[]{0, 8, 16}) {
+                int colorA = first[i] >>> shift & 255, colorB = second[i] >>> shift & 255;
+                error += Math.abs(colorA * alphaA - colorB * alphaB) / 255.0;
+            }
+        }
+        return error / (first.length * 4.0);
     }
 
     private static BufferedImage image(int[] abgr) {

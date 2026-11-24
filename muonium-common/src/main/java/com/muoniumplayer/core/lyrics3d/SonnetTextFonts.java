@@ -5,7 +5,9 @@ import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.font.TextGlow;
 import io.github.humbleui.skija.Canvas;
 import io.github.humbleui.skija.Paint;
+import io.github.humbleui.skija.TextBlob;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** Two owned font faces at one vector size; scene/glyph caches never own native font objects. */
@@ -90,6 +92,50 @@ final class SonnetTextFonts implements AutoCloseable {
         try {
             canvas.scale(scale, scale);
             TextGlow.drawGlowOn(canvas, font(role), text, glyph.originX, glyph.originY,
+                    glowRgb, inkRgb, strength, spread, tier);
+        } finally {
+            canvas.restore();
+        }
+    }
+
+    TextBlob stablePrefix(List<SonnetTextScene.Glyph> glyphs, int count,
+                          SonnetTypography.Role role, float fontSize, boolean settledPose) {
+        if (glyphs == null || count < 2 || count > glyphs.size() || fontSize <= 0) return null;
+        String[] text = new String[count];
+        float[] x = new float[count], y = new float[count], rotation = new float[count];
+        float[] anchorX = new float[count], anchorY = new float[count];
+        float toVector = VECTOR_SIZE / fontSize;
+        for (int i = 0; i < count; i++) {
+            SonnetTextScene.Glyph glyph = glyphs.get(i);
+            text[i] = glyph.text;
+            x[i] = (settledPose ? glyph.baseX : glyph.x) * toVector;
+            y[i] = (settledPose ? glyph.baseY : glyph.y) * toVector;
+            rotation[i] = settledPose ? glyph.settledRotation : glyph.rotation;
+            anchorX[i] = glyph.geometry.originX;
+            anchorY[i] = glyph.geometry.originY - 2f;
+        }
+        return font(role).buildTransformedPlainTextBlob(text, x, y, rotation, anchorX, anchorY);
+    }
+
+    void drawBatch(Canvas canvas, TextBlob blob, float fontSize, Paint paint) {
+        if (canvas == null || blob == null || paint == null) return;
+        canvas.save();
+        try {
+            canvas.scale(fontSize / VECTOR_SIZE, fontSize / VECTOR_SIZE);
+            canvas.drawTextBlob(blob, 0, 0, paint);
+        } finally {
+            canvas.restore();
+        }
+    }
+
+    void glowBatch(Canvas canvas, TextBlob blob, SonnetTypography.Role role,
+                   float fontSize, int glowRgb, int inkRgb,
+                   double strength, float spread, int tier) {
+        if (canvas == null || blob == null || strength <= 0.004) return;
+        canvas.save();
+        try {
+            canvas.scale(fontSize / VECTOR_SIZE, fontSize / VECTOR_SIZE);
+            TextGlow.drawGlowBlobOn(canvas, blob, font(role).sizePx, 0, 0,
                     glowRgb, inkRgb, strength, spread, tier);
         } finally {
             canvas.restore();

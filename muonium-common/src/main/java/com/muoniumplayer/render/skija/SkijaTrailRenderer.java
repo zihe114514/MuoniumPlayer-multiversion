@@ -100,9 +100,16 @@ public final class SkijaTrailRenderer {
     /** Current GL context and state isolation are owned by the caller; also used by GPU tests. */
     static void renderOn(DirectContext context, Picture picture, int width, int height,
                          int texture, int textureWidth, int textureHeight, int slot) {
+        renderOn(context, picture, width, height, texture, textureWidth, textureHeight, slot, null);
+    }
+
+    /** Optional phase timings are supplied only by the native GPU test probe. */
+    static void renderOn(DirectContext context, Picture picture, int width, int height,
+                         int texture, int textureWidth, int textureHeight, int slot, long[] phaseNanos) {
         if (context == null || picture == null || texture <= 0 || slot < 0 || slot >= 4
                 || width <= 0 || height <= 0 || width > 1600 || height > 1600
-                || textureWidth < width || textureHeight < height) {
+                || textureWidth < width || textureHeight < height
+                || phaseNanos != null && phaseNanos.length < 3) {
             throw new IllegalArgumentException("Invalid GPU trail target");
         }
         if (!GL.getCapabilities().OpenGL32) throw new IllegalStateException("GPU trails require OpenGL 3.2");
@@ -114,6 +121,7 @@ public final class SkijaTrailRenderer {
         Target target = TARGET;
         ensureTarget(context, target, width, height);
         int save = target.surface.getCanvas().save();
+        long phaseStart = phaseNanos == null ? 0 : System.nanoTime();
         try {
             target.surface.getCanvas().clipRect(Rect.makeWH(width, height));
             target.surface.getCanvas().clear(0);
@@ -121,7 +129,13 @@ public final class SkijaTrailRenderer {
         } finally {
             target.surface.getCanvas().restoreToCount(save);
         }
+        if (phaseNanos != null) phaseNanos[0] = System.nanoTime() - phaseStart;
+        phaseStart = phaseNanos == null ? 0 : System.nanoTime();
         context.flushAndSubmit(target.surface);
+        if (phaseNanos != null) {
+            phaseNanos[1] = System.nanoTime() - phaseStart;
+            phaseStart = System.nanoTime();
+        }
 
         GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, outputFbo);
         GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0,
@@ -155,6 +169,7 @@ public final class SkijaTrailRenderer {
             GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0,
                     GL11.GL_TEXTURE_2D, 0, 0);
         }
+        if (phaseNanos != null) phaseNanos[2] = System.nanoTime() - phaseStart;
     }
 
     private static void ensureTarget(DirectContext context, Target target, int width, int height) {

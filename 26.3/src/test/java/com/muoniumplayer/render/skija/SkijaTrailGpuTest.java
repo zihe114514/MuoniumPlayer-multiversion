@@ -80,6 +80,11 @@ class SkijaTrailGpuTest {
                     width, height, texture, capacityWidth, capacityHeight, slot)));
         }
 
+        void renderMeasured(Picture picture, int width, int height, int slot, long[] phaseNanos) {
+            assertTrue(SkijaHost.renderOffscreen(() -> SkijaTrailRenderer.renderOn(context, picture,
+                    width, height, texture, capacityWidth, capacityHeight, slot, phaseNanos)));
+        }
+
         ByteBuffer read(int width, int height) {
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo);
             GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0,

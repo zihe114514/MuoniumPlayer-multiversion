@@ -7,6 +7,7 @@ import com.muoniumplayer.core.lyrics3d.HuiguangMotion;
 import com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas;
 import com.muoniumplayer.core.rendering.font.TextGlow;
 import com.muoniumplayer.core.lyrics3d.WorldLyricsRenderer;
+import com.muoniumplayer.core.lyrics3d.WorldLyricsSettings;
 import com.muoniumplayer.mixin.RenderTypeAccessors;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -188,6 +189,39 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private static RenderType currentWorldTextType(Identifier rl) {
         return ShaderPackProbe.isActive() ? shaderTextType(rl)
                 : RenderTypes.textSeeThrough(rl);
+    }
+
+    /** Whole Sonnet scenes contain faint anti-aliased artwork. Vanilla text.fsh discards alpha < .1,
+     * which clips entry/exit tails and thin particle trails after the offscreen render is complete.
+     * This lane's existing worldlyrics_text shaders preserve all nonzero alpha and do not sample fog
+     * or lightmaps. Keep the shader-pack beacon route; the final-present route bypasses both here. */
+    private static final com.mojang.renderpearl.api.pipeline.RenderPipeline SONNET_CANVAS_PIPELINE =
+            com.mojang.renderpearl.api.pipeline.RenderPipeline.builder()
+                    .withLocation(Identifier.fromNamespaceAndPath("muonium", "sonnet_canvas"))
+                    .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.GLOBALS)
+                    .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.PROJECTION)
+                    .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.DYNAMIC_TRANSFORMS)
+                    .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.SAMPLER0)
+                    .withVertexShader(Identifier.fromNamespaceAndPath("muonium", "core/worldlyrics_text"))
+                    .withFragmentShader(Identifier.fromNamespaceAndPath("muonium", "core/worldlyrics_text"))
+                    .withVertexBinding(0, com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP)
+                    .withPrimitiveTopology(com.mojang.renderpearl.api.pipeline.PrimitiveTopology.QUADS)
+                    .withColorTargetState(new com.mojang.renderpearl.api.pipeline.ColorTargetState(
+                            com.mojang.renderpearl.api.pipeline.BlendFunction.TRANSLUCENT))
+                    .withCull(false)
+                    .build();
+
+    private static final java.util.concurrent.ConcurrentHashMap<Identifier, RenderType> SONNET_CANVAS_TYPES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static RenderType sonnetCanvasType(Identifier rl) {
+        if (ShaderPackProbe.isActive()) return shaderTextType(rl);
+        return SONNET_CANVAS_TYPES.computeIfAbsent(rl, r ->
+                RenderTypeAccessors.muonium$create("muonium_sonnet_canvas",
+                        net.minecraft.client.renderer.rendertype.RenderSetup.builder(SONNET_CANVAS_PIPELINE)
+                                .withTexture("Sampler0", r)
+                                .sortOnUpload()
+                                .createRenderSetup()));
     }
 
     private static void releaseRetiredTextures() {
@@ -784,7 +818,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             return;
         }
 
-        RenderType renderType = currentWorldTextType(rl);
+        WorldLyricsSettings canvasSettings = WorldLyricsBridge.currentSettings;
+        RenderType renderType = canvasSettings != null && canvasSettings.sonnet
+                ? sonnetCanvasType(rl) : currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
         poseStack.pushPose();
@@ -879,8 +915,34 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private static final TrailTexture[] trailCanvasTex = new TrailTexture[4];
     private static final int[] trailCanvasW = new int[4];
     private static final int[] trailCanvasH = new int[4];
+    private static final CanvasPictureCache[] trailCanvasPictureCache = {
+            new CanvasPictureCache(), new CanvasPictureCache(),
+            new CanvasPictureCache(), new CanvasPictureCache()
+    };
     private static boolean trailCanvasError;
     private static int trailCanvasErrSlot = -1;
+
+    static final class CanvasPictureCache {
+        private Object picture, texture;
+        private int width, height;
+
+        boolean matches(Object picture, Object texture, int width, int height) {
+            return this.picture == picture && this.texture == texture
+                    && this.width == width && this.height == height;
+        }
+
+        void store(Object picture, Object texture, int width, int height) {
+            this.picture = picture;
+            this.texture = texture;
+            this.width = width;
+            this.height = height;
+        }
+
+        void invalidate() {
+            picture = texture = null;
+            width = height = 0;
+        }
+    }
 
     /**
      * 绘光拖尾画布上屏：渲染层用 Skija 在 CPU 端光栅化整句径迹（多层辉光 +
@@ -927,6 +989,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             // 逐帧 release+重建会让已提交 quad 读死纹理（黑紫方块闪帧）。
             int capW = nextPow2(w), capH = nextPow2(h);
             if (tex == null || trailCanvasW[slot] < w || trailCanvasH[slot] < h) {
+                trailCanvasPictureCache[slot].invalidate();
                 if (rl != null) {
                     retiredTextures.add(rl);
                     trailCanvasRl[slot] = null;
@@ -943,15 +1006,25 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 trailCanvasH[slot] = capH;
             }
             if (picture != null) {
-                int glId = ((com.mojang.renderpearl.backend.opengl.GlTexture) tex.getTexture()).glId();
-                if (!com.muoniumplayer.render.skija.SkijaTrailRenderer.render(picture, w, h,
-                        glId, trailCanvasW[slot], trailCanvasH[slot], slot)) return false;
+                Object gpuTexture = tex.getTexture();
+                CanvasPictureCache cache = trailCanvasPictureCache[slot];
+                if (!cache.matches(picture, gpuTexture, w, h)) {
+                    cache.invalidate();
+                    int glId = ((com.mojang.renderpearl.backend.opengl.GlTexture) gpuTexture).glId();
+                    if (!com.muoniumplayer.render.skija.SkijaTrailRenderer.render(picture, w, h,
+                            glId, trailCanvasW[slot], trailCanvasH[slot], slot)) return false;
+                    cache.store(picture, gpuTexture, w, h);
+                }
             } else {
                 // Keep the capacity texture, but write/upload only the actual canvas rectangle.
+                trailCanvasPictureCache[slot].invalidate();
                 tex.uploadSub(px, w, h);
             }
         } catch (Throwable t) {
-            if (picture != null) return false;
+            if (picture != null) {
+                trailCanvasPictureCache[slot].invalidate();
+                return false;
+            }
             trailCanvasError = true;
             trailCanvasErrSlot = slot;
             if (TRACE) System.out.println("[WorldLyrics/trace] 拖尾画布纹理失败，径迹退回 quad 带: " + t);

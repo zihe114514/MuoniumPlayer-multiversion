@@ -68,3 +68,6 @@
 商籁主体位于共享 `core/lyrics3d/Sonnet*`；正常渲染为透明 Skija Picture，经本树既有 `drawGpuTrailCanvas` / CPU 回放口送进 3D 平面，不新增背景或 MC 挂点。字体、Picture、画笔、滤镜在渲染线程拥有/释放，`WorldLyricsBridge` 关闭/无世界/无歌词及 `SkijaHost.shutdown` 均接入共享清理。
 
 `SonnetGpuProbeTest` 留在本树：它依赖本树 `SkijaTrailGpuTest` 的隐藏 SDL/OpenGL 和 MC RenderSystem 夹具，并实际执行 GPU 回读对照。需要显式 `-Dmuonium.ci.skipSkijaNative=false -Dmuonium.test.gpuTrails=true` 传进测试 JVM；普通 test 跳过它不构成 GPU 通过。此探针与源码/单测通过仍不等于 Minecraft 实际场景、光影或其他版本/加载器实测通过。验证范围仍遵守用户当轮授权，禁止自行扩展构建。
+
+
+2026-11-24：普通世界通路的商籁整幅画布使用 `WorldBillboard.SONNET_CANVAS_PIPELINE` 与本树已有 `worldlyrics_text` shaders，避免 vanilla `text.fsh` 的 alpha<0.1 裁剪吞掉细线/入退场尾部。SonnetGpuProbeTest 同时核对实际管线对象及编译其资源着色器后的低 alpha 合成；光影包继续按既有 beacon/final-present 分发，探针不代替光影/天气游戏实测。

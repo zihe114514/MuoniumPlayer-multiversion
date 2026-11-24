@@ -15,6 +15,7 @@ import io.github.humbleui.skija.FontEdging;
 import io.github.humbleui.skija.FontHinting;
 import io.github.humbleui.skija.FontMetrics;
 import io.github.humbleui.skija.Paint;
+import io.github.humbleui.skija.RSXform;
 import io.github.humbleui.skija.Shader;
 import io.github.humbleui.skija.TextBlob;
 import io.github.humbleui.skija.TextBlobBuilder;
@@ -24,6 +25,7 @@ import java.awt.Color;
 import java.awt.Font;
 import java.io.Closeable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -746,6 +748,44 @@ public class CFontRenderer implements Closeable, SharedConstants {
         if (blob == null) return false;
         canvas.drawTextBlob(blob, x, y - 2f + (needsUnicodeShaping(text) ? baselineOffset : 0), paint);
         return true;
+    }
+
+    /** Builds transformed plain BMP graphemes into one blob; the caller owns the result. */
+    public TextBlob buildTransformedPlainTextBlob(String[] graphemes, float[] x, float[] y,
+                                                  float[] rotation, float[] anchorX, float[] anchorY) {
+        int count = graphemes == null ? 0 : graphemes.length;
+        if (count == 0 || x == null || y == null || rotation == null || anchorX == null || anchorY == null
+                || x.length != count || y.length != count || rotation.length != count
+                || anchorX.length != count || anchorY.length != count || skFonts.length == 0) return null;
+        short[] glyphIds = new short[count];
+        int[] fontIndices = new int[count];
+        RSXform[] transforms = new RSXform[count];
+        for (int i = 0; i < count; i++) {
+            String grapheme = graphemes[i];
+            if (grapheme == null || grapheme.length() != 1 || needsUnicodeShaping(grapheme)
+                    || grapheme.charAt(0) == '\u00a7') return null;
+            GlyphRef ref = glyphRef(grapheme.charAt(0));
+            if (ref.fontIndex < 0) return null;
+            glyphIds[i] = ref.glyphId;
+            fontIndices[i] = ref.fontIndex;
+            float localY = anchorY[i] + baselineOffset;
+            float cos = (float) Math.cos(rotation[i]), sin = (float) Math.sin(rotation[i]);
+            float targetX = x[i] + cos * anchorX[i] - sin * localY;
+            float targetY = y[i] + sin * anchorX[i] + cos * localY;
+            transforms[i] = RSXform.makeFromRadians(1f, rotation[i], targetX, targetY, 0, 0);
+        }
+        try (TextBlobBuilder builder = new TextBlobBuilder()) {
+            int start = 0;
+            while (start < count) {
+                int end = start + 1;
+                while (end < count && fontIndices[end] == fontIndices[start]) end++;
+                builder.appendRunRSXform(skFonts[fontIndices[start]],
+                        java.util.Arrays.copyOfRange(glyphIds, start, end),
+                        java.util.Arrays.copyOfRange(transforms, start, end));
+                start = end;
+            }
+            return builder.build();
+        }
     }
 
     /** Unicode shaping for a complete grapheme; the caller owns and closes the returned line. */

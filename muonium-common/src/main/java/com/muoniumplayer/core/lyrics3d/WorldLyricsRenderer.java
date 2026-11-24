@@ -305,8 +305,22 @@ public final class WorldLyricsRenderer {
         // 「上一首的 playing」配上「下一首的 position」会把换行判定搅乱。
         com.muoniumplayer.core.ncm.music.CloudMusic.PlaybackSnapshot snap =
                 com.muoniumplayer.core.ncm.music.CloudMusic.getSnapshot();
+        renderSnapshot(state, camera, settings, host, nowNanos, snap);
+    }
+
+    /** The live dispatch after the track/snapshot gate; also exercised by the native integration probe. */
+    static void renderSnapshot(WorldLyricsState state, WorldLyricsState.CameraView camera,
+                               WorldLyricsSettings settings, Host host, long nowNanos,
+                               com.muoniumplayer.core.ncm.music.CloudMusic.PlaybackSnapshot snap) {
         WorldLyricsState.Frame frame = state.update(camera, settings, nowNanos,
                 snap.playing, snap.positionMs);
+        // Sonnet owns a multi-line scene, including guides BEFORE its first lyric and cleanup AFTER
+        // the last line. The legacy active/fading-row gate must never truncate that scene timeline.
+        if (settings.sonnet && settings.styleModern
+                && SonnetCanvasRenderer.render(frame, camera, settings, host, snap, nowNanos)) {
+            HuiguangTrailCanvas.close();
+            return;
+        }
         if (frame == null || frame.rows.isEmpty()) {
             SonnetCanvasRenderer.release();
             if (TRACE && !traceThrottled()) {
@@ -317,12 +331,6 @@ public final class WorldLyricsRenderer {
         }
 
         long songNowMs = snap.positionMs;
-
-        if (settings.sonnet && settings.styleModern
-                && SonnetCanvasRenderer.render(frame, settings, host, snap)) {
-            HuiguangTrailCanvas.close();
-            return;
-        }
 
         // 淡出中的先画（下层），active 后画（上层）。
         // 画布槽位：active 行 0、淡出行从 1 起 —— 同帧两行都进拖尾窗口时

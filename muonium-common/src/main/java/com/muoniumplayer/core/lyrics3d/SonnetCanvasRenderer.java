@@ -2,6 +2,7 @@ package com.muoniumplayer.core.lyrics3d;
 
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
+import com.muoniumplayer.core.rendering.font.TextGlow;
 import com.muoniumplayer.render.skija.SkijaNatives;
 import io.github.humbleui.skija.BlendMode;
 import io.github.humbleui.skija.Canvas;
@@ -9,6 +10,7 @@ import io.github.humbleui.skija.ImageFilter;
 import io.github.humbleui.skija.Paint;
 import io.github.humbleui.skija.PaintMode;
 import io.github.humbleui.skija.Picture;
+import io.github.humbleui.skija.TextBlob;
 import io.github.humbleui.types.Rect;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,7 +26,10 @@ import java.util.Objects;
 final class SonnetCanvasRenderer implements AutoCloseable {
     static final float STAGE_WIDTH = 1280, STAGE_HEIGHT = 720;
     private static final float DESIGN_WIDTH = 200, DESIGN_HEIGHT = DESIGN_WIDTH * STAGE_HEIGHT / STAGE_WIDTH;
+    private static final double STABLE_BLOB_PREWARM_LEAD_MS = 240.0;
+    private static final int STABLE_BLOB_PREWARM_BUDGET = 2;
     private static SonnetCanvasRenderer instance;
+    private static String reportedRoute;
     private final SonnetFrameSurface surface = new SonnetFrameSurface();
     private final SonnetTextFonts fonts;
     private final SonnetTextTransitions filters = new SonnetTextTransitions();
@@ -32,9 +37,18 @@ final class SonnetCanvasRenderer implements AutoCloseable {
     private final Paint screen = new Paint().setAntiAlias(true).setBlendMode(BlendMode.SCREEN);
     private final Paint outline = new Paint().setAntiAlias(true).setMode(PaintMode.STROKE);
     private final Paint composite = new Paint().setAntiAlias(true);
+    private final Paint readableEdge = new Paint().setAntiAlias(true).setMode(PaintMode.STROKE);
+    private float readabilityStroke = 2f;
+    boolean stableGlyphBatching = true;
+    int stableGlyphCountLastFrame;
+    private long preparedGlowKey = Long.MIN_VALUE;
     private final SonnetTextMotion.Transition transition = new SonnetTextMotion.Transition();
     private final Map<Integer, SonnetTextScene> scenes = new LinkedHashMap<Integer, SonnetTextScene>(4, 0.75f, true) {
-        @Override protected boolean removeEldestEntry(Map.Entry<Integer, SonnetTextScene> entry) { return size() > 3; }
+        @Override protected boolean removeEldestEntry(Map.Entry<Integer, SonnetTextScene> entry) {
+            if (size() <= 3) return false;
+            entry.getValue().close();
+            return true;
+        }
     };
     private SonnetProgram program;
     private List<LyricLine> source;
@@ -45,23 +59,32 @@ final class SonnetCanvasRenderer implements AutoCloseable {
     private int pictureShot = -1, pictureWidth;
     private double anchorX, anchorY, anchorZ, lastCamX, lastCamY, lastCamZ;
     private int anchorShot = -1;
+    private float anchorYaw, anchorPitch;
     private long lastSongTime = Long.MIN_VALUE;
     private long lastRenderNanos;
+    private long lastAnchorNanos;
 
     SonnetCanvasRenderer(SonnetTextFonts fonts) { this.fonts = fonts; }
 
-    static boolean render(WorldLyricsState.Frame frame, WorldLyricsSettings settings,
-                          WorldLyricsRenderer.Host host, CloudMusic.PlaybackSnapshot snap) {
-        if (!SkijaNatives.ensureLoaded()) return false;
+    static boolean render(WorldLyricsState.Frame frame, WorldLyricsState.CameraView camera,
+                          WorldLyricsSettings settings, WorldLyricsRenderer.Host host,
+                          CloudMusic.PlaybackSnapshot snap, long nowNanos) {
+        if (!SkijaNatives.ensureLoaded()) {
+            reportRoute("Skija 尚未就绪，暂用基础文字；就绪后自动恢复完整动画");
+            return false;
+        }
         if (instance != null && !instance.fonts.matchesCurrent()) release();
         if (instance == null) {
             SonnetTextFonts fonts = SonnetTextFonts.current();
-            if (fonts == null) return false;
+            if (fonts == null) {
+                reportRoute("字体尚未就绪，暂用基础文字；就绪后自动恢复完整动画");
+                return false;
+            }
             try { instance = new SonnetCanvasRenderer(fonts); }
             catch (Throwable failure) { fonts.close(); throw failure; }
         }
         instance.lastRenderNanos = System.nanoTime();
-        return instance.draw(frame, settings, host, snap);
+        return instance.draw(frame, camera, settings, host, snap, nowNanos);
     }
 
     static void releaseIfIdle(long nowNanos) {
@@ -76,22 +99,37 @@ final class SonnetCanvasRenderer implements AutoCloseable {
     }
 
     boolean draw(WorldLyricsState.Frame frame, WorldLyricsSettings settings,
-                         WorldLyricsRenderer.Host host, CloudMusic.PlaybackSnapshot snap) {
+                 WorldLyricsRenderer.Host host, CloudMusic.PlaybackSnapshot snap) {
+        return draw(frame, null, settings, host, snap, System.nanoTime());
+    }
+
+    boolean draw(WorldLyricsState.Frame frame, WorldLyricsState.CameraView camera,
+                 WorldLyricsSettings settings, WorldLyricsRenderer.Host host,
+                 CloudMusic.PlaybackSnapshot snap, long nowNanos) {
         List<LyricLine> lyrics = WorldLyricsState.effectiveLines(false);
         String key = snap.music == null ? "sonnet" : snap.music.getStableKey();
         updateProgram(lyrics, CloudMusic.lyricsRevision, key);
         if (program.shots.isEmpty()) return false;
         WorldLyricsState.Row row = null;
-        for (WorldLyricsState.Row candidate : frame.rows) {
-            if (candidate.alpha <= 0.01f) continue;
+        if (frame != null) for (WorldLyricsState.Row candidate : frame.rows) {
+            // A row is an optional spatial hint, never a visibility/timing authority for Sonnet.
             if (candidate.active || row == null || !row.active && candidate.alpha > row.alpha) row = candidate;
         }
-        if (row == null) return true;
+        if (camera == null && row == null) return true;
+        double camX = camera != null ? camera.eyeX() : row.camX;
+        double camY = camera != null ? camera.eyeY() : row.camY;
+        double camZ = camera != null ? camera.eyeZ() : row.camZ;
         int shotIndex = program.shotAt(snap.positionMs);
-        if (shotIndex < 0) return true;
-        int width = Math.max(768, Math.min(1600, Math.round(STAGE_WIDTH * LyricGlyphAtlas.bakeScale() / 5f)));
+        if (snap.positionMs < program.shots.get(0).startMs - 380
+                || snap.positionMs >= program.finalRenderEndMs() + 1250) {
+            clearPicture();
+            return true;
+        }
+        int width = surfaceWidth(camera, settings);
         int height = Math.round(width * STAGE_HEIGHT / STAGE_WIDTH);
-        long options = optionsKey(settings);
+        float edge = minimumStageStroke(camera, settings);
+        long options = optionsKey(settings) * 31 + Float.floatToIntBits(edge);
+        readabilityStroke = edge;
         if (picture == null || pictureTime != snap.positionMs || pictureOptions != options
                 || pictureShot != shotIndex || pictureWidth != width) {
             Picture next = record(shotIndex, snap.positionMs, settings, width, height);
@@ -102,33 +140,114 @@ final class SonnetCanvasRenderer implements AutoCloseable {
             pictureShot = shotIndex;
             pictureWidth = width;
         }
-        if (anchorShot != shotIndex || lastSongTime != Long.MIN_VALUE && snap.positionMs < lastSongTime - 300) {
-            anchorX = row.x; anchorY = row.y; anchorZ = row.z;
+        boolean seek = lastSongTime != Long.MIN_VALUE && snap.positionMs < lastSongTime - 300;
+        double jump = Math.sqrt(Math.pow(camX - lastCamX, 2) + Math.pow(camY - lastCamY, 2)
+                + Math.pow(camZ - lastCamZ, 2));
+        boolean teleport = anchorShot >= 0 && jump > Math.max(64, settings.distance * 4);
+        if (anchorShot != shotIndex || seek || teleport) {
+            if (row != null && !teleport) {
+                anchorX = row.x; anchorY = row.y; anchorZ = row.z;
+                anchorYaw = (float) row.yawDeg; anchorPitch = (float) row.pitchDeg;
+            } else {
+                anchorX = camX + camera.lookX() * settings.distance;
+                anchorY = camY + camera.lookY() * settings.distance;
+                anchorZ = camZ + camera.lookZ() * settings.distance;
+                anchorYaw = (float) camera.yawDeg(); anchorPitch = (float) camera.pitchDeg();
+            }
             anchorShot = shotIndex;
         } else if (settings.keepDistance) {
-            anchorX += row.camX - lastCamX;
-            anchorY += row.camY - lastCamY;
-            anchorZ += row.camZ - lastCamZ;
+            anchorX += camX - lastCamX;
+            anchorY += camY - lastCamY;
+            anchorZ += camZ - lastCamZ;
         }
-        lastCamX = row.camX; lastCamY = row.camY; lastCamZ = row.camZ;
+        if (settings.keepDistance) {
+            double rx = anchorX - camX, ry = anchorY - camY, rz = anchorZ - camZ;
+            double length = Math.sqrt(rx * rx + ry * ry + rz * rz);
+            if (length > 0.001 && Math.abs(length - settings.distance) > 0.001) {
+                double ratio = settings.distance / length;
+                anchorX = camX + rx * ratio; anchorY = camY + ry * ratio; anchorZ = camZ + rz * ratio;
+            }
+        }
+        double deltaSeconds = lastAnchorNanos == 0 ? 1.0 / 60
+                : Math.max(0, Math.min(0.1, (nowNanos - lastAnchorNanos) / 1_000_000_000.0));
+        if (camera != null && settings.stayOnScreen) followView(camera, settings, deltaSeconds);
+        lastAnchorNanos = nowNanos;
+        if (settings.aboveGround) anchorY = Math.max(anchorY, camY - 0.5);
+        lastCamX = camX; lastCamY = camY; lastCamZ = camZ;
         lastSongTime = snap.positionMs;
-        host.pushBillboard(anchorX - row.camX, anchorY - row.camY, anchorZ - row.camZ,
-                row.yawDeg, row.pitchDeg, anchorScale(row, settings));
+        float yaw = camera != null && settings.facePlayer ? (float) camera.yawDeg() : anchorYaw;
+        float pitch = camera != null && settings.facePlayer ? (float) camera.pitchDeg() : anchorPitch;
+        double distance = Math.sqrt(Math.pow(anchorX - camX, 2) + Math.pow(anchorY - camY, 2)
+                + Math.pow(anchorZ - camZ, 2));
+        float scale = (float) (WorldLyricsState.PX_TO_WORLD * settings.scale * distance / WorldLyricsState.DISTANCE_NORM);
+        host.pushBillboard(anchorX - camX, anchorY - camY, anchorZ - camZ, yaw, pitch, scale);
         try {
-            return surface.present(host, picture, width, height, DESIGN_WIDTH, DESIGN_HEIGHT, shotAlpha(row), 0);
+            // Scene entry/exit, pause and gap visibility come exclusively from the song timeline.
+            // Multiplying by legacy row alpha used to erase pre-guides and cut off cleanup frames.
+            boolean presented = surface.present(host, picture, width, height, DESIGN_WIDTH, DESIGN_HEIGHT, 1, 0);
+            reportRoute(presented ? "完整文字 PV / " + surface.presentationRoute()
+                    : "画面提交失败，暂用基础文字（需要查看宿主纹理日志）");
+            return presented;
         } finally {
             host.popBillboard();
         }
     }
 
-    private float anchorScale(WorldLyricsState.Row row, WorldLyricsSettings settings) {
-        double distance = Math.sqrt(Math.pow(anchorX - row.camX, 2) + Math.pow(anchorY - row.camY, 2)
-                + Math.pow(anchorZ - row.camZ, 2));
-        return (float) (WorldLyricsState.PX_TO_WORLD * settings.scale * distance / WorldLyricsState.DISTANCE_NORM);
+    /** The shot can outlive every legacy row (pause/interlude); it needs its own view constraint. */
+    private void followView(WorldLyricsState.CameraView camera, WorldLyricsSettings settings, double dt) {
+        double rx = anchorX - camera.eyeX(), ry = anchorY - camera.eyeY(), rz = anchorZ - camera.eyeZ();
+        double distance = Math.sqrt(rx * rx + ry * ry + rz * rz);
+        if (distance < 0.001) return;
+        double yaw = Math.toDegrees(Math.atan2(-rx, rz));
+        double pitch = Math.toDegrees(Math.atan2(-ry, Math.hypot(rx, rz)));
+        double aspect = camera.windowWidth() > 0 && camera.windowHeight() > 0
+                ? camera.windowWidth() / (double) camera.windowHeight() : 16.0 / 9;
+        double vertical = Math.max(20, Math.min(150, camera.fovDeg())) * 0.5;
+        double horizontal = Math.toDegrees(Math.atan(Math.tan(Math.toRadians(vertical)) * aspect));
+        double ratio = WorldLyricsState.PX_TO_WORLD * settings.scale / WorldLyricsState.DISTANCE_NORM;
+        double yawLimit = Math.max(0, horizontal - Math.toDegrees(Math.atan(DESIGN_WIDTH * 0.5 * ratio)) - 2);
+        double pitchLimit = Math.max(0, vertical - Math.toDegrees(Math.atan(DESIGN_HEIGHT * 0.5 * ratio)) - 2);
+        double yawOffset = wrapDegrees(yaw - camera.yawDeg());
+        double pitchOffset = pitch - camera.pitchDeg();
+        double targetYaw = yaw + Math.max(-yawLimit, Math.min(yawLimit, yawOffset)) - yawOffset;
+        double targetPitch = Math.max(-89, Math.min(89, camera.pitchDeg()
+                + Math.max(-pitchLimit, Math.min(pitchLimit, pitchOffset))));
+        double ease = 1 - Math.exp(-dt * 10);
+        double nextYaw = yaw + wrapDegrees(targetYaw - yaw) * ease;
+        double nextPitch = pitch + (targetPitch - pitch) * ease;
+        double yr = Math.toRadians(nextYaw), pr = Math.toRadians(nextPitch);
+        anchorX = camera.eyeX() - Math.sin(yr) * Math.cos(pr) * distance;
+        anchorY = camera.eyeY() - Math.sin(pr) * distance;
+        anchorZ = camera.eyeZ() + Math.cos(yr) * Math.cos(pr) * distance;
+        if (!settings.facePlayer) {
+            anchorYaw += (float) wrapDegrees(nextYaw - yaw);
+            anchorPitch += (float) (nextPitch - pitch);
+        }
     }
 
-    static float shotAlpha(WorldLyricsState.Row row) {
-        return Math.min(1, row.alpha / Math.max(0.001f, row.protectDim));
+    private static double wrapDegrees(double angle) { return angle - Math.floor((angle + 180) / 360) * 360; }
+
+    private static void reportRoute(String route) {
+        if (!Objects.equals(route, reportedRoute)) {
+            reportedRoute = route;
+            System.out.println("[MuoniumPlayer/Sonnet] " + route);
+        }
+    }
+
+    private static float projectedStagePixel(WorldLyricsState.CameraView camera, WorldLyricsSettings settings) {
+        int height = camera != null && camera.windowHeight() > 0 ? camera.windowHeight() : 1080;
+        double fov = camera != null ? Math.max(20, Math.min(150, camera.fovDeg())) : 70;
+        return (float) (height * WorldLyricsState.PX_TO_WORLD * settings.scale * DESIGN_WIDTH
+                / (2 * Math.tan(Math.toRadians(fov / 2)) * WorldLyricsState.DISTANCE_NORM * STAGE_WIDTH));
+    }
+
+    static int surfaceWidth(WorldLyricsState.CameraView camera, WorldLyricsSettings settings) {
+        float projected = projectedStagePixel(camera, settings) * STAGE_WIDTH;
+        return Math.max(1024, Math.min(1600, (int) Math.ceil(projected * 1.5 / 64) * 64));
+    }
+
+    static float minimumStageStroke(WorldLyricsState.CameraView camera, WorldLyricsSettings settings) {
+        return Math.max(1.4f, Math.min(4f, 1.1f / Math.max(0.05f, projectedStagePixel(camera, settings))));
     }
 
     void updateProgram(List<LyricLine> lyrics, long revision, String key) {
@@ -137,9 +256,10 @@ final class SonnetCanvasRenderer implements AutoCloseable {
         this.revision = revision;
         trackKey = key;
         program = SonnetProgram.compile(lyrics == null ? List.of() : lyrics, key);
-        scenes.clear();
+        clearScenes();
         anchorShot = -1;
         lastSongTime = Long.MIN_VALUE;
+        lastAnchorNanos = 0;
         clearPicture();
     }
 
@@ -150,8 +270,10 @@ final class SonnetCanvasRenderer implements AutoCloseable {
             scenes.put(index, scene);
         }
         scene.update(timeMs);
-        resolveTransition(index, timeMs);
-        if (!settings.sonnetGlyphEffects) transition.reset();
+        prepareGlowMasks(settings);
+        if (stableGlyphBatching) prewarmStableBlobs(scene, timeMs, settings.sonnetGlyphEffects);
+        resolveTransition(index, timeMs, settings.sonnetGlyphEffects);
+        SonnetDecorations.setReadabilityStroke(readabilityStroke / Math.max(0.05f, scene.layoutScale));
         Canvas canvas = surface.begin(width, height);
         canvas.scale(width / STAGE_WIDTH, height / STAGE_HEIGHT);
         canvas.save();
@@ -170,41 +292,63 @@ final class SonnetCanvasRenderer implements AutoCloseable {
         return surface.finish();
     }
 
-    private void resolveTransition(int index, double timeMs) {
-        transition.reset();
-        SonnetProgram.Shot shot = program.shots.get(index);
-        if (index > 0) {
-            SonnetProgram.Shot previous = program.shots.get(index - 1);
-            double duration = Math.min(240, Math.max(140, (shot.startMs - previous.startMs) * 0.18));
-            if (timeMs >= shot.startMs && timeMs <= shot.startMs + duration) {
-                SonnetTextMotion.transition(previous.transitionKind, false,
-                        (timeMs - shot.startMs) / duration, SonnetTypography.hash(shot.id), transition);
-                return;
-            }
+    private void prepareGlowMasks(WorldLyricsSettings settings) {
+        if (!settings.glowEnabled || settings.glowStrength <= 0.004f) return;
+        long key = (long) Float.floatToIntBits(settings.glowSpread) << 32
+                | (settings.glowTier & 0xFFFFFFFFL);
+        if (preparedGlowKey == key) return;
+        TextGlow.prepareGlowMasks(settings.glowSpread, settings.glowTier);
+        preparedGlowKey = key;
+    }
+
+    /**
+     * Construct the next settled prefix while its entry animation is still running.
+     * TextBlob creation is small on average but can otherwise land on the exact frame
+     * where a new glyph becomes opaque. The bounded budget keeps a multi-line shot from
+     * trading that spike for a different one during a scene transition.
+     */
+    private void prewarmStableBlobs(SonnetTextScene scene, double timeMs, boolean glyphEffects) {
+        int budget = STABLE_BLOB_PREWARM_BUDGET;
+        double ghostDuration = SonnetTextMotion.ghostDuration(scene.shot.endMs - scene.shot.startMs);
+        for (SonnetTextScene.Segment segment : scene.segments) {
+            if (budget == 0) break;
+            if (segment.staff || (segment.box.role == SonnetTypography.Role.DECORATION && !glyphEffects)) continue;
+            int settled = stablePrefixCount(scene, segment, timeMs);
+            int target = Math.max(2, settled + 1);
+            if (target > segment.glyphs.size()) continue;
+            double ready = segment.stableReadyMs(target, ghostDuration);
+            if (timeMs < ready - STABLE_BLOB_PREWARM_LEAD_MS || timeMs > ready + 40) continue;
+            if (segment.prewarmStableBlob(fonts, target) != null) budget--;
         }
-        if (index + 1 < program.shots.size()) {
-            SonnetProgram.Shot next = program.shots.get(index + 1);
-            double duration = Math.min(240, Math.max(140, (next.startMs - shot.startMs) * 0.18));
-            if (timeMs >= next.startMs - duration) {
-                SonnetTextMotion.transition(shot.transitionKind, true,
-                        (timeMs - next.startMs + duration) / duration, SonnetTypography.hash(shot.id), transition);
-            }
+    }
+
+    private void resolveTransition(int index, double timeMs, boolean glyphEffects) {
+        program.transitionAt(index, timeMs, transition);
+        double retract = transition.exitProgress;
+        if (!glyphEffects) transition.reset();
+        transition.exitProgress = retract;
+        // Preserve Folia's lyric half of the credits handoff, without adding the credits poster.
+        double end = SonnetTextMotion.clamp((timeMs - program.finalRenderEndMs()) / 1250);
+        if (end > 0) {
+            double eased = SonnetTextMotion.inOut(end);
+            transition.alpha *= 1 - eased;
+            transition.exitProgress = Math.max(transition.exitProgress, end);
+            if (glyphEffects) transition.blur = Math.max(transition.blur, eased * 18);
         }
     }
 
     private void drawScene(Canvas canvas, SonnetTextScene scene, double timeMs, WorldLyricsSettings settings) {
-        SonnetTextMotion.Camera camera = scene.camera;
         SonnetProgram.Shot shot = scene.shot;
+        TextBlob[] stableBlobs = new TextBlob[scene.segments.size()];
+        int[] stableCounts = new int[scene.segments.size()];
+        stableGlyphCountLastFrame = 0;
         canvas.save();
         try {
-            boolean poster = shot.kind == SonnetTypography.Kind.POSTER_BLOCKS;
-            float x = STAGE_WIDTH * (poster ? 0.5f : 0.5f + shot.cameraX);
-            float y = STAGE_HEIGHT * (poster ? 0.5f : 0.48f + shot.cameraY);
-            canvas.translate(x + (float) camera.x * STAGE_WIDTH, y + (float) camera.y * STAGE_HEIGHT);
-            canvas.rotate((float) Math.toDegrees(shot.rotationRad + camera.rotation));
-            float zoom = shot.zoom * (float) camera.scale;
-            canvas.scale(zoom, zoom);
-            canvas.translate(-scene.focusX, -scene.focusY);
+            // World distance, scale and facing belong exclusively to the configured 3D billboard.
+            // Inside it, words appear at their measured layout positions without a second camera.
+            canvas.translate(STAGE_WIDTH * 0.5f, STAGE_HEIGHT * 0.5f);
+            canvas.scale(scene.layoutScale, scene.layoutScale);
+            canvas.translate(-scene.layoutCenterX, -scene.layoutCenterY);
             int body = settings.colorCustom ? settings.colorRgb & 0xFFFFFF : 0xFFFFFF;
             int[] palette = WorldLyricsRenderer.effectiveCoverPalette(settings);
             if (palette != null && palette.length > 0) body = palette[0] & 0xFFFFFF;
@@ -223,6 +367,21 @@ final class SonnetCanvasRenderer implements AutoCloseable {
                 segment.accentRgb = segment.box.role == SonnetTypography.Role.HERO
                         || segment.box.role == SonnetTypography.Role.SEMI_HERO
                         ? segment.glowRgb : mix(rgb, segment.glowRgb, 0.55f);
+            }
+            if (stableGlyphBatching) {
+                for (int i = 0; i < scene.segments.size(); i++) {
+                    SonnetTextScene.Segment segment = scene.segments.get(i);
+                    if (segment.staff || (segment.box.role == SonnetTypography.Role.DECORATION
+                            && !settings.sonnetGlyphEffects)) continue;
+                    int count = stablePrefixCount(scene, segment, timeMs);
+                    if (count < 2) continue;
+                    TextBlob blob = segment.stableBlob(fonts, count);
+                    if (blob != null) {
+                        stableBlobs[i] = blob;
+                        stableCounts[i] = segment.stableBlobCount();
+                        stableGlyphCountLastFrame += stableCounts[i];
+                    }
+                }
             }
             // Guides arrive before their word. They are independent of core-glyph visibility.
             if (settings.sonnetDecorations) {
@@ -246,23 +405,35 @@ final class SonnetCanvasRenderer implements AutoCloseable {
                             localWidth = segment.box.height; localHeight = segment.box.width;
                         }
                         SonnetDecorations.drawFrame(canvas, segment.x, segment.y, segment.box.rotationRad,
-                                localWidth, localHeight, segment.box.fontSize, segment.accentRgb, segment.frameVariant, p);
+                                localWidth, localHeight, segment.box.fontSize, segment.accentRgb, segment.frameVariant, p, (float) transition.exitProgress);
                     } else if (segment.fixed && timeMs >= segment.firstMs && !segment.glyphs.isEmpty()) {
                         SonnetTextScene.Glyph first = segment.glyphs.get(0);
-                        float px = (float) (camera.x * STAGE_WIDTH * -0.7 * 2.5);
-                        float py = (float) (camera.y * STAGE_HEIGHT * -0.7 * 2.5);
-                        SonnetDecorations.drawFixedGeometry(canvas, segment.x + px, segment.y + py,
-                                segment.box.rotationRad, segment.box.fontSize, STAGE_WIDTH, segment.bodyRgb,
-                                segment.accentRgb, mix(segment.bodyRgb, segment.accentRgb, 0.5f),
-                                segment.textSeed, segment.chorusEffect, first.alpha);
+                        float p = first.progress;
+                        float px = segment.box.enterX * (1 - p);
+                        float py = segment.box.enterY * (1 - p);
+                        float scale = 0.86f + p * 0.14f;
+                        float enter = (float) SonnetTextMotion.clamp((timeMs - first.startMs)
+                                / Math.max(80, first.settleMs - first.startMs));
+                        canvas.save();
+                        try {
+                            canvas.translate(segment.x + px, segment.y + py);
+                            canvas.rotate((float) Math.toDegrees(segment.box.rotationRad));
+                            canvas.scale(scale, scale);
+                            SonnetFixedGeometry.draw(canvas, segment.box.fontSize, STAGE_WIDTH, segment.bodyRgb,
+                                    segment.accentRgb, mix(segment.bodyRgb, segment.accentRgb, 0.5f),
+                                    segment.textSeed, segment.chorusEffect, first.alpha, timeMs / 1000,
+                                    enter, (float) transition.exitProgress);
+                        } finally { canvas.restore(); }
                     }
                 }
             }
             // One SCREEN layer, followed by all normal-mode glyphs; no per-letter host blend switches.
             if (settings.sonnetGlyphEffects) {
-                for (SonnetTextScene.Segment segment : scene.segments) {
+                for (int i = 0; i < scene.segments.size(); i++) {
+                    SonnetTextScene.Segment segment = scene.segments.get(i);
                     if (segment.box.role == SonnetTypography.Role.DECORATION || segment.staff) continue;
-                    for (SonnetTextScene.Glyph glyph : segment.glyphs) {
+                    for (int glyphIndex = 0; glyphIndex < segment.glyphs.size(); glyphIndex++) {
+                        SonnetTextScene.Glyph glyph = segment.glyphs.get(glyphIndex);
                         if (glyph.alpha <= 0) continue;
                         canvas.save();
                         try {
@@ -280,11 +451,36 @@ final class SonnetCanvasRenderer implements AutoCloseable {
                     }
                 }
             }
-            for (SonnetTextScene.Segment segment : scene.segments) {
+            for (int segmentIndex = 0; segmentIndex < scene.segments.size(); segmentIndex++) {
+                SonnetTextScene.Segment segment = scene.segments.get(segmentIndex);
                 SonnetTypography.Role role = segment.box.role;
                 boolean decor = role == SonnetTypography.Role.DECORATION;
                 if (decor && !settings.sonnetGlyphEffects) continue;
-                for (SonnetTextScene.Glyph glyph : segment.glyphs) {
+                TextBlob blob = stableBlobs[segmentIndex];
+                if (blob != null) {
+                    if (decor) {
+                        outline.setColor(argb(segment.accentRgb, 0.2f));
+                        outline.setStrokeWidth(Math.max(1, Math.min(8, segment.box.fontSize * 0.006f))
+                                * 64 / segment.box.fontSize);
+                        fonts.drawBatch(canvas, blob, segment.box.fontSize, outline);
+                    } else {
+                        if (settings.glowEnabled) {
+                            fonts.glowBatch(canvas, blob, role, segment.box.fontSize,
+                                    segment.glowRgb, segment.bodyRgb, settings.glowStrength,
+                                    settings.glowSpread, settings.glowTier);
+                        }
+                        int edgeRgb = contrastInk(segment.bodyRgb);
+                        readableEdge.setColor(argb(edgeRgb, 0.86f));
+                        readableEdge.setStrokeWidth(readabilityStroke
+                                / Math.max(0.05f, scene.layoutScale) * 64 / segment.box.fontSize);
+                        fonts.drawBatch(canvas, blob, segment.box.fontSize, readableEdge);
+                        fill.setColor(argb(segment.bodyRgb, 1f));
+                        fonts.drawBatch(canvas, blob, segment.box.fontSize, fill);
+                    }
+                }
+                for (int glyphIndex = stableCounts[segmentIndex];
+                     glyphIndex < segment.glyphs.size(); glyphIndex++) {
+                    SonnetTextScene.Glyph glyph = segment.glyphs.get(glyphIndex);
                     if (glyph.alpha <= 0) continue;
                     canvas.save();
                     try {
@@ -313,12 +509,45 @@ final class SonnetCanvasRenderer implements AutoCloseable {
                                     segment.glowRgb, segment.bodyRgb, settings.glowStrength * glyph.alpha,
                                     settings.glowSpread, settings.glowTier);
                         }
+                        // Tight opposite-luminance ink contour: keeps the real glyph edge sharp over
+                        // sky, snow and dark terrain, without a background panel or permanent blur.
+                        int edgeRgb = contrastInk(segment.bodyRgb);
+                        readableEdge.setColor(argb(edgeRgb, glyph.alpha * 0.86f));
+                        readableEdge.setStrokeWidth(readabilityStroke / Math.max(0.05f, scene.layoutScale) * 64 / segment.box.fontSize);
+                        fonts.draw(canvas, glyph.text, role, glyph.geometry, segment.box.fontSize, readableEdge);
                         fill.setColor(argb(segment.bodyRgb, glyph.alpha));
                         fonts.draw(canvas, glyph.text, role, glyph.geometry, segment.box.fontSize, fill);
                     } finally { canvas.restore(); }
                 }
             }
-        } finally { canvas.restore(); }
+        } finally {
+            canvas.restore();
+        }
+    }
+
+    private static int stablePrefixCount(SonnetTextScene scene, SonnetTextScene.Segment segment,
+                                         double timeMs) {
+        int count = 0;
+        for (SonnetTextScene.Glyph glyph : segment.glyphs) {
+            if (glyph.progress < 1 || glyph.alpha < 1) break;
+            if (segment.box.role == SonnetTypography.Role.SEMI_HERO) {
+                double ghost = (timeMs - glyph.startMs)
+                        / SonnetTextMotion.ghostDuration(scene.shot.endMs - scene.shot.startMs);
+                if (ghost > 0 && ghost < 1) break;
+            }
+            count++;
+        }
+        return count;
+    }
+
+    private void clearScenes() {
+        for (SonnetTextScene scene : scenes.values()) scene.close();
+        scenes.clear();
+    }
+
+    static int contrastInk(int rgb) {
+        double luminance = ((rgb >> 16 & 255) * 0.2126 + (rgb >> 8 & 255) * 0.7152 + (rgb & 255) * 0.0722) / 255;
+        return luminance >= 0.45 ? 0x10141C : 0xF4F6FA;
     }
 
     private void drawDispersion(Canvas canvas, SonnetTextScene.Segment segment,
@@ -411,11 +640,11 @@ final class SonnetCanvasRenderer implements AutoCloseable {
 
     @Override public void close() {
         clearPicture();
-        scenes.clear();
+        clearScenes();
         source = null; program = null;
         surface.close();
         fonts.close();
         filters.close();
-        fill.close(); screen.close(); outline.close(); composite.close();
+        fill.close(); screen.close(); outline.close(); composite.close(); readableEdge.close();
     }
 }

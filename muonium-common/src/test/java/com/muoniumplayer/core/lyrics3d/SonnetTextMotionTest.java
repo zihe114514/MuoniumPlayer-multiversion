@@ -37,23 +37,6 @@ class SonnetTextMotionTest {
         assertEquals(700, SonnetTextMotion.ghostDuration(6000));
     }
 
-    @Test void allSevenCameraPathsKeepMovingAndAreIndependentOfPlaybackHistory() {
-        for (SonnetTypography.Kind kind : SonnetTypography.Kind.values()) {
-            SonnetTextMotion.Camera first = new SonnetTextMotion.Camera();
-            SonnetTextMotion.Camera middle = new SonnetTextMotion.Camera();
-            SonnetTextMotion.Camera direct = new SonnetTextMotion.Camera();
-            SonnetTextMotion.path(kind, 0.35, first);
-            SonnetTextMotion.path(kind, 0.5, middle);
-            SonnetTextMotion.path(kind, 0.65, direct);
-            assertTrue(Math.abs(first.x - middle.x) + Math.abs(first.y - middle.y) > 0.001);
-            assertTrue(Math.abs(middle.x - direct.x) + Math.abs(middle.y - direct.y) > 0.001);
-            SonnetTextMotion.camera(kind, 0.65, 4, 2.5, 0.3, 0, first);
-            SonnetTextMotion.camera(kind, 0.65, 4, 2.5, 0.3, 0, direct);
-            assertEquals(first.x, direct.x); assertEquals(first.y, direct.y);
-            assertEquals(first.scale, direct.scale); assertEquals(first.rotation, direct.rotation);
-        }
-    }
-
     @Test void sceneTransitionsDoNotIntroduceChromaticCopiesOrInventCameraScaling() {
         SonnetTextMotion.Transition transition = new SonnetTextMotion.Transition();
         SonnetTextMotion.transition(0, true, 1, 7, transition);

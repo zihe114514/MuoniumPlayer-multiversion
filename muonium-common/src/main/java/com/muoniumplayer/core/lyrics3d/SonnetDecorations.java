@@ -24,7 +24,14 @@ import java.util.Map;
 public final class SonnetDecorations {
     private static Paint fillPaint;
     private static Paint strokePaint;
+    private static Paint contrastPaint;
     private static PathBuilder pathBuilder;
+    private static float readabilityStroke;
+
+    /** Stage-pixel footprint, updated once per recorded frame on the render thread. */
+    static void setReadabilityStroke(float width) {
+        readabilityStroke = Float.isFinite(width) ? Math.max(0, Math.min(12, width)) : 0;
+    }
     // Plans contain random choices only, independent of time, font size, canvas and native resources.
     private static final Map<Long, GuidePlan> GUIDE_PLANS = new LinkedHashMap<>(64, 0.75f, true);
     private static final int MAX_GUIDE_PLANS = 128;
@@ -127,6 +134,16 @@ public final class SonnetDecorations {
     public static void drawFrame(Canvas canvas, float centerX, float centerY, float rotationRad,
                                  float localWidth, float localHeight, float fontSize, int rgb,
                                  int variant, float rawProgress) {
+        drawFrame(canvas, centerX, centerY, rotationRad, localWidth, localHeight, fontSize, rgb,
+                variant, rawProgress, 0);
+    }
+
+    /** Retraction reverses each side and its corner ornament before the owning scene is cleared. */
+    public static void drawFrame(Canvas canvas, float centerX, float centerY, float rotationRad,
+                                 float localWidth, float localHeight, float fontSize, int rgb,
+                                 int variant, float rawProgress, float exitProgress) {
+        if (!Float.isFinite(exitProgress) || exitProgress >= 1) return;
+        float retract = (float) SonnetTextMotion.inOut(exitProgress);
         if (!valid(centerX, centerY, fontSize) || !Float.isFinite(rotationRad)
                 || !Float.isFinite(localWidth) || !Float.isFinite(localHeight)
                 || localWidth < 0f || localHeight < 0f || !Float.isFinite(rawProgress)
@@ -145,7 +162,7 @@ public final class SonnetDecorations {
             canvas.translate(centerX, centerY);
             canvas.rotate((float) Math.toDegrees(rotationRad));
             for (int side = 0; side < 4; side++) {
-                float sideProgress = frameSideProgress(eased, side);
+                float sideProgress = frameSideProgress(eased, side) * (1 - frameSideProgress(retract, 3 - side));
                 if (sideProgress <= 0f) continue;
                 float x0 = side == 0 ? -halfW + gap : side == 2 ? halfW - gap : side == 1 ? halfW : -halfW;
                 float y0 = side == 1 ? -halfH + gap : side == 3 ? halfH - gap : side == 0 ? -halfH : halfH;
@@ -168,7 +185,7 @@ public final class SonnetDecorations {
                 }
             }
             for (int corner = 0; corner < 4; corner++) {
-                float op = frameOrnamentProgress(eased, corner);
+                float op = frameOrnamentProgress(eased, corner) * (1 - frameSideProgress(retract, 3 - corner));
                 if (op <= 0.02f) continue;
                 float sx = corner == 0 || corner == 3 ? -1f : 1f;
                 float sy = corner < 2 ? -1f : 1f;
@@ -278,8 +295,8 @@ public final class SonnetDecorations {
         if (alpha <= 0f) return;
         Paint paint = fill(rgb, alpha);
         switch (kind) {
-            case 0 -> canvas.drawCircle(0f, 0f, size, paint);
-            case 1 -> canvas.drawRect(Rect.makeLTRB(-size, -size, size, size), paint);
+            case 0 -> circle(canvas, 0f, 0f, size, rgb, alpha);
+            case 1 -> polygon(canvas, paint, -size, -size, size, -size, size, size, -size, size);
             // Native filled plus, with the same two-pixel arms as the upstream stroked cross.
             case 2 -> polygon(canvas, paint, -size, -1f, -1f, -1f, -1f, -size, 1f, -size,
                     1f, -1f, size, -1f, size, 1f, 1f, 1f, 1f, size, -1f, size, -1f, 1f, -size, 1f);
@@ -316,22 +333,48 @@ public final class SonnetDecorations {
         if (fillPaint == null) fillPaint = new Paint().setAntiAlias(true).setMode(PaintMode.FILL).setBlendMode(BlendMode.SRC_OVER);
         if (strokePaint == null) strokePaint = new Paint().setAntiAlias(true).setMode(PaintMode.STROKE)
                 .setStrokeCap(PaintStrokeCap.BUTT).setStrokeJoin(PaintStrokeJoin.MITER).setBlendMode(BlendMode.SRC_OVER);
+        if (contrastPaint == null) contrastPaint = new Paint().setAntiAlias(true).setMode(PaintMode.STROKE)
+                .setStrokeCap(PaintStrokeCap.BUTT).setStrokeJoin(PaintStrokeJoin.MITER);
         if (pathBuilder == null) pathBuilder = new PathBuilder();
     }
-    static Paint fill(int rgb, float alpha) { return fillPaint.setColor(argb(rgb, alpha)); }
+    static Paint fill(int rgb, float alpha) {
+        if (fillPaint == null) ensureResources();
+        return fillPaint.setColor(argb(rgb, alpha));
+    }
     static Paint stroke(int rgb, float alpha, float width) {
-        return strokePaint.setColor(argb(rgb, alpha)).setStrokeWidth(width);
+        if (strokePaint == null) ensureResources();
+        return strokePaint.setColor(argb(rgb, alpha)).setStrokeWidth(Math.max(width, readabilityStroke * 0.8f));
+    }
+    private static Paint contrasting(Paint paint) {
+        int color = paint.getColor();
+        float width = paint.getMode() == PaintMode.STROKE ? paint.getStrokeWidth() : 0;
+        return contrastPaint.setColor(argb(SonnetCanvasRenderer.contrastInk(color), (color >>> 24) / 255f * 0.82f))
+                .setStrokeWidth(width + readabilityStroke * 0.85f);
     }
     private static int argb(int rgb, float alpha) { return Math.round(clamp01(alpha) * 255f) << 24 | (rgb & 0xFFFFFF); }
-    static PathBuilder path() { return pathBuilder.reset(); }
+    static PathBuilder path() {
+        if (pathBuilder == null) ensureResources();
+        return pathBuilder.reset();
+    }
     static void drawPath(Canvas canvas, PathBuilder builder, Paint paint) {
-        try (Path path = builder.snapshot()) { canvas.drawPath(path, paint); }
+        try (Path path = builder.snapshot()) {
+            if (readabilityStroke > 0) canvas.drawPath(path, contrasting(paint));
+            canvas.drawPath(path, paint);
+        }
     }
     static void line(Canvas canvas, float x0, float y0, float x1, float y1, int rgb, float alpha, float width) {
-        canvas.drawLine(x0, y0, x1, y1, stroke(rgb, alpha, width));
+        Paint paint = stroke(rgb, alpha, width);
+        if (readabilityStroke > 0) canvas.drawLine(x0, y0, x1, y1, contrasting(paint));
+        canvas.drawLine(x0, y0, x1, y1, paint);
     }
     static void circle(Canvas canvas, float x, float y, float radius, int rgb, float alpha) {
-        canvas.drawCircle(x, y, radius, fill(rgb, alpha));
+        Paint paint = fill(rgb, alpha);
+        if (readabilityStroke > 0 && radius <= 16 && alpha > 0.2f) canvas.drawCircle(x, y, radius, contrasting(paint));
+        canvas.drawCircle(x, y, radius, paint);
+    }
+    static void strokedCircle(Canvas canvas, float x, float y, float radius, Paint paint) {
+        if (readabilityStroke > 0) canvas.drawCircle(x, y, radius, contrasting(paint));
+        canvas.drawCircle(x, y, radius, paint);
     }
     static void polygon(Canvas canvas, Paint paint, float... xy) {
         PathBuilder builder = path().moveTo(xy[0], xy[1]);
@@ -404,7 +447,9 @@ public final class SonnetDecorations {
     public static void close() {
         if (pathBuilder != null) { pathBuilder.close(); pathBuilder = null; }
         if (strokePaint != null) { strokePaint.close(); strokePaint = null; }
+        if (contrastPaint != null) { contrastPaint.close(); contrastPaint = null; }
         if (fillPaint != null) { fillPaint.close(); fillPaint = null; }
         GUIDE_PLANS.clear();
+        readabilityStroke = 0;
     }
 }

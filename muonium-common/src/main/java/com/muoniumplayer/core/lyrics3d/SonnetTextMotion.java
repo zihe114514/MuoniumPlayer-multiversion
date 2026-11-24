@@ -62,77 +62,16 @@ final class SonnetTextMotion {
         return 1 - Math.pow(1 - clamp(progress), 3);
     }
 
-    static final class Camera {
-        double x, y, scale = 1, rotation;
-    }
-
-    static void camera(SonnetTypography.Kind kind, double progress, double timeSeconds,
-                       double revealDoneSeconds, double phase, double gapSeconds, Camera out) {
-        path(kind, progress, out);
-        double gap = Math.max(0, gapSeconds);
-        if (gap > 0) {
-            Camera tail = new Camera();
-            path(kind, 0.8, tail);
-            double drift = (1 - Math.exp(-gap * 0.4)) * 2;
-            out.x += (out.x - tail.x) * drift;
-            out.y += (out.y - tail.y) * drift;
-            out.scale += (out.scale - tail.scale) * drift;
-            out.rotation += (out.rotation - tail.rotation) * drift;
-        }
-        double weight = inOut((timeSeconds - revealDoneSeconds) / 1.2);
-        double tau = timeSeconds * Math.PI * 2;
-        out.x += (Math.sin(tau * 0.13 + phase) * 0.65 + Math.sin(tau * 0.31 + phase * 1.7) * 0.35) * 0.006 * weight;
-        out.y += (Math.cos(tau * 0.11 + phase * 2.3) * 0.65 + Math.sin(tau * 0.29 + phase * 0.9) * 0.35) * 0.006 * weight;
-        out.scale += Math.sin(tau * 0.09 + phase * 1.3) * 0.002 * weight;
-        out.rotation += Math.sin(tau * 0.07 + phase * 2.9) * 0.0015 * weight;
-    }
-
-    static void path(SonnetTypography.Kind kind, double progress, Camera out) {
-        double p = clamp(progress);
-        boolean continuous = kind == SonnetTypography.Kind.TRACKING_RIBBON
-                || kind == SonnetTypography.Kind.FRAGMENT_COLLAGE
-                || kind == SonnetTypography.Kind.QUIET_TABLEAU
-                || kind == SonnetTypography.Kind.POSTER_BLOCKS;
-        double e = continuous ? p * 0.55 + inOut(p) * 0.45
-                : p < 0.18 ? expo(p / 0.18) * 0.22
-                : p < 0.78 ? 0.22 + (p - 0.18) / 0.6 * 0.56
-                : 0.78 + (1 - Math.pow(1 - (p - 0.78) / 0.22, 2)) * 0.22;
-        switch (kind) {
-            case EDITORIAL_COLUMN:
-                out.x = -0.055 + e * 0.095; out.y = 0.025 - e * 0.04;
-                out.scale = 0.98 + e * 0.07; out.rotation = -0.006 + e * 0.01; break;
-            case TYPE_IMPACT:
-                out.x = -0.035 + e * 0.07; out.y = 0.018 - e * 0.028;
-                out.scale = 1 + (1 - expo(Math.min(p / 0.18, 1))) * 0.22 + e * 0.08;
-                out.rotation = -0.01 + e * 0.016; break;
-            case FRAGMENT_COLLAGE:
-                out.x = -0.045 + e * 0.085; out.y = 0.028 - Math.sin(e * Math.PI) * 0.055;
-                out.scale = 0.97 + e * 0.09; out.rotation = -0.014 + e * 0.028; break;
-            case TRACKING_RIBBON:
-                out.x = -0.16 + e * 0.28; out.y = 0.05 - e * 0.085;
-                out.scale = 0.98 + e * 0.07; out.rotation = 0.008 - e * 0.014; break;
-            case MASK_REVEAL:
-                out.x = 0.035 - e * 0.065; out.y = 0.1 - e * 0.135;
-                out.scale = 0.96 + e * 0.12; out.rotation = -0.006 + e * 0.009; break;
-            case POSTER_BLOCKS:
-                out.x = -0.012 + e * 0.024; out.y = 0.008 - e * 0.016;
-                out.scale = 0.99 + e * 0.025; out.rotation = -0.0015 + e * 0.003; break;
-            case QUIET_TABLEAU:
-            default:
-                out.x = -0.022 + e * 0.04; out.y = 0.014 - e * 0.025;
-                out.scale = 1 + e * 0.028; out.rotation = -0.002 + e * 0.003; break;
-        }
-    }
-
     static final class Transition {
-        double alpha = 1, blur, glitch, seed;
-        void reset() { alpha = 1; blur = glitch = seed = 0; }
+        double alpha = 1, blur, glitch, seed, exitProgress;
+        void reset() { alpha = 1; blur = glitch = seed = exitProgress = 0; }
     }
 
     static void transition(int kind, boolean exiting, double progress, double seed, Transition out) {
         double linear = clamp(progress);
         double amount = exiting ? inOut(linear) : 1 - inOut(linear);
         out.reset();
+        out.exitProgress = exiting ? linear : 0;
         if (kind == 0) {
             out.alpha = exiting ? 1 - amount : 1 - amount * 0.82;
             out.blur = amount * 14;
