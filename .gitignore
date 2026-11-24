@@ -25,6 +25,9 @@ config/
 # 例外：mpserver-core 的 yun/shan/mpsync/config 是 Java 源码包（MpConfig.java），
 # 不是 MC 运行 config —— 曾被上面的规则误伤，clone 后 mpserver-core 编译不过。
 !mpserver-core/src/main/java/yun/shan/mpsync/config/
+# Shared MuoniumChat configuration sources and tests (these are Java package paths, not MC runtime config).
+!muonium-common/src/main/java/com/muoniumplayer/chat/config/
+!muonium-common/src/test/java/com/muoniumplayer/chat/config/
 *.log
 hs_err_pid*
 replay_pid*
