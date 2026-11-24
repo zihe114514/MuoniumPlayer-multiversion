@@ -1,6 +1,8 @@
 param(
     [string]$Jdk = 'D:/JDK25',
-    [switch]$CompileOnly
+    [switch]$CompileOnly,
+    [string]$HostJar,
+    [switch]$UiOnly
 )
 $ErrorActionPreference = 'Stop'
 $textProject = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../../../../../'))
@@ -9,6 +11,12 @@ $textOutput = Join-Path $textProject 'build/text-tests'
 $textClasspathFile = Join-Path $textProject 'build/host/26.3/fabric/compile-classpath.txt'
 if (!(Test-Path -LiteralPath $textClasspathFile)) { throw 'Missing actual 26.3/Fabric host compile classpath' }
 $textClasspath = (Get-Content -Raw -LiteralPath $textClasspathFile).Trim()
+if ($HostJar) {
+    $textActualHost = (Resolve-Path -LiteralPath $HostJar).Path
+    $textEntries = $textClasspath.Split(';') | Where-Object { $_ -and $_ -notmatch '[/\\]build[/\\](?:classes|resources)[/\\]' }
+    $textClasspath = (@($textActualHost) + $textEntries) -join ';'
+    $textOutput = Join-Path $textProject 'build/text-tests-installed-host'
+}
 $textFiles = @(Get-ChildItem -LiteralPath (Join-Path $textSource 'com/muoniumplayer/configskija/host/text') -Filter '*.java' | ForEach-Object FullName)
 $textFiles += Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.java' | ForEach-Object FullName
 New-Item -ItemType Directory -Path $textOutput -Force | Out-Null
@@ -27,5 +35,5 @@ $textNativeRoot = Join-Path $textGroup "skija-windows-x64/$textVersion"
 $textNative = Get-ChildItem -LiteralPath $textNativeRoot -Filter '*.jar' -Recurse | Where-Object { $_.Name -notlike '*sources*' -and $_.Name -notlike '*javadoc*' } | Select-Object -First 1
 if (!$textNative) { throw "Matching host native runtime is not cached: $textVersion" }
 $textRunClasspath += ';' + $textNative.FullName
-& (Join-Path $Jdk 'bin/java.exe') --enable-native-access=ALL-UNNAMED -ea -cp $textRunClasspath com.muoniumplayer.configskija.text.HostTextRendererTest
+& (Join-Path $Jdk 'bin/java.exe') --enable-native-access=ALL-UNNAMED -ea -cp $textRunClasspath com.muoniumplayer.configskija.text.HostTextRendererTest @($(if ($UiOnly) { "--ui-only" }))
 if ($LASTEXITCODE -ne 0) { throw 'CPU text draw/measure/lifecycle tests failed' }

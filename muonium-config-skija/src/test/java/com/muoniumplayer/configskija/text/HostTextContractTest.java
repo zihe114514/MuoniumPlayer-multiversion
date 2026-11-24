@@ -55,6 +55,9 @@ public final class HostTextContractTest {
                     "setAccessible("
                 })
             check(!code.contains(forbidden), "no private/native-host duplication: " + forbidden);
+        check(!code.contains("drawPlainTextWithPaintOn("), "no unreleased host paint API linkage");
+        check(code.contains("drawGlyphsOn("), "published host fill path");
+        check(code.contains("drawGlyphsOutlineOn("), "published host outline path");
         check(code.contains("deriveAtSize("), "real-size host derivation");
         check(code.contains("metricsRevision()"), "public revision invalidation");
         Path assets =

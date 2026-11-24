@@ -620,9 +620,17 @@ public final class HostTextRenderer
             try {
                 canvas.translate((float) x, (float) baseline);
                 if (italic) canvas.skew(-.25f, 0);
-                if (!face.fallback.drawPlainTextWithPaintOn(
-                        canvas, text, 0, 2 - face.fallback.getBaselineOffset(), paint))
-                    throw new IllegalStateException("Host rejected prepared text run");
+                double top = 2 - face.fallback.getBaselineOffset();
+                boolean accepted;
+                if (paint.getMode() == PaintMode.STROKE) {
+                    accepted = face.fallback.drawGlyphsOutlineOn(
+                            canvas, text, 0, top, paint.getColor(), paint.getStrokeWidth());
+                } else {
+                    accepted = face.fallback.drawGlyphsOn(
+                            canvas, text, 0, top, paint.getColor(), paint.getColor() >>> 24,
+                            0, null);
+                }
+                if (!accepted) throw new IllegalStateException("Host rejected prepared text run");
             } finally {
                 canvas.restore();
             }

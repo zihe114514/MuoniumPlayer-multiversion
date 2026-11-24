@@ -122,6 +122,10 @@ public final class HostTextRendererTest {
                             HostTextRenderer.create(
                                     assets, () -> canvas, theme::get, current::get)) {
                 baseline(renderer, canvas, bitmap, hostRegular);
+                if (Arrays.asList(args).contains("--ui-only")) {
+                    System.out.println("Host UI draw regression: " + checks + " assertions passed");
+                    return;
+                }
                 styles(renderer, canvas, bitmap);
                 fallback(renderer, canvas, bitmap);
                 multiline(renderer, canvas, bitmap);
@@ -207,6 +211,21 @@ public final class HostTextRendererTest {
                     r.measure("Music AV 中文", 17.5, false),
                     1e-5,
                     "UI uses exact-size CFont with same fallback/kerning");
+        }
+        for (float size : new float[] {11, 17.5f, 24}) {
+            try (CFontRenderer exact = host.deriveAtSize(size)) {
+                for (String value : List.of("Main sidebar", "中文设置", "AV汉字")) {
+                    for (int tint : new int[] {0xFFFFFFFF, 0x80D5DBFF, 0x2040FF70, 0}) {
+                        c.clear(0);
+                        r.draw(value, 40, 35, size, false, tint);
+                        byte[] actual = bitmap.readPixels();
+                        c.clear(0);
+                        exact.drawGlyphsOn(c, value, 40, 37, tint, tint >>> 24, 0, null);
+                        check(Arrays.equals(actual, bitmap.readPixels()),
+                                "published fill API preserves pixels, origin and alpha: " + size + "/" + value + "/" + tint);
+                    }
+                }
+            }
         }
         c.clear(0);
         r.draw("Hg", 40, 35, 22, false, 0xFFFFFFFF);

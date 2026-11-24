@@ -121,3 +121,7 @@ text.close();
 | `src/test/java/com/muoniumplayer/configskija/text/HostTextRendererTest.java` | `02e8d0f2d06cededea43ec3c21d4d601d71fefd9b2b705557a2f5aa4366eba4f` |
 | `src/test/java/com/muoniumplayer/configskija/text/HostTextContractTest.java` | `ffc8c68f7cec4d98d8a1bd874309e81ead753d51f422f75f32c3744ac6232092` |
 | `src/test/java/com/muoniumplayer/configskija/text/run.ps1` | `b5fe2d522cb7c7f5255135b24194361c4a7cc62f0f2409128c6df2cd92f9073e` |
+
+## 2026-11-24 崩溃报告后的修正
+
+前述冻结表是迁移阶段的历史记录。本轮按用户实际错误报告修正 HostTextRenderer.Run，不再链接未发布的 drawPlainTextWithPaintOn。填充改走已核对的 drawGlyphsOn，描边使用目标实际主包的 drawGlyphsOutlineOn；新增 HostJar 构建/运行验证及 36 组逐像素回归。完整字体检查现为 26 项契约、157 项 CPU/Skija 断言通过。适用组合、二进制差异及人工验收边界见 修复-主包字体接口兼容.md。

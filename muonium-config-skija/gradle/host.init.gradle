@@ -11,12 +11,16 @@ gradle.projectsEvaluated {
         }
         def output = new File(workspace, "build/host/" + hostRoot.projectDir.name + "/" + target.name)
         def main = target.extensions.getByName('sourceSets').main
+        def hostJarPath = gradle.startParameter.projectProperties.get('skijaConfigHostJar')
+        def hostJar = hostJarPath ? new File(hostJarPath) : null
+        if (hostJar != null && !hostJar.isFile()) throw new GradleException('Missing installed host JAR: ' + hostJar)
+        def configCompileClasspath = hostJar == null ? main.output + main.compileClasspath : target.files(hostJar) + main.compileClasspath
         def compile = target.tasks.register('compileSkijaConfig', JavaCompile) {
             dependsOn target.tasks.named('classes')
             source new File(workspace, 'src/main/java')
             source new File(workspace, 'src/versions/' + hostRoot.projectDir.name + '/java')
             source new File(workspace, 'src/acceptance/' + target.name + '/java')
-            classpath = main.output + main.compileClasspath
+            classpath = configCompileClasspath
             destinationDirectory.set(new File(output, 'classes'))
             javaCompiler.set(target.tasks.named('compileJava', JavaCompile).get().javaCompiler)
             options.release.set(17)
@@ -116,6 +120,7 @@ config="muonium-config-skija.mixins.json"
                     digest.update(workspace.toPath().relativize(file.toPath()).toString().replace('\\','/').getBytes('UTF-8'));digest.update((byte)0);digest.update(file.bytes);digest.update((byte)0)
                 }
                 def info = [schemaVersion:1, minecraft:target.property('minecraft_version').toString(), loader:target.name, hostVersion:target.property('mod_version').toString(), sourceSha256:java.util.HexFormat.of().formatHex(digest.digest())]
+                if (hostJar != null) info.hostJarSha256 = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance('SHA-256').digest(hostJar.bytes))
                 new File(output, 'metadata/skija-config-build.json').text=groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(info))
             }
         }

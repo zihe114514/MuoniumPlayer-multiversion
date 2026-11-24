@@ -2,7 +2,7 @@
 
 原设置中心的 Skija 迁移与验收工程。界面源码独立放在本目录，配置、预设、音乐 HUD、字体和渲染上下文直接连接 MuoniumPlayer。工程不依赖 Compose/Skiko，不打包另一份 Skija 或 Kotlin。
 
-人工验收入口、自动检查记录与已知实现差异见 [人工验收交接](docs/人工验收交接.md)。当前实现与验证的事实分别记录在 docs/ 下。**可构建不等于逐页 1:1 视觉和游戏运行已经验收通过**。游戏验收完成后再将本目录的业务/页面源码接入主项目共享根；版本触点仍留每条车道，不复制十四份业务。
+人工验收入口、自动检查记录与已知实现差异见 [人工验收交接](docs/人工验收交接.md)。当前实现与验证的事实分别记录在 docs/ 下。2026-11-24 的打开界面崩溃修复见 [主包字体接口兼容修复](docs/修复-主包字体接口兼容.md)。**可构建不等于逐页 1:1 视觉和游戏运行已经验收通过**。游戏验收完成后再将本目录的业务/页面源码接入主项目共享根；版本触点仍留每条车道，不复制十四份业务。
 
 ## 构建与验证
 
@@ -10,6 +10,8 @@
 
 ~~~powershell
 .\verify.ps1                         # Java 17 的中立行为/资源/迁移测试
+.\build.ps1 -Versions '26.3' -Loaders 'fabric' -HostJar '<实际 MuoniumPlayer 主包路径>' -Offline
+.\src\test\java\com\muoniumplayer\configskija\text\run.ps1 -HostJar '<实际 MuoniumPlayer 主包路径>'
 .\build.ps1 -Versions '26.3' -Offline # 两加载器、实际主项目依赖、独立产物
 .\build.ps1 -Versions '1.20.1 recode','1.21.1','1.21.10','1.21.11 recode','26.1.2','26.2','26.3' -Offline
 .\src\test\java\com\muoniumplayer\configskija\text\run.ps1
