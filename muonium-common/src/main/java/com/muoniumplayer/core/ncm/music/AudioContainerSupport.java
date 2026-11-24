@@ -41,6 +41,11 @@ public final class AudioContainerSupport {
         return "ogg".equals(container);
     }
 
+    /** FLAC is converted before playback so its lazy decoder never reads on the audio thread. */
+    static boolean requiresFlacDecode(String container) {
+        return "flac".equals(container);
+    }
+
     /**
      * 规范化 API 的 MIME 类型/扩展名，但调用方在播放前仍须检查文件字节。
      * 未知值有意地变为 {@code null}，因此一个 Content-Type 错误但 CDN 响应有效

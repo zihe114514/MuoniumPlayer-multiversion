@@ -58,7 +58,9 @@ public enum MusicPlatform {
      * <p><b>追加在末尾</b>，理由同 {@link #SMTC}：稳定键按 {@code name()} 落盘，
      * 插进中间会让已落盘的歌词与封面缓存整体错行。</p>
      */
-    LOCAL("本地音乐", 0x6C7A92);
+    LOCAL("本地音乐", 0x6C7A92),
+    /** 波点音乐；追加在末尾以保持已落盘稳定键不变。 */
+    BODIAN("波点音乐", 0x18C9B3);
 
     private final String displayName;
     private final int brandColor;

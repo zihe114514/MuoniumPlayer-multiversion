@@ -168,6 +168,12 @@ final class CineSession {
         world = scene.world();
         player = scene.player();
 
+        // Explicit user input owns the view immediately; do not keep steering the camera during a return.
+        if (frame.active() && input) {
+            releaseImmediately("键鼠输入");
+            return;
+        }
+
         Object screen = probe.openScreen();
         String exitReason = !settings.enabled() ? "开关关闭" : screen != null ? "打开界面"
                 : hurt ? "受伤" : input ? "键鼠输入" : !playback.playing() ? "音乐停止" : null;

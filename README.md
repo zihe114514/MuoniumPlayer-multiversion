@@ -11,7 +11,7 @@
 一个 Minecraft 客户端 Mod：手机音乐 App 般的播放器、逐字歌词、灵动岛、一起听房间、无缝切歌 —— 全部画在游戏里，不弹浏览器、不切窗口。<br>
 纯客户端，普通服务器**不用装任何东西**。
 
-[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-2.6.0-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
+[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-2.6.1-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
 [![下载](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-melodifymc.cc.cd-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
 [![MC 百科](https://img.shields.io/badge/MC%E7%99%BE%E7%A7%91-class%2F30544-3d8528?style=flat-square&labelColor=2b2b33)](https://www.mcmod.cn/class/30544.html)
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1%20%7C%201.21.1%20%7C%201.21.10%20%7C%201.21.11%20%7C%2026.1.2%20%7C%2026.2%20%7C%2026.3-3d8528?style=flat-square&labelColor=2b2b33)](#支持的版本)
@@ -27,7 +27,7 @@
 
 <sub>技术问题、玩法交流、抢先看新版本 —— <a href="https://qm.qq.com/q/uNHkCoTusU">点此加群</a></sub>
 
-[演示](#演示) &nbsp;·&nbsp; [音源](#9-个聚合音源一个播放器) &nbsp;·&nbsp; [LX 脚本](#lx-自定义脚本音源) &nbsp;·&nbsp; [音效](#音效系统蝰蛇音效--jamesdsp--场景声学) &nbsp;·&nbsp; [一起听](#一起听三种开法两种不需要服务端) &nbsp;·&nbsp; [汽水](#汽水音乐用你自己的会员听完整版) &nbsp;·&nbsp; [版本](#支持的版本) &nbsp;·&nbsp; [安装](#安装三步装好) &nbsp;·&nbsp; [赞助](#赞助)
+[演示](#演示) &nbsp;·&nbsp; [音源](#10-个聚合音源一个播放器) &nbsp;·&nbsp; [LX 脚本](#lx-自定义脚本音源) &nbsp;·&nbsp; [音效](#音效系统蝰蛇音效--jamesdsp--场景声学) &nbsp;·&nbsp; [一起听](#一起听三种开法两种不需要服务端) &nbsp;·&nbsp; [汽水](#汽水音乐用你自己的会员听完整版) &nbsp;·&nbsp; [版本](#支持的版本) &nbsp;·&nbsp; [安装](#安装三步装好) &nbsp;·&nbsp; [赞助](#赞助)
 
 </div>
 
@@ -83,23 +83,32 @@
 
 ## 功能
 
-### 9 个聚合音源，一个播放器
+### 2.6.1 更新
+
+- **音源**：新增波点音乐，补齐 QQ 音乐推荐 / 私人 FM / 电台 / 歌单操作；网易云增加已购专辑与音乐云盘入口；Apple Music、YouTube Music、Spotify 的账号、推荐、歌单与播放链路继续完善，Spotify 支持歌单写回
+- **音频**：新增可选响度均衡，重构流式音频预填与切歌缓存，降低不同音源之间的音量跳变与切歌停顿
+- **场景声学**：重构射线声场、早期反射、晚期混响与三频带能量衰减，开放空间、房间、洞穴和遮挡环境的听感区分更稳定
+- **Automix 与运镜**：增加自然快混与音频线程收尾队列，优化下一首预备；追焦运镜更平滑，默认等待十秒并即时响应玩家输入
+- **体验与稳定性**：修复音乐胶囊恢复显示、旧版公告滚轮、1.21.1 世界歌词提交缓冲，以及多项账号、缓存和音频容器边界问题
+
+### 10 个聚合音源，一个播放器
 
 <table>
 <tr>
 <td align="center" width="20%"><a href="https://music.163.com/"><img src="assets/brands/netease.png" width="56" alt="网易云音乐"></a><br><sub><b>网易云音乐</b></sub></td>
-<td align="center" width="20%"><a href="https://y.qq.com/"><img src="assets/brands/qqmusic.png" width="56" alt="QQ 音乐"></a><br><sub><b>QQ 音乐</b></sub></td>
+<td align="center" width="20%"><a href="https://apps.apple.com/cn/app/qq%E9%9F%B3%E4%B9%90-%E5%90%AC%E6%88%91%E6%83%B3%E5%90%AC/id414603431"><img src="assets/brands/qqmusic.jpg" width="56" alt="QQ 音乐"></a><br><sub><b>QQ 音乐</b></sub></td>
+<td align="center" width="20%"><a href="https://apps.apple.com/cn/app/%E6%B3%A2%E7%82%B9%E9%9F%B3%E4%B9%90-qq%E9%9F%B3%E4%B9%90%E7%AE%80%E6%B4%81%E7%89%88/id1541981555"><img src="assets/brands/bodian.jpg" width="56" alt="波点音乐"></a><br><sub><b>波点音乐</b></sub></td>
 <td align="center" width="20%"><a href="https://www.kugou.com/"><img src="assets/brands/kugou.png" width="56" alt="酷狗音乐"></a><br><sub><b>酷狗音乐</b></sub></td>
 <td align="center" width="20%"><a href="https://music.youtube.com/"><img src="assets/brands/ytmusic.png" width="56" alt="YouTube Music"></a><br><sub><b>YouTube Music</b></sub></td>
-<td align="center" width="20%"><a href="https://www.bilibili.com/"><img src="assets/brands/bilibili.png" width="56" alt="哔哩哔哩"></a><br><sub><b>哔哩哔哩</b></sub></td>
 </tr>
 <tr>
+<td align="center" width="20%"><a href="https://www.bilibili.com/"><img src="assets/brands/bilibili.png" width="56" alt="哔哩哔哩"></a><br><sub><b>哔哩哔哩</b></sub></td>
 <td align="center" width="20%"><a href="https://qishui.douyin.com/"><img src="assets/brands/qishui.png" width="56" alt="汽水音乐"></a><br><sub><b>汽水音乐</b></sub></td>
 <td align="center" width="20%"><a href="https://open.spotify.com/"><img src="assets/brands/spotify.png" width="56" alt="Spotify"></a><br><sub><b>Spotify</b></sub></td>
 <td align="center" width="20%"><img src="assets/brands/apple.png" width="56" alt="Apple Music"><br><sub><b>Apple Music</b></sub></td>
 <td align="center" width="20%"><img src="assets/brands/gd.png" width="56" alt="GD 音乐台"><br><sub><b>GD 音乐台</b></sub></td>
-<td align="center" width="20%"><img src="assets/brands/lx.png" width="56" alt="LX 自定义脚本"><br><sub><b>LX 自定义脚本</b></sub></td>
 </tr>
+<tr><td align="center" width="20%"><img src="assets/brands/lx.png" width="56" alt="LX 自定义脚本"><br><sub><b>LX 自定义脚本</b></sub></td></tr>
 </table>
 
 各家能走到哪一步不一样，下表是**实际可用范围**：
@@ -125,7 +134,7 @@
 
 ### LX 自定义脚本音源
 
-除了内置的 8 家，你还能把 [lx-music](https://github.com/lyswhut/lx-music-desktop) 社区的音源脚本直接导进游戏 —— 洛雪生态里那些自定义渠道，插上就能用。
+除了内置的 10 家，你还能把 [lx-music](https://github.com/lyswhut/lx-music-desktop) 社区的音源脚本直接导进游戏 —— 洛雪生态里那些自定义渠道，插上就能用。
 
 导入很简单：从文件选，或者复制一段脚本（复制的是链接会自动下载，是正文就直接用）。**导入即生效**，不用重启。
 

@@ -16,6 +16,7 @@
 | `com/muoniumplayer/compat/mc/GuiButton.java` | FORK | 五树都有 | 按钮按下回调签名差异 |
 | `com/muoniumplayer/compat/mc/GuiScreen.java` | FORK | 五树都有 | keyPressed/charTyped 事件类型差异（1.20.1 起改 record） |
 | `com/muoniumplayer/compat/mc/GuiTextField.java` | FORK | 五树都有 | 文本框事件与绘制 API 差异 |
+| `com/muoniumplayer/compat/chat/ChatScreen.java` | FORK | 七树都有 | ChatView 复用共享 ExtensionScreen 与各树 GuiScreen；宿主生命周期/输入/鼠标事件按精确 MC 版本桥接 |
 | `com/muoniumplayer/compat/mc/ScaledResolution.java` | FORK | 五树都有 | 26.x 改名为桌面缩放体系 |
 | `com/muoniumplayer/compat/mc/ScreenCapture.java` | FORK | 五树都有 | 截帧 API：26.x 走 renderpearl |
 | `com/muoniumplayer/compat/mc/CameraAccess.java` | FORK | 五树都有 | 3D 世界歌词：相机/玩家读取按版本 API 各树一份（共享层只放语义） |

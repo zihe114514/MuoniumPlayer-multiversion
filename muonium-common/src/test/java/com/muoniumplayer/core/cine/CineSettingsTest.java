@@ -24,7 +24,7 @@ class CineSettingsTest {
     @Test
     void 默认值() {
         assertFalse(CineSettings.isEnabled(), "总开关默认关（新装用户零打扰）");
-        assertEquals(300, CineSettings.idleSeconds(), "对齐 Ambient Camera 的 idleSeconds 默认 300");
+        assertEquals(CineSettings.IDLE_SECONDS_DEFAULT, CineSettings.idleSeconds());
         assertEquals(4, CineSettings.shotBeats());
         assertEquals(0.7f, CineSettings.speedMultiplier(), 1.0e-6f, "对齐 Ambient Camera 的 cameraSpeed 默认 0.7");
         assertEquals(50, CineSettings.environmentShotPercent());

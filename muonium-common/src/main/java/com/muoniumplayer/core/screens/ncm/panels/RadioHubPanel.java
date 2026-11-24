@@ -7,6 +7,7 @@ import com.muoniumplayer.core.ncm.music.DjRadioService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.dto.DjRadio;
+import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
@@ -317,7 +318,15 @@ public final class RadioHubPanel extends NCMPanel {
             try {
                 List<DjRadio> loaded;
                 String statusText;
-                switch (tab) {
+                if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QQ) {
+                    if (tab == Tab.MINE) {
+                        loaded = qqAccountRadios();
+                        statusText = "QQ 账号电台 · " + loaded.size();
+                    } else {
+                        loaded = qqRecommendedRadios();
+                        statusText = "QQ 推荐电台 · " + loaded.size();
+                    }
+                } else switch (tab) {
                     case CATEGORY: {
                         ensureCategories(generation);
                         // 分类目录读本地快照（ensureCategories 带回的解析结果），不跨线程读
@@ -506,6 +515,14 @@ public final class RadioHubPanel extends NCMPanel {
 
     private void openRadio(DjRadio radio) {
         if (radio == null) return;
+        if (radio.getKind() == DjRadio.Kind.QQ_RADIO) {
+            PlayList playlist = new PlayList(-300000000L - radio.getId(), radio.displayName(),
+                    radio.coverUrl(), 5, radio.getPlayCount(), null, radio.getDesc(), 0L);
+            playlist.setPlatform(MusicPlatform.QQ);
+            playlist.setPlatformPlaylistId(radio.getPlatformId());
+            NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playlist));
+            return;
+        }
         switch (radio.getKind() == null ? DjRadio.Kind.DJ_RADIO : radio.getKind()) {
             case DIFM_CHANNEL:
                 NCMScreen.getInstance().setCurrentPanel(new DifmPanel());
@@ -517,5 +534,39 @@ public final class RadioHubPanel extends NCMPanel {
                 NCMScreen.getInstance().setCurrentPanel(new RadioDetailPanel(radio));
                 break;
         }
+    }
+
+    private static List<DjRadio> qqRecommendedRadios() {
+        List<DjRadio> result = new ArrayList<>();
+        for (com.muoniumplayer.core.music.source.QQRadioGroup.Radio item
+                : NeteaseMusicService.getQQRecommendedRadioModes()) {
+            DjRadio radio = new DjRadio();
+            radio.setId(item.getId());
+            radio.setPlatformId("qq-radio:" + item.getId());
+            radio.setKind(DjRadio.Kind.QQ_RADIO);
+            radio.setName(item.getTitle());
+            radio.setPicUrl(item.getCoverUrl());
+            radio.setDesc("QQ 音乐官方雷达推荐");
+            result.add(radio);
+        }
+        return result;
+    }
+
+    private static List<DjRadio> qqAccountRadios() {
+        List<DjRadio> result = new ArrayList<>();
+        for (com.muoniumplayer.core.music.source.QQRadioGroup group : NeteaseMusicService.getQQRadioGroups()) {
+            for (com.muoniumplayer.core.music.source.QQRadioGroup.Radio item : group.getRadios()) {
+                DjRadio radio = new DjRadio();
+                radio.setId(item.getId());
+                radio.setPlatformId("qq-account-radio:" + item.getId());
+                radio.setKind(DjRadio.Kind.QQ_RADIO);
+                radio.setName(item.getTitle());
+                radio.setPicUrl(item.getCoverUrl());
+                radio.setCategoryName(group.getTitle());
+                radio.setPlayCount(item.getListenCount());
+                result.add(radio);
+            }
+        }
+        return result;
     }
 }

@@ -36,6 +36,8 @@ public final class NCMPlayerConfig {
      */
     private static boolean windowAdaptiveScale = true;
     private static Quality audioQuality = Quality.LOSSLESS;
+    /** Track-level loudness normalization is opt-in because it changes relative playback levels. */
+    private static boolean trackLoudnessNormalizationEnabled;
     /** 在播放器/新手引导中选择的音乐源。持久化以便重启后保留。 */
     private static MusicPlatform musicSourcePlatform = MusicPlatform.NETEASE;
     /**
@@ -101,7 +103,11 @@ public final class NCMPlayerConfig {
         if (loaded) return;
         loaded = true;
 
-        if (!FILE.exists()) return;
+        if (!FILE.exists()) {
+            com.muoniumplayer.core.ncm.music.TrackLoudnessNormalization.setEnabled(
+                    trackLoudnessNormalizationEnabled);
+            return;
+        }
         try {
             JsonObject object = JsonConfigStorage.readObject(FILE, GSON);
             if (object != null && object.has("playerScale")) {
@@ -116,6 +122,9 @@ public final class NCMPlayerConfig {
                 } catch (Throwable ignored) {
                     audioQuality = Quality.LOSSLESS;
                 }
+            }
+            if (object != null && object.has("trackLoudnessNormalizationEnabled")) {
+                trackLoudnessNormalizationEnabled = object.get("trackLoudnessNormalizationEnabled").getAsBoolean();
             }
             if (object != null && object.has("neteaseListeningHistorySyncEnabled")) {
                 neteaseListeningHistorySyncEnabled = object.get("neteaseListeningHistorySyncEnabled").getAsBoolean();
@@ -148,6 +157,8 @@ public final class NCMPlayerConfig {
         } catch (Throwable ignored) {
             playerScale = 1.0f;
         }
+        com.muoniumplayer.core.ncm.music.TrackLoudnessNormalization.setEnabled(
+                trackLoudnessNormalizationEnabled);
     }
 
     public static synchronized float getPlayerScale() {
@@ -185,6 +196,19 @@ public final class NCMPlayerConfig {
         load();
         audioQuality = quality == null ? Quality.LOSSLESS : quality;
         save();
+    }
+
+    public static synchronized boolean isTrackLoudnessNormalizationEnabled() {
+        load();
+        return trackLoudnessNormalizationEnabled;
+    }
+
+    public static synchronized void setTrackLoudnessNormalizationEnabled(boolean enabled) {
+        load();
+        if (trackLoudnessNormalizationEnabled == enabled) return;
+        trackLoudnessNormalizationEnabled = enabled;
+        save();
+        com.muoniumplayer.core.ncm.music.TrackLoudnessNormalization.setEnabled(enabled);
     }
 
     public static synchronized MusicPlatform getMusicSourcePlatform() {
@@ -400,6 +424,7 @@ public final class NCMPlayerConfig {
             object.addProperty("playerScale", playerScale);
             object.addProperty("windowAdaptiveScale", windowAdaptiveScale);
             object.addProperty("audioQuality", getAudioQuality().name());
+            object.addProperty("trackLoudnessNormalizationEnabled", trackLoudnessNormalizationEnabled);
             object.addProperty("neteaseListeningHistorySyncEnabled", neteaseListeningHistorySyncEnabled);
         object.addProperty("neteaseListeningHistorySyncAsked", neteaseListeningHistorySyncAsked);
             object.addProperty("musicCacheLimitGigabytes", musicCacheLimitGigabytes);

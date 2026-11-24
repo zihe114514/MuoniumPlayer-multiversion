@@ -3035,7 +3035,7 @@ public class CloudMusic implements SharedConstants {
         }
 
         /**
- * JSyn 可以直接流式播放 MP3、FLAC 和 WAV。AAC/ADTS 与 ISO-BMFF 载荷会被解码
+ * JSyn 可以直接流式播放 MP3 和 WAV。FLAC、AAC/ADTS、OGG 与 ISO-BMFF 载荷会被解码
  * 一次并写入经过校验的 WAV 边车。解码器只接受 AAC 音轨，因此纯视频、
  * DRM 保护或不支持的 MP4 流仍然会安全失败。
  */
@@ -3054,7 +3054,8 @@ public class CloudMusic implements SharedConstants {
                         + sourceFile.getName());
             }
             if (!AudioContainerSupport.requiresAacDecode(container)
-                    && !AudioContainerSupport.requiresOggDecode(container)) {
+                    && !AudioContainerSupport.requiresOggDecode(container)
+                    && !AudioContainerSupport.requiresFlacDecode(container)) {
                 return sourceFile;
             }
 
@@ -3093,6 +3094,8 @@ public class CloudMusic implements SharedConstants {
                         };
                 if (AudioContainerSupport.requiresOggDecode(container)) {
                     OggAudioDecoder.decodeToWav(sourceFile, decodedFile, transcodeProgress::accept);
+                } else if (AudioContainerSupport.requiresFlacDecode(container)) {
+                    FlacAudioDecoder.decodeToWav(sourceFile, decodedFile, transcodeProgress);
                 } else {
                     AacAudioDecoder.decodeToWav(sourceFile, container, decodedFile, transcodeProgress::accept);
                 }
@@ -3106,11 +3109,14 @@ public class CloudMusic implements SharedConstants {
                 if (decodedFile.exists()) {
                     decodedFile.delete();
                 }
-                if (sourceFile.exists() && !sourceFile.delete()) {
-                    System.err.println("[NCM] Unable to remove undecodable AAC cache: " + sourceFile.getName());
+                if (AudioCacheFiles.isManagedCacheFile(sourceFile)
+                        && sourceFile.exists() && !sourceFile.delete()) {
+                    System.err.println("[NCM] Unable to remove undecodable audio cache: " + sourceFile.getName());
                 }
-                throw new IllegalStateException("Unable to decode AAC audio into a playable WAV cache", exception);
+                throw new IllegalStateException("Unable to decode " + container
+                        + " audio into a playable WAV cache", exception);
             }
+            MusicAudioCache.enforceLimitAsync();
             if (!quietTranscode) {
                 DownloadDynamicIsland.finishTranscode(trackName, container, targetFormat,
                         System.currentTimeMillis() - transcodeStartedAt);
@@ -4965,7 +4971,9 @@ public class CloudMusic implements SharedConstants {
                 incoming.setVocalDuckDepth(plan.incomingVocalDepth(0.0));
                 incoming.setMidGainDb(plan.incomingMidDb(0.0));
                 incoming.setHighGainDb(plan.incomingHighDb(0.0));
-                incoming.setFadeGain(plan.incomingGain(0.0));
+                incoming.setFadeGain(plan.incomingGain(0.0,
+                        outgoing.appliedTrackLoudnessGain()
+                                / Math.max(.000001f, incoming.appliedTrackLoudnessGain())));
                 try {
                     if (track.preRolled) {
                         // 自预卷起就已经以全静音发声：上面的增益线就是
@@ -5172,7 +5180,10 @@ public class CloudMusic implements SharedConstants {
          */
         private void writeTransitionFrame(AutomixFade fade, double progress) {
             if (fade.incoming != null) {
-                fade.incoming.applyAutomixFrame(fade.plan.incomingGain(progress),
+                double loudnessRatio = fade.outgoing == null ? 1.0
+                        : fade.outgoing.appliedTrackLoudnessGain()
+                                / Math.max(.000001f, fade.incoming.appliedTrackLoudnessGain());
+                fade.incoming.applyAutomixFrame(fade.plan.incomingGain(progress, loudnessRatio),
                         fade.plan.incomingBassDb(progress),
                         fade.plan.incomingVocalDepth(progress),
                         fade.plan.incomingMidDb(progress),
@@ -5612,7 +5623,7 @@ public class CloudMusic implements SharedConstants {
      *
      * <p>与 {@link PlayThread#resolvePlayableAudioFile} 的区别就在这儿：那一条发现边车无效时会
      * 删掉重转一遍，是播放路径的活儿；本方法是「现在就想知道有没有」，读不到就算没有。
-     * AAC/MP4 容器认那张可复用的 {@code .decoded.wav} 边车，其它容器就是缓存本体。</p>
+     * 压缩容器认那张可复用的 {@code .decoded.wav} 边车，其它容器就是缓存本体。</p>
      */
     static File existingPlayableAudioFile(Music song) {
         File cached = cachedAudioFileFor(song);
@@ -5620,7 +5631,8 @@ public class CloudMusic implements SharedConstants {
         try {
             String container = AudioContainerSupport.detectContainer(cached);
             if (!AudioContainerSupport.requiresAacDecode(container)
-                    && !AudioContainerSupport.requiresOggDecode(container)) return cached;
+                    && !AudioContainerSupport.requiresOggDecode(container)
+                    && !AudioContainerSupport.requiresFlacDecode(container)) return cached;
             File decoded = AudioCacheFiles.getDecodedWavFile(cached);
             return AudioCacheFiles.isReusableDecodedWav(cached, decoded) ? decoded : null;
         } catch (Throwable ignored) {

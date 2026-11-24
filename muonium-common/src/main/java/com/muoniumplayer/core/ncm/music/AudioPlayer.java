@@ -49,6 +49,12 @@ public class AudioPlayer {
      * 
      */
     private volatile float fadeGain = 1.0f;
+    /** Measured per-track gain and its peak bound are owned by this deck, including automix decks. */
+    private volatile float measuredTrackGain = 1.0f;
+    private volatile float measuredSamplePeak = 1.0f;
+    private volatile TrackGainRamp trackGainRamp;
+    private final Runnable trackGainRampTask = this::advanceTrackGainRamp;
+    private volatile boolean trackGainRampTaskRegistered;
 
     /**
      * 挂在这一路 deck 自己信号链路上的 automix 处理链（低搁架 + 人声频带抵消）。
@@ -130,6 +136,9 @@ public class AudioPlayer {
         this.sourceFile = file;
         this.setListeners();
         this.closed = false;
+        Engine.addAudioTask(trackGainRampTask);
+        trackGainRampTaskRegistered = true;
+        TrackLoudnessNormalization.register(this);
     }
 
     public void setAudio(File file) {
@@ -164,7 +173,11 @@ public class AudioPlayer {
         // 活动播放器。那时 setAudio() 换上新曲，effectiveAmp() = volume * 0 —— 下载正常、
         // 解码正常、进度条正常走，就是一点声音都没有，而且不报任何错。
         this.fadeGain = 1.0f;
+        this.measuredTrackGain = 1.0f;
+        this.measuredSamplePeak = 1.0f;
+        this.trackGainRamp = null;
         this.sourceFile = file;
+        TrackLoudnessNormalization.trackChanged(this, file);
         dispose(previous);
     }
 
@@ -406,7 +419,7 @@ public class AudioPlayer {
         this.midGainDb = Float.isFinite(midDb) ? Math.max(-12f, Math.min(3f, midDb)) : 0f;
         this.highGainDb = Float.isFinite(highDb) ? Math.max(-12f, Math.min(3f, highDb)) : 0f;
         if (!isUsable()) return;
-        this.player.setAmplitudeNow(this.volume * this.fadeGain);
+        this.player.setAmplitudeNow(effectiveAmp());
         AutomixDeckChain chain = this.automixChain;
         if (chain != null) chain.setTargetsNow(this.bassGainDb, routeVocalDepth(this.vocalDuckDepth),
                 this.midGainDb, this.highGainDb);
@@ -777,9 +790,113 @@ public class AudioPlayer {
 
     /** 交给引擎的有效振幅：持久化音量乘以交叉淡化增益。 */
     private float effectiveAmp() {
-        float amp = this.volume * this.fadeGain;
-        if (Float.isNaN(amp) || Float.isInfinite(amp)) return 0.0f;
-        return Math.max(0.0f, Math.min(1.0f, amp));
+        float amp = this.volume * this.fadeGain * trackGainNow(System.nanoTime());
+        float peak = TrackLoudnessNormalization.isEnabled() ? this.measuredSamplePeak : 1.0f;
+        return clampAmp(amp, amplitudeCeiling(peak));
+    }
+
+    private static float amplitudeCeiling(float samplePeak) {
+        return Float.isFinite(samplePeak) && samplePeak > 1.0f ? 1.0f / samplePeak : 1.0f;
+    }
+
+    private static float clampAmp(float amplitude, float ceiling) {
+        if (!Float.isFinite(amplitude)) return 0.0f;
+        return Math.max(0.0f, Math.min(ceiling, amplitude));
+    }
+
+    void applyLoudnessMeasurement(File expectedFile, TrackLoudnessNormalization.Measurement measurement) {
+        if (measurement == null || expectedFile == null || closed || !expectedFile.equals(sourceFile)) return;
+        this.measuredSamplePeak = Math.max(1e-6f, measurement.samplePeak);
+        this.measuredTrackGain = TrackLoudnessNormalization.gainFor(
+                measurement.integratedLufs, this.measuredSamplePeak);
+        refreshTrackLoudnessGain();
+    }
+
+    void refreshTrackLoudnessGain() {
+        retargetTrackGain(TrackLoudnessNormalization.isEnabled() ? measuredTrackGain : 1.0f);
+    }
+
+    float appliedTrackLoudnessGain() {
+        float peak = TrackLoudnessNormalization.isEnabled() ? this.measuredSamplePeak : 1.0f;
+        return effectiveNormalizationRatio(this.volume * this.fadeGain,
+                trackGainNow(System.nanoTime()), peak);
+    }
+
+    static float effectiveNormalizationRatio(float baseAmplitude, float normalizationGain, float samplePeak) {
+        float ceiling = amplitudeCeiling(samplePeak);
+        float base = clampAmp(baseAmplitude, ceiling);
+        if (base <= 1e-6f) return normalizationGain;
+        float normalized = clampAmp(baseAmplitude * normalizationGain, ceiling);
+        return normalized / base;
+    }
+
+    boolean isClosed() {
+        return closed;
+    }
+
+    private synchronized void retargetTrackGain(float target) {
+        if (!Float.isFinite(target) || target <= 0f) target = 1.0f;
+        long now = System.nanoTime();
+        float current = trackGainNow(now);
+        if (Math.abs(current - target) < 1e-5f) {
+            trackGainRamp = TrackGainRamp.steady(target);
+            return;
+        }
+        trackGainRamp = new TrackGainRamp(current, target, now);
+    }
+
+    private void advanceTrackGainRamp() {
+        TrackGainRamp ramp = trackGainRamp;
+        if (ramp == null || !ramp.isActive()) return;
+        long now = System.nanoTime();
+        float value = ramp.value(now);
+        if (trackGainRamp != ramp) return;
+        if (now - ramp.startedAtNanos >= TrackGainRamp.DURATION_NANOS) {
+            trackGainRamp = TrackGainRamp.steady(ramp.to);
+        }
+        if (Math.abs(value - ramp.from) > 1e-5f && isUsable()) {
+            try {
+                this.player.setAmplitudeNow(effectiveAmp());
+            } catch (RuntimeException ignored) {
+            }
+        }
+    }
+
+    private float trackGainNow(long nowNanos) {
+        TrackGainRamp ramp = trackGainRamp;
+        return ramp == null ? 1.0f : ramp.value(nowNanos);
+    }
+
+    private static final class TrackGainRamp {
+        private static final long DURATION_NANOS = 350_000_000L;
+
+        final float from;
+        final float to;
+        final long startedAtNanos;
+
+        TrackGainRamp(float from, float to, long startedAtNanos) {
+            this.from = from;
+            this.to = to;
+            this.startedAtNanos = startedAtNanos;
+        }
+
+        static TrackGainRamp steady(float value) {
+            return new TrackGainRamp(value, value, 0L);
+        }
+
+        boolean isActive() {
+            return Math.abs(from - to) >= 1e-5f;
+        }
+
+        float value(long nowNanos) {
+            if (!isActive()) return to;
+            double progress = Math.min(1.0, Math.max(0.0,
+                    (nowNanos - startedAtNanos) / (double) DURATION_NANOS));
+            double eased = progress * progress * (3.0 - 2.0 * progress);
+            double fromDb = 20.0 * Math.log10(from);
+            double toDb = 20.0 * Math.log10(to);
+            return (float) Math.pow(10.0, (fromDb + (toDb - fromDb) * eased) / 20.0);
+        }
     }
 
     private void applyAmp() {
@@ -813,6 +930,12 @@ public class AudioPlayer {
     public synchronized void close() {
         if (closed) return;
         closed = true;
+        TrackLoudnessNormalization.unregister(this);
+        trackGainRamp = null;
+        if (trackGainRampTaskRegistered) {
+            trackGainRampTaskRegistered = false;
+            Engine.removeAudioTask(trackGainRampTask);
+        }
         this.playRequested = false;
         releaseAutomixChain();
         dispose(this.player);

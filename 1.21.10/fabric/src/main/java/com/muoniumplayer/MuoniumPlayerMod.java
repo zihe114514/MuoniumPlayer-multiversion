@@ -31,9 +31,13 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // 1. OpenAPI 单例 + 扩展初始化（顺序见 MuoniumPlayerClient 的调用契约）
         // 加载器 id 必须在 init() 之前登记：更新检查按「MC 版本 + 加载器」查清单。
         MuoniumPlayerClient.setLoaderId("fabric");
+        com.muoniumplayer.chat.ChatRuntime.configure("fabric", "0.19.3",
+                System.getProperty("os.name", "unknown"), System.getProperty("os.version", ""));
         com.muoniumplayer.core.screens.hud.HudInitialSelection.setOneConfigInstalled(
                 net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("oneconfig"));
         client.init();
+        com.muoniumplayer.chat.ChatRuntime.configure("fabric", "0.19.3",
+                System.getProperty("os.name", "unknown"), System.getProperty("os.version", ""));
         // ---- MuoniumConfig 接入 ----
         // 把歌词卡 / 信息卡挂进 MuoniumConfig 的 HUD 编辑器（没装就静默跳过）。
         // 时机必须在这里：HudConfig 已在 init() 里 load 过，字段有值；

@@ -67,6 +67,14 @@ public class TextFieldWidget extends AbstractWidget<TextFieldWidget> {
         return this;
     }
 
+    public TextFieldWidget releaseMouse(int button) {
+        if (button == 0) {
+            this.textField.dragging = false;
+            this.textField.lmbPressed = false;
+        }
+        return this;
+    }
+
     public boolean isFocused() {
         return this.textField.isFocused();
     }

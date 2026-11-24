@@ -64,7 +64,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.6.0";
+    public static final String MOD_VERSION = "2.6.1";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -112,6 +112,8 @@ public final class MuoniumPlayerClient {
     public static KeyMapping keyEditHud;
     /** 世界声源放置/移除（单键智能切换），默认不占键位。可在「选项 → 控制」中修改。 */
     public static KeyMapping keySpeakerPlace;
+    /** 打开 MuoniumChat 面板，默认右 Alt。 */
+    public static KeyMapping keyOpenChat;
     /** 切换到上一曲，默认 Page Up。可在「选项 → 控制」中修改。 */
     public static KeyMapping keyPreviousTrack;
     /** 切换到下一曲，默认 Page Down。可在「选项 → 控制」中修改。 */
@@ -166,9 +168,10 @@ public final class MuoniumPlayerClient {
         // 世界声源放置/移除（单键智能切换）：默认不占键位,同 keyAmbientNow 的理由 ——
         // 玩家自己决定要不要把音乐「放进世界」。
         keySpeakerPlace = key("key.muonium.speaker_place", Keyboard.KEY_NONE);
+        keyOpenChat = key("key.muonium.open_chat", Keyboard.KEY_RMENU);
         return List.of(keyOpenMusic, keyEditHud, keyPreviousTrack, keyNextTrack,
                 keyVolumeUp, keyVolumeDown, keyTogglePause, keyQuickSearch, keyAmbientNow,
-                keySpeakerPlace);
+                keySpeakerPlace, keyOpenChat);
     }
 
     private static KeyMapping key(String translationKey, int lwjgl2DefaultKey) {
@@ -214,6 +217,13 @@ public final class MuoniumPlayerClient {
 
         // 6. 世界声源:读回上次放置的锚点(speaker.json,坏数据按无锚点)。
         com.muoniumplayer.compat.mc.SpeakerManager.init();
+        com.muoniumplayer.chat.ChatRuntime.configureRuntime(MOD_VERSION, MC_VERSION);
+        com.muoniumplayer.chat.ChatRuntime.configure(loaderId, com.muoniumplayer.chat.ChatRuntime.loaderVersion(),
+                System.getProperty("os.name", "unknown"), System.getProperty("os.version", ""));
+        com.muoniumplayer.chat.ChatRuntime.configureMainThread(task -> Minecraft.getInstance().execute(task));
+        com.muoniumplayer.chat.ChatRuntime.configureScreenOpener(() -> this.api.displayScreen(
+                new com.muoniumplayer.compat.chat.ChatScreen()));
+        com.muoniumplayer.chat.ChatClient.get().initialize();
     }
 
     /** 供加载器侧的事件回调判断初始化是否已完成（NeoForge 的事件可能早于 clientSetup 触发）。 */
@@ -369,6 +379,9 @@ public final class MuoniumPlayerClient {
             return;
         }
         if (mc.player != null && mc.gui.screen() == null) {
+            if (keyOpenChat.consumeClick()) {
+                com.muoniumplayer.chat.ChatRuntime.openScreen();
+            }
             if (keyOpenMusic.consumeClick()) {
                 MuoniumPlayerExtension.getInstance().musicPlayerModule.setEnabled(true);
             }
@@ -438,6 +451,7 @@ public final class MuoniumPlayerClient {
             keyQuickSearch.consumeClick();
             keyAmbientNow.consumeClick();
             keySpeakerPlace.consumeClick();
+            keyOpenChat.consumeClick();
         }
 
         // ---- 卡点运镜：tick 独占调度，宿主每 tick 对账并恢复相机/HUD ----

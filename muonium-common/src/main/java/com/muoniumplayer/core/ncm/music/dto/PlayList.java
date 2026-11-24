@@ -226,6 +226,12 @@ public class PlayList {
                 if (loadedMusics == null) {
                     throw new IllegalStateException("Qishui playlist track response is null");
                 }
+            } else if (getPlatform() == MusicPlatform.BODIAN) {
+                loadedMusics = com.muoniumplayer.core.ncm.music.BodianMusicService
+                        .playlistTracks(getPlatformPlaylistId(), Math.max(100, count > 0 ? count : 100));
+                if (loadedMusics == null) {
+                    throw new IllegalStateException("Bodian playlist track response is null");
+                }
             } else if (getPlatform() == MusicPlatform.BILIBILI) {
                 // B 站没有「歌单」这个对象：分 P / 合集 / 收藏夹三种形态都编在 platformPlaylistId
                 // 的前缀里，由服务层按前缀分派。缺这一支的话 B 站歌单会掉进下面的 else，
@@ -354,7 +360,51 @@ public class PlayList {
      * 加入歌单并返回真实的服务端校验结果，供需要展示反馈的界面使用。
      */
     public CloudMusicApi.PlaylistTrackOperationResult addToListWithResult(long musicId) {
+        if (getPlatform() == MusicPlatform.SPOTIFY) {
+            return new CloudMusicApi.PlaylistTrackOperationResult(false, false, false, 400, -1,
+                    "Spotify 曲目必须使用平台曲目 ID");
+        }
+        if (getPlatform() == MusicPlatform.BODIAN) {
+            boolean success = com.muoniumplayer.core.ncm.music.BodianMusicService.addTrackToPlaylist(
+                    getPlatformPlaylistId(), String.valueOf(musicId));
+            return new CloudMusicApi.PlaylistTrackOperationResult(success, false, success ? 200 : 500,
+                    success ? 200 : -1, success ? "波点音乐已加入歌单" : "波点音乐加入歌单失败");
+        }
         return CloudMusicApi.addTrackToPlaylist(this.id, musicId);
+    }
+
+    public CloudMusicApi.PlaylistTrackOperationResult addToListWithResult(String sourceTrackId) {
+        if (getPlatform() == MusicPlatform.SPOTIFY) {
+            try {
+                com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.addTrackToPlaylist(
+                        getPlatformPlaylistId(), sourceTrackId);
+                return new CloudMusicApi.PlaylistTrackOperationResult(true, false, true, 200, 200,
+                        "Spotify 已确认添加");
+            } catch (com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.SpotifyWritePermissionException missingScope) {
+                return new CloudMusicApi.PlaylistTrackOperationResult(false, false, false, 403, -1,
+                        "Spotify 授权缺少写入权限，请重新登录并同意新增权限");
+            } catch (IllegalArgumentException invalid) {
+                return new CloudMusicApi.PlaylistTrackOperationResult(false, false, false, 400, -1,
+                        "Spotify 歌单或曲目 ID 无效");
+            } catch (java.io.IOException | com.muoniumplayer.core.ncm.spotify.SpotifyWebApiClient.SpotifyApiException failure) {
+                int status = failure instanceof com.muoniumplayer.core.ncm.spotify.SpotifyWebApiClient.SpotifyApiException
+                        ? ((com.muoniumplayer.core.ncm.spotify.SpotifyWebApiClient.SpotifyApiException) failure).statusCode : 0;
+                return new CloudMusicApi.PlaylistTrackOperationResult(false, false, false, status, -1,
+                        "Spotify 未确认歌单变更：" + failure.getMessage());
+            }
+        }
+        if (getPlatform() != MusicPlatform.BODIAN) {
+            try {
+                return addToListWithResult(Long.parseLong(sourceTrackId));
+            } catch (NumberFormatException malformed) {
+                return new CloudMusicApi.PlaylistTrackOperationResult(false, false, 400, -1,
+                        "歌曲 ID 无效");
+            }
+        }
+        boolean success = com.muoniumplayer.core.ncm.music.BodianMusicService.addTrackToPlaylist(
+                getPlatformPlaylistId(), sourceTrackId);
+        return new CloudMusicApi.PlaylistTrackOperationResult(success, false, success ? 200 : 500,
+                success ? 200 : -1, success ? "波点音乐已加入歌单" : "波点音乐加入歌单失败");
     }
 
     /**
@@ -381,6 +431,17 @@ public class PlayList {
         if (getPlatform() == MusicPlatform.QISHUI) {
             // 账号歌单(acct: 前缀)本就在账号里,setPlaylistCollected 对它们直接幂等成功。
             QishuiMusicService.setPlaylistCollected(getPlatformPlaylistId(), subscribed);
+            return;
+        }
+        if (getPlatform() == MusicPlatform.BODIAN) {
+            // 波点把公开歌单收藏写成 source=4 的 collect 操作；账号自建单不需要再次收藏。
+            if (!com.muoniumplayer.core.ncm.music.BodianMusicService
+                    .isVirtualPlaylistId(getPlatformPlaylistId())
+                    && !getPlatformPlaylistId().startsWith("pl-5-")) {
+                com.muoniumplayer.core.ncm.music.BodianMusicService.setPlaylistCollected(
+                        getPlatformPlaylistId(), subscribed);
+            }
+            setSubscribed(subscribed);
             return;
         }
         if (getPlatform() == MusicPlatform.KUGOU) {
@@ -410,6 +471,14 @@ public class PlayList {
             }
             return;
         }
+        if (getPlatform() == MusicPlatform.BODIAN) {
+            Music target = findBodianMusic(musicId);
+            if (target != null) {
+                com.muoniumplayer.core.ncm.music.BodianMusicService.removeTrackFromPlaylist(
+                        getPlatformPlaylistId(), target.getSourceId());
+            }
+            return;
+        }
         if (getPlatform() == MusicPlatform.KUGOU) {
             // 酷狗的删曲接口只认 fileid，而枚举曲目的那个端点不给它：要先按稳定 id 找到这一首，
             // 再由适配层拿它的 hash 去 get_list_all_file_v3 的结果里换出 fileid。
@@ -423,6 +492,15 @@ public class PlayList {
 
     /** 在已加载的曲目里按稳定 id 找一首汽水歌；没加载或找不到返回 {@code null}。 */
     private Music findQishuiMusic(long musicId) {
+        List<Music> loaded = this.musics;
+        if (loaded == null) return null;
+        for (Music music : loaded) {
+            if (music != null && music.getId() == musicId) return music;
+        }
+        return null;
+    }
+
+    private Music findBodianMusic(long musicId) {
         List<Music> loaded = this.musics;
         if (loaded == null) return null;
         for (Music music : loaded) {

@@ -54,6 +54,7 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/GuiButton.java",
             "com/muoniumplayer/compat/mc/GuiScreen.java",
             "com/muoniumplayer/compat/mc/GuiTextField.java",
+            "com/muoniumplayer/compat/chat/ChatScreen.java",
             "com/muoniumplayer/compat/mc/ScaledResolution.java",
             "com/muoniumplayer/compat/mc/ScreenCapture.java",
             // --- 按键显示名：KeyMapping 是 MC 类，且取名字的 API 各代不同名；

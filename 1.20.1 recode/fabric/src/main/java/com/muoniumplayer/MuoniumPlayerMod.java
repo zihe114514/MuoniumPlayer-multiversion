@@ -31,6 +31,8 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // 1. OpenAPI 单例 + 扩展初始化（顺序见 MuoniumPlayerClient 的调用契约）
         // 加载器 id 必须在 init() 之前登记：更新检查按「MC 版本 + 加载器」查清单。
         MuoniumPlayerClient.setLoaderId("fabric");
+        com.muoniumplayer.chat.ChatRuntime.configure("fabric", "",
+                System.getProperty("os.name", "unknown"), System.getProperty("os.version", ""));
         client.init();
         // ---- MuoniumConfig 接入 ----
         // 把歌词卡 / 信息卡挂进 MuoniumConfig 的 HUD 编辑器（没装就静默跳过）。

@@ -9,5 +9,6 @@
   "key.muonium.toggle_pause": "Pause / Resume Playback",
   "key.muonium.quick_search": "Quick Search (from Dynamic Island)",
   "key.muonium.ambient_now": "Play Ambient Track Now",
-  "key.muonium.speaker_place": "Place / Remove World Speaker"
+  "key.muonium.speaker_place": "Place / Remove World Speaker",
+  "key.muonium.open_chat": "Open MuoniumChat"
 }

@@ -8,6 +8,7 @@ import com.muoniumplayer.core.ncm.music.ambient.AmbientMusicController;
 import com.muoniumplayer.core.ncm.music.ambient.AmbientSettings;
 import com.muoniumplayer.core.rendering.entities.impl.TextField;
 import com.muoniumplayer.core.screens.ncm.NcmSheet;
+import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.SheetClock;
 import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
@@ -60,6 +61,7 @@ public class EffectsWorkbench extends NcmSheet {
 
     private enum Page {
         PRESETS("ViPER 预设", "预设", Icon.PRESETS), EQ("图形均衡器", "EQ", Icon.EQ),
+        LOUDNESS("曲目响度", "响度", Icon.LOUDNESS),
         EFFECTS("高级效果器", "效果器", Icon.EFFECTS), ACOUSTICS("场景声学", "声学", Icon.ROOM),
         AMBIENT("环境选曲", "选曲", Icon.AMBIENT);
         final String title, compact;
@@ -77,7 +79,7 @@ public class EffectsWorkbench extends NcmSheet {
                           double scroll, EffectsMotion opacity, EffectsMotion.Spring offset) { }
     private record Loaded(ViperPresetEditor editor, List<String> presets, List<String> kernels, List<String> ddc,
                           boolean enabled, String active, boolean acoustics, boolean submersion, boolean enclosure,
-                          boolean rainfall, int strength, boolean ambient, int stableMs) { }
+                          boolean rainfall, int strength, boolean ambient, int stableMs, boolean loudness) { }
     private record Hit(String id, Box box, Box clip, Runnable click, DoubleConsumer drag, boolean vertical,
                        boolean graph, DoubleConsumer graphX) {
         boolean contains(double x, double y) { return box.contains(x, y) && clip.contains(x, y); }
@@ -156,7 +158,7 @@ public class EffectsWorkbench extends NcmSheet {
     private List<String> presets = List.of(), kernels = List.of(), ddc = List.of();
     private boolean enabled;
     private String active;
-    private boolean acoustics, submersion, enclosure, rainfall, ambient;
+    private boolean acoustics, submersion, enclosure, rainfall, ambient, loudnessEnabled;
     private int strength = 100, stableMs = 15_000;
     private String notice = "正在读取音效配置…";
     private NoticeTone noticeTone = NoticeTone.INFO;
@@ -374,7 +376,8 @@ public class EffectsWorkbench extends NcmSheet {
         painter.round(canvas, indicatorBox, layout.rail ? 18 + travel * 6 : 15 + travel * 4, PRIMARY_CONTAINER);
         for (Page page : Page.values()) {
             Box target = layout.rail ? new Box(nav.x(), nav.y() + page.ordinal() * 57, nav.width(), 48)
-                    : new Box(nav.x() + nav.width() * page.ordinal() / 5, nav.y() + 3, nav.width() / 5, 38);
+                    : new Box(nav.x() + nav.width() * page.ordinal() / Page.values().length,
+                            nav.y() + 3, nav.width() / Page.values().length, 38);
             double h = hover("nav." + page, target, true), p = press("nav." + page, true);
             if (h + p > .01) painter.round(canvas, target.inset(3 + Math.max(0, p)), 16, alpha(PRIMARY, h * .06 + Math.max(0, p) * .08));
             double state = selected("nav.color." + page, current == page);
@@ -420,6 +423,7 @@ public class EffectsWorkbench extends NcmSheet {
         String subtitle = switch (current) {
             case PRESETS -> "选择完整音效方案，均衡与空间效果分开管理";
             case EQ -> "编辑：「" + targetName() + "」 · 拖动完成后保存并应用";
+            case LOUDNESS -> "独立于 ViPER 与 EQ · 调整曲目之间的平均响度";
             case EFFECTS -> selectedGroup < 0 ? "按用途分类，开启状态与编辑入口分开" : "编辑：「" + targetName() + "」";
             case ACOUSTICS -> "环境改变声音，不改变正在播放的歌曲";
             case AMBIENT -> "环境改变选曲，不属于音效处理链";
@@ -431,13 +435,14 @@ public class EffectsWorkbench extends NcmSheet {
                     () -> navigate(Page.EFFECTS, -1), true, false, bar);
             titleX += 34;
         }
-        boolean environment = current == Page.ACOUSTICS || current == Page.AMBIENT;
-        double reserve = environment ? 66 : 132;
+        boolean independent = current == Page.ACOUSTICS || current == Page.AMBIENT || current == Page.LOUDNESS;
+        double reserve = independent ? 66 : 132;
         painter.text(canvas, EffectsTypography.heading(), title, titleX, bar.y() + 20,
                 Math.max(1, bar.width() - reserve - (titleX - bar.x())), TEXT);
         painter.text(canvas, EffectsTypography.body(), subtitle, bar.x(), bar.y() + 45, bar.width(), MUTED);
-        if (environment) toggle(canvas, "page.master", new Box(bar.right() - 52, bar.y() + 7, 48, 30),
-                current == Page.ACOUSTICS ? acoustics : ambient, () -> flipEnvironment(current), !loading && !busy, bar);
+        if (independent) toggle(canvas, "page.master", new Box(bar.right() - 52, bar.y() + 7, 48, 30),
+                current == Page.ACOUSTICS ? acoustics : current == Page.AMBIENT ? ambient : loudnessEnabled,
+                () -> flipEnvironment(current), !loading && !busy, bar);
         else {
             iconButton(canvas, "undo", new Box(bar.right() - 130, bar.y() + 6, 30, 30), Icon.UNDO, this::undo,
                     editor != null && !undo.isEmpty() && !busy, false, bar);
@@ -454,9 +459,15 @@ public class EffectsWorkbench extends NcmSheet {
             addHit("search", searchBox, bar, () -> focus(search, searchBox), null, false, false, null, true);
         } else {
             searchBox = new Box(0, 0, 0, 0);
-            boolean on = environment ? current == Page.ACOUSTICS ? acoustics : ambient : enabled;
-            String state = environment ? on ? "环境功能已开启" : "环境功能已关闭"
-                    : on ? "ViPER 总链开启" : "ViPER 总链关闭 · 可编辑，开启后处理声音";
+            boolean on = independent
+                    ? current == Page.ACOUSTICS ? acoustics : current == Page.AMBIENT ? ambient : loudnessEnabled
+                    : enabled;
+            String state = switch (current) {
+                case ACOUSTICS -> on ? "场景声学已开启" : "场景声学已关闭";
+                case AMBIENT -> on ? "环境选曲已开启" : "环境选曲已关闭";
+                case LOUDNESS -> on ? "曲目响度均衡已开启 · 目标 -18 LUFS" : "曲目响度均衡已关闭";
+                default -> on ? "ViPER 总链开启" : "ViPER 总链关闭 · 可编辑，开启后处理声音";
+            };
             painter.text(canvas, EffectsTypography.body(), state, bar.x(), bar.y() + 77, bar.width(), on ? GREEN : MUTED);
         }
         if (current == Page.PRESETS && bar.width() >= 480) button(canvas, "import.quick",
@@ -465,7 +476,7 @@ public class EffectsWorkbench extends NcmSheet {
     }
 
     private void drawPage(Canvas canvas, View view, boolean interactive) {
-        if (view.editor == null || loading) {
+        if (loading || view.page != Page.LOUDNESS && view.editor == null) {
             if (!loading && !busy && view.editor == null) {
                 section(canvas, "音效配置无法读取", notice, layout.viewport.y() + 14, layout.viewport.width());
                 button(canvas, "load.retry", new Box(layout.viewport.x(), layout.viewport.y() + 76, 148, 33), "重新读取", Icon.REFRESH,
@@ -482,6 +493,7 @@ public class EffectsWorkbench extends NcmSheet {
         switch (view.page) {
             case PRESETS -> drawPresets(canvas, view, interactive);
             case EQ -> drawEqualizer(canvas, view, interactive);
+            case LOUDNESS -> drawLoudness(canvas, view, interactive);
             case EFFECTS -> {
                 if (view.group < 0) drawGroups(canvas, view, interactive);
                 else if ("dynamicEq".equals(view.editor.groupKey(view.group))) drawDynamicEq(canvas, view, interactive);
@@ -1416,6 +1428,36 @@ public class EffectsWorkbench extends NcmSheet {
         contentBounds(canvas, top + 12 - contentTop(view), interactive);
     }
 
+    private void drawLoudness(Canvas canvas, View view, boolean interactive) {
+        double top = contentTop(view), width = layout.viewport.width();
+        double iconSize = layout.surface.width() < 500 ? 40 : 52;
+        double textWidth = Math.max(1, width - 92);
+        String heading = "让不同曲目的音量更接近";
+        String description = "整曲静态响度归一化 · 目标 -18 LUFS";
+        double headingHeight = painter.lines(EffectsTypography.heading(), heading, textWidth).length
+                * painter.lineHeight(EffectsTypography.heading());
+        double descriptionHeight = painter.lines(EffectsTypography.body(), description, textWidth).length
+                * painter.lineHeight(EffectsTypography.body());
+        Box hero = new Box(layout.viewport.x(), top, width, Math.max(104, 32 + headingHeight + descriptionHeight));
+        painter.round(canvas, hero, 26, PRIMARY_CONTAINER);
+        painter.emblem(canvas, Icon.LOUDNESS, new Box(hero.x() + 16, hero.y() + 20, iconSize, iconSize),
+                1, alpha(PRIMARY, .12), PRIMARY);
+        painter.paragraph(canvas, EffectsTypography.heading(), heading, hero.x() + 76, hero.y() + 17,
+                textWidth, TEXT);
+        painter.paragraph(canvas, EffectsTypography.body(), description, hero.x() + 76,
+                hero.y() + 23 + headingHeight, textWidth, MUTED);
+        top = hero.bottom() + 14;
+        top = readonly(canvas, "整曲测量", "在后台扫描本地音轨并缓存结果；再次播放可直接复用测量值。",
+                new Box(layout.viewport.x(), top, width, 64)) + 10;
+        top = readonly(canvas, "保留单曲动态", "只调整曲目之间的平均响度，不压缩或拉平一首歌内部的强弱变化。",
+                new Box(layout.viewport.x(), top, width, 64)) + 10;
+        top = readonly(canvas, "峰值保护范围", "按测得的样本峰值限制归一化增益；不包含真峰值测量或限幅器。",
+                new Box(layout.viewport.x(), top, width, 64)) + 10;
+        top = readonly(canvas, "适用范围", "适用于已下载的完整音轨；电台直播没有整曲测量，不受此开关影响。",
+                new Box(layout.viewport.x(), top, width, 64));
+        contentBounds(canvas, top + 12 - contentTop(view), interactive);
+    }
+
     private double environmentRow(Canvas canvas, String id, String title, String description, Icon icon, Box row,
                                   boolean on, Runnable action, boolean interactive) {
         double textWidth = Math.max(1, row.width() - 132);
@@ -1492,20 +1534,32 @@ public class EffectsWorkbench extends NcmSheet {
         long ticket = ++operation;
         busy = true;
         IO.execute(() -> {
+            boolean loudness = NCMPlayerConfig.isTrackLoudnessNormalizationEnabled();
             try {
                 ViperRuntime.syncFromDisk();
-                Loaded loaded = load();
+                Loaded loaded = load(loudness);
                 MultiThreadingUtil.runOnMainThread(() -> {
                     if (!hostAlive || ticket != operation) return;
                     applyLoaded(loaded, true);
                     busy = loading = false;
                     message("配置已就绪 · 修改后自动保存", NoticeTone.INFO);
                 });
-            } catch (Exception failure) { postFailure(ticket, failure); }
+            } catch (Exception failure) {
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    if (!hostAlive || ticket != operation) return;
+                    loudnessEnabled = loudness;
+                    busy = loading = importing = false;
+                    message("操作失败：" + errorMessage(failure), NoticeTone.ERROR);
+                });
+            }
         });
     }
 
     private static Loaded load() {
+        return load(NCMPlayerConfig.isTrackLoudnessNormalizationEnabled());
+    }
+
+    private static Loaded load(boolean loudness) {
         String selected = ViperRuntime.activePresetName();
         if (selected != null && ViperRuntime.exportPresetJson(selected) == null) {
             throw new IllegalStateException("当前选用预设无法读取：" + selected + "；不会用空白方案覆盖它");
@@ -1514,7 +1568,8 @@ public class EffectsWorkbench extends NcmSheet {
         draft.useCheckedRuntimeHooks();
         return new Loaded(draft, ViperRuntime.listPresetNames(), draft.kernelFiles(), draft.ddcDevices(),
                 ViperRuntime.isEnabled(), ViperRuntime.activePresetName(), AcousticsSettings.isEnabled(), AcousticsSettings.isSubmersion(),
-                AcousticsSettings.isEnclosure(), AcousticsSettings.isRainfall(), AcousticsSettings.strengthPercent(), AmbientSettings.isEnabled(), AmbientSettings.stableMs());
+                AcousticsSettings.isEnclosure(), AcousticsSettings.isRainfall(), AcousticsSettings.strengthPercent(),
+                AmbientSettings.isEnabled(), AmbientSettings.stableMs(), loudness);
     }
 
     private void applyLoaded(Loaded loaded, boolean replaceEditor) {
@@ -1530,6 +1585,7 @@ public class EffectsWorkbench extends NcmSheet {
         strength = loaded.strength;
         ambient = loaded.ambient;
         stableMs = loaded.stableMs;
+        loudnessEnabled = loaded.loudness;
         if (replaceEditor) replaceEditor(loaded.editor);
     }
 
@@ -1676,10 +1732,17 @@ public class EffectsWorkbench extends NcmSheet {
             final boolean next = !acoustics;
             stateJob(() -> { AcousticsSettings.setEnabled(next); AcousticsSettings.verifyPresetPersistence(); return AcousticsSettings.isEnabled(); },
                     value -> acoustics = value, next ? "场景声学已开启" : "场景声学已关闭");
-        } else {
+        } else if (page == Page.AMBIENT) {
             final boolean next = !ambient;
             stateJob(() -> { AmbientSettings.setEnabled(next); verifyAmbientPersistence(); return AmbientSettings.isEnabled(); },
                     value -> { ambient = value; if (value) AmbientMusicController.reset(); }, next ? "环境选曲已开启 · 开始等待环境稳定" : "环境选曲已关闭");
+        } else {
+            final boolean next = !loudnessEnabled;
+            stateJob(() -> {
+                NCMPlayerConfig.setTrackLoudnessNormalizationEnabled(next);
+                return NCMPlayerConfig.isTrackLoudnessNormalizationEnabled();
+            }, value -> loudnessEnabled = value,
+                    next ? "曲目响度均衡已开启 · 目标 -18 LUFS" : "曲目响度均衡已关闭");
         }
     }
 
@@ -2210,7 +2273,8 @@ public class EffectsWorkbench extends NcmSheet {
         if (ctrl && keyCode == Keyboard.KEY_Z) { if (shift) redo(); else undo(); return true; }
         if (ctrl && keyCode == Keyboard.KEY_Y) { redo(); return true; }
         if (keyCode == Keyboard.KEY_TAB) {
-            navigate(Page.values()[(current.ordinal() + (shift ? 4 : 1)) % 5], -1);
+            int pageCount = Page.values().length;
+            navigate(Page.values()[(current.ordinal() + (shift ? pageCount - 1 : 1)) % pageCount], -1);
             return true;
         }
         if (current == Page.EQ && editor != null && !busy) {

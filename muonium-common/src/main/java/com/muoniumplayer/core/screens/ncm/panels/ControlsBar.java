@@ -770,7 +770,6 @@ public class ControlsBar extends NCMPanel {
                             if (menuOption != null) menuOption.setHidden(!menuVisible);
                         }
                     }
-
                     double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
                     double buttonHeight = qualityButtonHeight * scale;
                     double parentWidth = qualitySelector.getParentWidth();

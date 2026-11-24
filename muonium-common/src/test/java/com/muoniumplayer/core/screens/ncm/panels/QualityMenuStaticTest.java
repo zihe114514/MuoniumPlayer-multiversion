@@ -125,6 +125,26 @@ class QualityMenuStaticTest {
                 "收起动画期间还在收点击：已经看不清的一行能被误点中");
     }
 
+    @Test
+    @DisplayName("响度均衡归入曲目响度专栏，音质菜单只管理音质")
+    void loudnessNormalizationLivesInTheEffectsWorkbench() throws IOException {
+        String controls = read(CONTROLS);
+        String workbench = read(ProjectPaths.sourceFile(Paths.get(
+                "com", "muoniumplayer", "core", "screens", "ncm", "effects", "EffectsWorkbench.java")));
+        String config = read(ProjectPaths.sourceFile(Paths.get(
+                "com", "muoniumplayer", "core", "screens", "ncm", "NCMPlayerConfig.java")));
+        assertFalse(controls.contains("响度均衡"),
+                "响度均衡入口应从播放条音质菜单完全移出");
+        assertFalse(controls.contains("setTrackLoudnessNormalizationEnabled"),
+                "响度均衡不应再放在音质菜单中");
+        assertTrue(workbench.contains("LOUDNESS(\"曲目响度\""),
+                "音效工作台应提供独立的曲目响度专栏");
+        assertTrue(workbench.contains("NCMPlayerConfig.setTrackLoudnessNormalizationEnabled(next)"),
+                "工作台总开关必须更新播放器响度设置");
+        assertTrue(config.contains("trackLoudnessNormalizationEnabled"),
+                "响度设置必须继续持久化");
+    }
+
     private static double openMillis() throws IOException {
         return constant(read(CONTROLS), "QUALITY_OPEN_MS");
     }

@@ -69,7 +69,11 @@ public final class MuoniumPlayerNeoForge {
         event.enqueueWork(() -> {
             // 加载器 id 必须在 init() 之前登记：更新检查按「MC 版本 + 加载器」查清单。
             MuoniumPlayerClient.setLoaderId("neoforge");
+            com.muoniumplayer.chat.ChatRuntime.configure("neoforge", "26.1.2.126",
+                    System.getProperty("os.name", "unknown"), System.getProperty("os.version", ""));
             MuoniumPlayerClient.getInstance().init();
+            com.muoniumplayer.chat.ChatRuntime.configure("neoforge", "26.1.2.126",
+                    System.getProperty("os.name", "unknown"), System.getProperty("os.version", ""));
             // ---- MuoniumConfig 接入（与 fabric 侧同一套顺序）----
             // 把歌词卡 / 信息卡挂进 MuoniumConfig 的 HUD 编辑器（没装就静默跳过）。
             // 时机必须在这里：HudConfig 已在 init() 里 load 过，字段有值；

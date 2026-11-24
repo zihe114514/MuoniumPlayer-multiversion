@@ -37,6 +37,8 @@ public final class PlayerIconAssets {
     public static final Location PLAY_MODE_SEQUENTIAL = Location.of("/muonium/textures/player/icons/play-mode-sequential.png");
     public static final Location PLAY_MODE_RANDOM = Location.of("/muonium/textures/player/icons/play-mode-random.png");
     public static final Location PLAY_MODE_SINGLE_LOOP = Location.of("/muonium/textures/player/icons/play-mode-single-loop.png");
+    public static final Location QQ_MUSIC_BRAND = PlatformAppIcons.QQ_MUSIC;
+    public static final Location BODIAN_BRAND = PlatformAppIcons.BODIAN;
 
     private PlayerIconAssets() {
     }
@@ -101,6 +103,8 @@ public final class PlayerIconAssets {
         prewarmIcon(PLAY_MODE_SEQUENTIAL);
         prewarmIcon(PLAY_MODE_RANDOM);
         prewarmIcon(PLAY_MODE_SINGLE_LOOP);
+        prewarmIcon(QQ_MUSIC_BRAND);
+        prewarmIcon(BODIAN_BRAND);
     }
 
     /** 首开早于 HUD 预热时同样走后台读取；渲染侧用现有字形等待纹理就绪。 */

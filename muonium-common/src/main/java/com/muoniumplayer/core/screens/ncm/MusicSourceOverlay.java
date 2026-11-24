@@ -15,6 +15,7 @@ import com.muoniumplayer.core.ncm.music.NeteaseUnblockSettings;
 import com.muoniumplayer.core.ncm.music.SwitchSourceSettings;
 import com.muoniumplayer.core.ncm.music.YouTubeMusicService;
 import com.muoniumplayer.core.ncm.music.YouTubeProxySettings;
+import com.muoniumplayer.core.ncm.music.YouTubeBrowserLogin;
 import com.muoniumplayer.core.ncm.music.YouTubeSessionStore;
 import com.muoniumplayer.core.ncm.spotify.SpotifyConfigStore;
 import com.muoniumplayer.core.ncm.spotify.SpotifyMusicService;
@@ -34,6 +35,7 @@ import com.muoniumplayer.core.rendering.ui.widgets.TextFieldWidget;
 import com.muoniumplayer.core.screens.ncm.panels.HomePanel;
 import com.muoniumplayer.core.screens.ncm.panels.NavigateBar;
 import com.muoniumplayer.core.utils.KeyboardUtils;
+import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.party.ui.PartyIcons;
 
@@ -43,7 +45,7 @@ import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
 /**
- * 音乐来源浮层：官方源（网易云 / QQ / 酷狗 / YouTube / 哔哩哔哩）与 GD音乐台 聚合源的切换。
+ * 音乐来源浮层：官方源与 GD 音乐台聚合源的切换。
  *
  * <p>版式、动效与图标对齐都在 {@link NcmSheet}，这里只描述「有哪些来源、每张卡上写什么」。
  * 改写的起因是原来这个文件自己写了一遍遮罩、弹窗、标题、卡片和胶囊，纵向位置是一串写死的
@@ -273,17 +275,16 @@ public final class MusicSourceOverlay extends NcmSheet {
         // 格子的 x 在行回调里按当帧宽度现算（窄视口下弹窗被夹窄，格子跟着收）。
         gridRow(feed, 0, cell -> officialCell(cell, 0, MusicPlatform.NETEASE),
                 cell -> officialCell(cell, 1, MusicPlatform.QQ),
-                cell -> officialCell(cell, 2, MusicPlatform.KUGOU));
-        gridRow(feed, 1, cell -> officialCell(cell, 3, MusicPlatform.YOUTUBE),
-                cell -> officialCell(cell, 4, MusicPlatform.BILIBILI),
-                cell -> officialCell(cell, 5, MusicPlatform.QISHUI));
-        // 第三行官方源收尾 + GD 入口格；第四行 LX 入口格（进二级页，不直接切换）。
+                cell -> officialCell(cell, 2, MusicPlatform.BODIAN));
+        gridRow(feed, 1, cell -> officialCell(cell, 3, MusicPlatform.KUGOU),
+                cell -> officialCell(cell, 4, MusicPlatform.YOUTUBE),
+                cell -> officialCell(cell, 5, MusicPlatform.BILIBILI));
+        // 第三行官方源收尾；第四行放 GD 与 LX 两个入口格（进入二级页，不直接切换）。
         // 同一行同规格，规整优先于分组 —— 分组信息由格子自己的颜色体系（品牌色/靛蓝/紫）承担。
-        gridRow(feed, 2, cell -> officialCell(cell, 6, MusicPlatform.SPOTIFY),
-                cell -> officialCell(cell, 7, MusicPlatform.APPLE),
-                this::gdCell);
-        // 第十格（LX）独占一行行首：空出的两格是隐形 Panel，不画任何东西。
-        gridRow(feed, 3, this::lxCell, cell -> { }, cell -> { });
+        gridRow(feed, 2, cell -> officialCell(cell, 6, MusicPlatform.QISHUI),
+                cell -> officialCell(cell, 7, MusicPlatform.SPOTIFY),
+                cell -> officialCell(cell, 8, MusicPlatform.APPLE));
+        gridRow(feed, 3, this::gdCell, this::lxCell, cell -> { });
 
         settingsRow(dialog);
         tip(dialog, () -> "GD音乐台来源由 music-api.gdstudio.xyz 提供，请遵循上游服务的使用要求",
@@ -493,6 +494,11 @@ public final class MusicSourceOverlay extends NcmSheet {
                     () -> NeteaseMusicService.isLoggedIn(MusicPlatform.APPLE),
                     () -> NCMScreen.getInstance().openAccountManager(MusicPlatform.APPLE), 0);
         }
+        if (platform == MusicPlatform.BODIAN) {
+            cornerButton(card, PartyIcons.KEY, MusicPlatform.BODIAN,
+                    () -> NeteaseMusicService.isLoggedIn(MusicPlatform.BODIAN),
+                    () -> NCMScreen.getInstance().openAccountManager(MusicPlatform.BODIAN), 0);
+        }
     }
 
     /** 名字行右端的让位宽度：角标钮（YouTube 两颗）> 勾标 > 无。勾标让位随补间连续变化。 */
@@ -501,6 +507,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         if (platform == MusicPlatform.YOUTUBE) return CELL_CORNER * 2 + 4.0 + 8.0;
         if (platform == MusicPlatform.SPOTIFY) return CELL_CORNER + 8.0;
         if (platform == MusicPlatform.APPLE) return CELL_CORNER + 8.0;
+        if (platform == MusicPlatform.BODIAN) return CELL_CORNER + 8.0;
         return badgeReserve;
     }
 
@@ -576,6 +583,7 @@ public final class MusicSourceOverlay extends NcmSheet {
             case QISHUI -> MusicBrandIcons.QISHUI_MONOGRAM;
             case SPOTIFY -> MusicBrandIcons.SPOTIFY_MONOGRAM;
             case APPLE -> MusicBrandIcons.APPLE_MONOGRAM;
+            case BODIAN -> "点";
             default -> MusicBrandIcons.NETEASE_CLOUD_MUSIC;
         };
     }
@@ -583,7 +591,7 @@ public final class MusicSourceOverlay extends NcmSheet {
     /** 品牌字形的兜底字体。酷狗/哔哩/汽水/Spotify/Apple 用正文字体画一枚字符字标。 */
     private CFontRenderer brandFont(final MusicPlatform platform) {
         return switch (platform) {
-            case KUGOU, BILIBILI, QISHUI, SPOTIFY, APPLE -> FontManager.pf34bold;
+            case KUGOU, BILIBILI, QISHUI, SPOTIFY, APPLE, BODIAN -> FontManager.pf34bold;
             case YOUTUBE -> FontManager.youtubeIcon34;
             case QQ -> FontManager.qqMusicIcon68;
             default -> FontManager.musicBrand52;
@@ -595,7 +603,7 @@ public final class MusicSourceOverlay extends NcmSheet {
      */
     private void gdCell(final Panel cell) {
         final BooleanSupplier picked = this::isGdActive;
-        final Card card = gridCell(cell, 8, MusicPlatform.GD::getBrandColor, picked, true, null);
+        final Card card = gridCell(cell, 9, MusicPlatform.GD::getBrandColor, picked, true, null);
         card.setShouldOverrideMouseCursor(true);
         card.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -642,7 +650,7 @@ public final class MusicSourceOverlay extends NcmSheet {
     /** LX 自定义源格：进入脚本管理页。与 GD 同一套入口版式，紫色系。 */
     private void lxCell(final Panel cell) {
         final BooleanSupplier picked = LxSourceService::isEnabled;
-        final Card card = gridCell(cell, 9, () -> LX_COLOR, picked, true, null);
+        final Card card = gridCell(cell, 10, () -> LX_COLOR, picked, true, null);
         card.setShouldOverrideMouseCursor(true);
         card.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -719,18 +727,69 @@ public final class MusicSourceOverlay extends NcmSheet {
         statusText = YouTubeSessionStore.describe();
         statusTone = YouTubeSessionStore.isLoggedIn() ? 1 : 0;
 
-        final Panel dialog = sheet(476, () -> 300.0);
+        final Panel dialog = sheet(476, () -> 372.0);
         subHeader(dialog, back(this::showOverview), () -> "YouTube · 登录",
-                () -> "匿名就能搜与播；登录之后才有的是歌词与私人歌单",
+                () -> "浏览器登录后同步账号资料与私人歌单",
                 MusicPlatform.YOUTUBE::getBrandColor);
-        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> 60.0);
+        tip(dialog, this::statusGlyph, this::youtubeLiveStatus, this::youtubeLiveColor, () -> 60.0);
 
         final Panel body = body(dialog, () -> 88.0, () -> 54.0);
         final ScrollPanel feed = feed(body);
+        youtubeBrowserLoginRow(strip(feed, 46.0));
+        sectionLabel(strip(feed, 18.0), "Google 登录态仅存于专用资料；退出登录会清除", () -> 2.0,
+                MusicPlatform.YOUTUBE::getBrandColor);
         sectionLabel(strip(feed, 20.0), "粘贴 Cookie", () -> 4.0,
                 MusicPlatform.YOUTUBE::getBrandColor);
         final TextFieldWidget input = youtubeCookieInputRow(strip(feed, 46.0));
         youtubeLoginFooter(dialog, input);
+    }
+
+    private void youtubeBrowserLoginRow(final Panel row) {
+        final RoundedButtonWidget login = action(row, () -> YouTubeBrowserLogin.isBusy()
+                        ? PartyIcons.WARNING : PartyIcons.LINK,
+                () -> YouTubeBrowserLogin.isBusy() ? "取消浏览器登录" : "使用浏览器登录 YouTube Music",
+                FontManager.pf12bold, () -> 0xFFFFFF, () -> {
+                    if (YouTubeBrowserLogin.isBusy()) {
+                        YouTubeBrowserLogin.cancel();
+                        youtubeLoginBusy = false;
+                        statusText = YouTubeBrowserLogin.message();
+                        statusTone = 0;
+                    } else if (YouTubeBrowserLogin.begin()) {
+                        youtubeLoginBusy = true;
+                        statusTone = 3;
+                    }
+                });
+        login.setBeforeRenderCallback(() -> {
+            login.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 36);
+            login.setPosition(PAD + CARD_INSET, 4.0);
+            login.setColor(login.isHovering()
+                    ? mix(MusicPlatform.YOUTUBE.getBrandColor(), 0xFFFFFF, .16)
+                    : MusicPlatform.YOUTUBE.getBrandColor());
+        });
+    }
+
+    private String youtubeLiveStatus() {
+        YouTubeBrowserLogin.State flow = YouTubeBrowserLogin.state();
+        if (YouTubeBrowserLogin.isBusy()) return YouTubeBrowserLogin.message();
+        if (flow == YouTubeBrowserLogin.State.DONE) {
+            youtubeLoginBusy = false;
+            statusTone = 1;
+            return YouTubeBrowserLogin.message();
+        }
+        if (flow == YouTubeBrowserLogin.State.FAILED) {
+            youtubeLoginBusy = false;
+            statusTone = 2;
+            return YouTubeBrowserLogin.message();
+        }
+        return statusText;
+    }
+
+    private int youtubeLiveColor() {
+        if (YouTubeBrowserLogin.isBusy() || statusTone == 0 || statusTone == 3) {
+            return NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+        }
+        return statusTone == 1 ? OK_COLOR : statusTone == 2 ? BAD_COLOR
+                : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
     }
 
     /**
@@ -790,7 +849,9 @@ public final class MusicSourceOverlay extends NcmSheet {
         });
 
         final RoundedButtonWidget verify = action(dialog, () -> PartyIcons.CHECK,
-                () -> youtubeLoginBusy ? "正在验证…" : "验证并登录", FontManager.pf12bold,
+                () -> youtubeLoginBusy
+                        ? (YouTubeBrowserLogin.isBusy() ? "浏览器登录中…" : "正在验证…")
+                        : "验证并登录", FontManager.pf12bold,
                 () -> 0xFFFFFF, () -> submitYouTubeCookie(input));
         verify.setBeforeRenderCallback(() -> {
             verify.setBounds(footerTripleWidth(dialog), 30);
@@ -2104,6 +2165,11 @@ public final class MusicSourceOverlay extends NcmSheet {
     }
 
     private String accountLine(final MusicPlatform platform) {
+        if (platform == MusicPlatform.BODIAN) {
+            return NeteaseMusicService.isLoggedIn(platform)
+                    ? "已登录 · " + NeteaseMusicService.getAccountName(platform)
+                    : "未登录 · 搜索、播放与推荐可用，登录后管理歌单";
+        }
         if (platform == MusicPlatform.YOUTUBE) {
             return "无需登录 · 搜索并播放 YouTube 音频";
         }

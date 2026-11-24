@@ -7,6 +7,9 @@ import com.muoniumplayer.core.ncm.music.PlaybackPresentation;
 import com.muoniumplayer.core.ncm.music.CrossSourceSwitcher;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.LocalPlaylistStore;
+import com.muoniumplayer.core.ncm.music.BodianMusicService;
+import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
@@ -29,6 +32,7 @@ import com.muoniumplayer.core.screens.ncm.SheetHeroRelay;
 import com.muoniumplayer.core.screens.ncm.SheetClock;
 import com.muoniumplayer.core.screens.ncm.TrackSelectionMotion;
 import com.muoniumplayer.core.utils.Location;
+import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
 import java.awt.*;
 
@@ -640,10 +644,8 @@ public class MusicWidget extends RoundedRectWidget {
             return true;
         });
 
-        // ===== 从这张本地单里移除 =====
-        // 只在当前这张单是本机自建时出现：账号歌单的「移除」要写回平台云端，那件事归详情页和收藏
-        // 按钮管，不该在这里冒充能做。本地单没有这个问题 —— 删的就是本机那份 JSON 里的一行。
-        if (playList != null && playList.isLocalPlaylist()) {
+        // ===== 从当前自建歌单移除 =====
+        if (canRemoveFromPlaylist(playList)) {
             LucideIconWidget btnRemoveFromList = new LucideIconWidget(() -> FoliaLucideIcons.CLOSE,
                     () -> "✕", FontManager.pf14bold, 0, 0, ACTION_ICON_SIZE, ACTION_ICON_SIZE);
             this.addChild(btnRemoveFromList);
@@ -657,12 +659,27 @@ public class MusicWidget extends RoundedRectWidget {
             });
             btnRemoveFromList.setOnClickCallback((x, y, button) -> {
                 if (button != 0) return false;
-                if (!LocalPlaylistStore.removeTrack(playList, music)) return true;
-                NCMScreen.getInstance().markDirty();
-                DownloadDynamicIsland.showModelOperationResult("本地歌单",
-                        "已从「" + playList.getName() + "」移除《" + music.getName() + "」", true);
-                // 行不会自己消失：曲目列表是建页时一次性铺出来的，只能整页重铺一次。
-                NCMScreen.getInstance().reloadCurrentPanel();
+                if (playList.isLocalPlaylist()) {
+                    if (!LocalPlaylistStore.removeTrack(playList, music)) return true;
+                    NCMScreen.getInstance().markDirty();
+                    DownloadDynamicIsland.showModelOperationResult("本地歌单",
+                            "已从「" + playList.getName() + "」移除《" + music.getName() + "》", true);
+                    NCMScreen.getInstance().reloadCurrentPanel();
+                    return true;
+                }
+                MultiThreadingUtil.runAsync(() -> {
+                    boolean removed = BodianMusicService.removeTrackFromPlaylist(
+                            playList.getPlatformPlaylistId(), music.getSourceId());
+                    MultiThreadingUtil.runOnMainThread(() -> {
+                        DownloadDynamicIsland.showModelOperationResult("波点音乐歌单",
+                                removed ? "已从「" + playList.getName() + "」移除《" + music.getName() + "》"
+                                        : "移除失败：上游未确认写入", removed);
+                        if (removed) {
+                            NCMScreen.getInstance().markDirty();
+                            NCMScreen.getInstance().reloadCurrentPanel();
+                        }
+                    });
+                });
                 return true;
             });
         }
@@ -676,7 +693,18 @@ public class MusicWidget extends RoundedRectWidget {
      * 所以只要用户手上有一张本地单，这颗按钮对他就是有效的，不该因为当前源不支持云端歌单就藏掉。</p>
      */
     private static boolean canAddToPlaylist(Music music) {
-        return music != null && (music.isNetease() || music.isKuGou() || LocalPlaylistStore.hasAny());
+        return music != null && (music.isNetease() || music.isQQ() || music.isKuGou()
+                || music.isBodian() || LocalPlaylistStore.hasAny());
+    }
+
+    private static boolean canRemoveFromPlaylist(PlayList playlist) {
+        if (playlist == null) return false;
+        if (playlist.isLocalPlaylist()) return true;
+        return playlist.getPlatform() == MusicPlatform.BODIAN
+                && playlist.getPlatformPlaylistId() != null
+                && playlist.getPlatformPlaylistId().startsWith("pl-5-")
+                && !BodianMusicService.isVirtualPlaylistId(playlist.getPlatformPlaylistId())
+                && NeteaseMusicService.isLoggedIn(MusicPlatform.BODIAN);
     }
 
     /**
@@ -789,7 +817,7 @@ public class MusicWidget extends RoundedRectWidget {
         // 「下一首」人人都有，另外几枚按各自的开关数。之前这里写死成 isNetease() ? 3 : 1，
         // 于是酷狗/B 站画了三枚却只留一枚的宽度，长标题会滑到图标底下。
         int iconCount = 1 + (canAddToPlaylist(this.music) ? 1 : 0) + (LikeButton.canFavourite(this.music) ? 1 : 0)
-                + (this.playList != null && this.playList.isLocalPlaylist() ? 1 : 0);
+                + (canRemoveFromPlaylist(this.playList) ? 1 : 0);
         return DURATION_RIGHT_MARGIN + slot + iconCount * (ACTION_GAP + ACTION_ICON_SIZE);
     }
 
