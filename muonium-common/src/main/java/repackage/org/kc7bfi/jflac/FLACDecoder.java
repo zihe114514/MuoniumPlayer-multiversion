@@ -322,8 +322,10 @@ public class FLACDecoder {
      */
     public void decode() throws IOException {
         readMetadata();
+        long totalSamples = streamInfo == null ? 0L : streamInfo.getTotalSamples();
         try {
-            while (true) {
+            // 全曲解码在声明的采样数处结束，不能把尾部标签再次交给 readFrame。
+            while (totalSamples == 0L || samplesDecoded < totalSamples) {
                 //switch (state) {
                 //case DECODER_SEARCH_FOR_METADATA :
                 //    readStreamSync();
@@ -354,6 +356,7 @@ public class FLACDecoder {
                 //    throw new IOException("未知状态:" +状态);
                 //}
             }
+            eof = true;
         } catch (EOFException e) {
             eof = true;
         }
@@ -846,10 +849,9 @@ public class FLACDecoder {
 
         if (type == Metadata.METADATA_TYPE_STREAMINFO) {
             metadata = new StreamInfo(bitStream, length, isLast);
-            if (((StreamInfo) metadata).getTotalSamples() > 0) {
-                streamInfo = (StreamInfo) metadata;
-                pcmProcessors.processStreamInfo(streamInfo);
-            }
+            // 总采样数为 0 表示未知；采样率、声道及位深仍然是有效的解码契约。
+            streamInfo = (StreamInfo) metadata;
+            pcmProcessors.processStreamInfo(streamInfo);
         } else if (type == Metadata.METADATA_TYPE_SEEKTABLE) {
             metadata = new SeekTable(bitStream, length, isLast);
         } else if (type == Metadata.METADATA_TYPE_APPLICATION) {
@@ -1028,6 +1030,7 @@ public class FLACDecoder {
             }
         } else {
             // 坏帧，发出错误并将输出信号清零
+            badFrames++;
             frameListeners.processError("CRC Error: " + Integer.toHexString((frameCRC & 0xffff)) + " vs " + Integer.toHexString((frame.getCRC() & 0xffff)));
             for (channel = 0; channel < frame.header.channels; channel++) {
                 for (int j = 0; j < frame.header.blockSize; j++)

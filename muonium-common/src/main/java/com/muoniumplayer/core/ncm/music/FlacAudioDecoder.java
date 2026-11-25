@@ -108,6 +108,7 @@ final class FlacAudioDecoder {
         private int sampleRate = -1;
         private int channels = -1;
         private int bitsPerSample = -1;
+        private long expectedSamples;
         private long dataBytes;
         private boolean finished;
 
@@ -127,6 +128,7 @@ final class FlacAudioDecoder {
             sampleRate = info.getSampleRate();
             channels = info.getChannels();
             bitsPerSample = info.getBitsPerSample();
+            expectedSamples = info.getTotalSamples();
         }
 
         private void write(ByteData pcm) throws IOException {
@@ -157,6 +159,11 @@ final class FlacAudioDecoder {
                 throw new IOException("Decoded FLAC WAV exceeds the 4 GiB RIFF limit");
             }
             int blockAlign = channels * ((bitsPerSample + 7) / 8);
+            long decodedSamples = dataBytes / blockAlign;
+            if (expectedSamples > 0L && decodedSamples != expectedSamples) {
+                throw new IOException("FLAC sample count mismatch: expected " + expectedSamples
+                        + ", decoded " + decodedSamples);
+            }
             long byteRate = (long) sampleRate * blockAlign;
             if (byteRate > 0xFFFFFFFFL) throw new IOException("Decoded FLAC byte rate is out of WAV range");
             output.seek(0L);
