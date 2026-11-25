@@ -9,7 +9,6 @@ import com.muoniumplayer.core.ncm.music.FfmpegInstaller;
 import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.QishuiCompanionDownload;
 import com.muoniumplayer.core.ncm.music.ZstdNativeDownload;
-import com.muoniumplayer.core.screens.hud.MuoniumConfigDownload;
 import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.settings.JsonConfigStorage;
 import com.muoniumplayer.core.utils.network.HttpDownloadRace;
@@ -127,7 +126,6 @@ public final class DownloadCatalog {
     public static List<Item> snapshot() {
         List<Item> items = new ArrayList<Item>();
         addSkija(items);
-        addMuoniumConfig(items);
         addFonts(items);
         addQishui(items);
         addZstd(items);
@@ -164,24 +162,6 @@ public final class DownloadCatalog {
         items.add(item("skija", "渲染原生库", nativeStatus.expectedPackageName() + " · Skija "
                         + nativeStatus.pinnedVersion(), nativeStatus.expectedDirectory(), Group.GRAPHICS,
                 status, state.percent(), message, false, "", null));
-    }
-
-    private static void addMuoniumConfig(List<Item> items) {
-        MuoniumConfigDownload.State state = MuoniumConfigDownload.state();
-        Status status;
-        switch (state.phase()) {
-            case CHECKING: status = Status.DOWNLOADING; break;
-            case DOWNLOADING: status = HttpDownloadRace.networkState().waitingTasks() > 0
-                    ? Status.WAITING_NETWORK : Status.DOWNLOADING; break;
-            case DONE: status = MuoniumConfigDownload.isRestartRequired()
-                    ? Status.RESTART_REQUIRED : Status.INSTALLED; break;
-            case FAILED: status = state.manualRemoval().isEmpty() ? Status.FAILED : Status.INSTALLING; break;
-            default: status = MuoniumConfigDownload.isInstalled() ? Status.INSTALLED : Status.NOT_INSTALLED;
-        }
-        String version = state.toVersion().isEmpty() ? state.fromVersion() : state.toVersion();
-        String detail = "HUD 设置中心" + (version.isEmpty() ? "" : " · " + version);
-        items.add(item("muoniumconfig", "MuoniumConfig", detail, "mods/",
-                Group.TOOLS, status, state.percent(), state.detail(), false, "", null));
     }
 
     private static void addFonts(List<Item> items) {

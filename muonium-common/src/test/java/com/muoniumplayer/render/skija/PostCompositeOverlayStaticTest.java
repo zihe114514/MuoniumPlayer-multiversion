@@ -29,7 +29,7 @@ class PostCompositeOverlayStaticTest {
             String overlay = source.substring(start);
             assertFalse(overlay.contains("inSkijaFrame(() -> onScreenRenderedUnguarded(screen))"),
                     port + ": registering a deferred task must not open a drawing frame");
-            assertTrue(overlay.contains(EMPTY_SUPPRESSED_OVERLAY_GUARD),
+            assertTrue(emptyGuardIndex(overlay) >= 0,
                     port + ": empty suppressed overlays must not be scheduled");
             assertTrue(overlay.contains("if (!SkijaHost.deferPostCompositeOverlay(islandOverlay)) inSkijaFrame(islandOverlay);"),
                     port + ": immediate fallback must still have paired begin/end");
@@ -44,7 +44,7 @@ class PostCompositeOverlayStaticTest {
                     "com", "muoniumplayer", "MuoniumPlayerClient.java"));
             String source = Files.readString(client, StandardCharsets.UTF_8).replace("\r\n", "\n");
             String overlay = source.substring(source.indexOf("public void onScreenRendered(Screen screen)"));
-            int guard = overlay.indexOf(EMPTY_SUPPRESSED_OVERLAY_GUARD);
+            int guard = emptyGuardIndex(overlay);
             int frame = overlay.indexOf("inSkijaFrame(() -> onScreenRenderedUnguarded(screen));");
             assertTrue(guard >= 0 && frame > guard, port + ": reject no-op before snapshot/clear/composite");
         }
@@ -65,6 +65,15 @@ class PostCompositeOverlayStaticTest {
             assertTrue(overlay.contains("&& !AutomixTransitionAnimation.hasStandaloneOverlay()) return;"),
                     port + ": an active standalone ring must retain its drawing pass");
         }
+    }
+
+    /** Indentation can change when lifecycle cleanup is moved into finally; conditions/order cannot. */
+    private static int emptyGuardIndex(String source) {
+        // Quote each non-whitespace token so all logical operators and the return remain mandatory.
+        String expression = java.util.Arrays.stream(EMPTY_SUPPRESSED_OVERLAY_GUARD.split("\\s+"))
+                .map(java.util.regex.Pattern::quote).collect(java.util.stream.Collectors.joining("\\s+"));
+        java.util.regex.Matcher match = java.util.regex.Pattern.compile(expression).matcher(source);
+        return match.find() ? match.start() : -1;
     }
 
     private static final List<String> DELAYED_PORTS = List.of(

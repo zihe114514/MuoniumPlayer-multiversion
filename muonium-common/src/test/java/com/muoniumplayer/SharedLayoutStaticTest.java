@@ -21,9 +21,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.muoniumplayer.testsupport.ProjectPaths;
 
 /**
- * 共享层的形状守卫（这份在五棵树各跑一遍）。
+ * 共享层的形状守卫（这份在七棵树各跑一遍）。
  *
- * <p>{@code muonium-common/} 是五棵树的同一份编译输入。「版本差异只留各树的 compat/ 与
+ * <p>{@code muonium-common/} 是七棵树的同一份编译输入。「版本差异只留各树的 compat/ 与
  * mixin/」这条规矩能不能守住，取决于三件事有没有人半夜偷偷破：
  *
  * <ol>
@@ -36,12 +36,12 @@ import com.muoniumplayer.testsupport.ProjectPaths;
  * </ol>
  *
  * <p>名单来自 {@code tools/share-trees.py} 的分类结果：那个脚本负责搬，本测试负责事后不走样。
- * 要动这张表，就同时去 {@code muonium-common/SHARE-MANIFEST.md} 与脚本的 REASONS 里补一句
- * 「为什么不能共享」——三个地方一起改，正是为了让改这件事变得不划算。
+ * 要动这张表，须在目录/子系统规范与脚本的 REASONS 中说明为什么不能共享。
+ * 脚本当前被 Git 忽略，交付时须说明；{@code SHARE-MANIFEST.md} 仅为历史迁移记录，不手改或重跑迁移。
  */
 class SharedLayoutStaticTest {
 
-    /** 五棵树都必须各自持有的版本差异层。 */
+    /** 七棵树都必须各自持有的版本差异层。 */
     private static final Set<String> REQUIRED_MAIN_JAVA = new LinkedHashSet<String>(Arrays.asList(
             // --- Minecraft / LWJGL 的 API 差异，本就该各树一份 ---
             "com/muoniumplayer/compat/gl/GL11.java",
@@ -73,6 +73,16 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/AmbientProbe.java",
             // --- 光影包适配：各树 RenderState/Shader API 差异大，探测器各树一份 ---
             "com/muoniumplayer/compat/mc/ShaderPackProbe.java",
+            // --- 内置 Skija 设置中心：仅留 MC/窗口适配，UI/model/会话主体在共享根 ---
+            // WindowAccess: GLFW/SDL、screen/gui.screen 与调试状态；输入/皮肤/声音触点逐树维护。
+            "com/muoniumplayer/configskija/host/WindowAccess.java",
+            "com/muoniumplayer/configskija/host/avatar/AvatarSkinAccess.java",
+            "com/muoniumplayer/configskija/host/avatar/AvatarTextureAccess.java",
+            "com/muoniumplayer/configskija/host/keys/NativeKeyAccess.java",
+            "com/muoniumplayer/configskija/host/sound/McSoundBackend.java",
+            // 标准路径为 mixin/configskija，与 com.muoniumplayer.mixin.configskija 包一致。
+            // onPress/onButton、onMove 描述符、句柄与按钮编号按精确版本/加载器核实。
+            "com/muoniumplayer/mixin/configskija/ConfigToastMouseMixin.java",
             "com/muoniumplayer/MuoniumPlayerClient.java",
             "com/muoniumplayer/render/skija/SkijaHost.java",
             "com/muoniumplayer/api/impl/GLStateManagerImpl.java",
@@ -150,7 +160,7 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/mixin/LevelRendererLateStageMixin.java",
             "com/muoniumplayer/party/net/MpPayloads.java"));
 
-    /** 五棵树各自的版本差异测试（ProjectPaths 例外，它已经收进共享层）。 */
+    /** 七棵树各自的版本差异测试（ProjectPaths 例外，它已经收进共享层）。 */
     private static final Set<String> REQUIRED_TEST_JAVA = new LinkedHashSet<String>(Arrays.asList(
             "com/muoniumplayer/compat/lwjgl2/Lwjgl2KeycodeProbeTest.java",
             "com/muoniumplayer/core/update/UpdateCheckStaticTest.java",
@@ -171,8 +181,15 @@ class SharedLayoutStaticTest {
             // 26.x present/NativeImage 接口不同于旧树，仅主开发树运行真实版本探针。
             "com/muoniumplayer/compat/mc/LyricPresentRendererUploadTest.java",
             "com/muoniumplayer/compat/mc/WorldBillboardCanvasPixelsTest.java",
+            // 并行用户测试：只依赖 26.3 树内包可见的 WorldBillboard.CanvasPictureCache；
+            // 其余六树未定义该内部 API。检查 Picture/纹理身份、像素尺寸及失效契约。
+            // 仅登记版本归属，不代表本次已运行，也不属于设置中心验证成果。
+            "com/muoniumplayer/compat/mc/WorldBillboardCanvasPictureCacheTest.java",
             "com/muoniumplayer/render/skija/SkijaTrailGpuTest.java",
             "com/muoniumplayer/core/lyrics3d/SonnetGpuProbeTest.java",
+            // 用户的 26.3 Windows raster 探针用 Unsafe 注入本树 Minecraft/Screen 夹具。
+            // 归属登记不代表已执行，也不证明 configskija.ui.ConfigView 或其他车道渲染通过。
+            "com/muoniumplayer/core/screens/hud/MConfigHudRenderProbeTest.java",
             "com/muoniumplayer/render/skija/RasterFrames.java"));
 
     // 仅铺设 Kotlin 源根，不迁移既有 Java 留守类；未来新增差异类需同步登记工具与本表。
@@ -181,6 +198,51 @@ class SharedLayoutStaticTest {
 
     private static final List<String> LOADER_SYMBOLS = Arrays.asList(
             "net.fabricmc.", "net.neoforged.", "net.minecraftforge.", "cpw.mods.");
+
+    @Test
+    @DisplayName("内置 Skija 设置中心主体共享，Java 包名与目录一致")
+    void configSkijaSharedSourcesMatchTheirPackages() throws IOException {
+        Path root = ProjectPaths.sharedJava().resolve("com/muoniumplayer/configskija");
+        for (String entry : Arrays.asList("model/ConfigHost.java", "model/Notifications.java",
+                "model/UiPreferences.java", "ui/ConfigView.java",
+                "host/SkijaConfigScreen.java", "host/SkijaConfigService.java")) {
+            assertTrue(Files.isRegularFile(root.resolve(entry)),
+                    "设置中心共享主体缺少 " + entry + "，不得留在独立 MOD 或复制到版本树");
+        }
+        for (Path file : filesUnder(root)) {
+            if (!file.toString().endsWith(".java")) continue;
+            String expected = ProjectPaths.sharedJava().relativize(file.getParent())
+                    .toString().replace('\\', '.').replace('/', '.');
+            java.util.regex.Matcher declaration = java.util.regex.Pattern
+                    .compile("(?m)^\\s*package\\s+([\\w.]+)\\s*;")
+                    .matcher(Files.readString(file, StandardCharsets.UTF_8));
+            assertTrue(declaration.find(), "缺少 package 声明：" + file);
+            assertEquals(expected, declaration.group(1),
+                    "设置中心包名与路径错位（model 必须位于 /model）：" + file);
+        }
+    }
+
+    @Test
+    @DisplayName("内置设置中心的鼠标 Mixin 使用真实包名并在双侧注册")
+    void configSkijaMouseMixinIsWiredInBothLoaders() throws IOException {
+        Path source = ProjectPaths.versionJava().resolve(
+                "com/muoniumplayer/mixin/configskija/ConfigToastMouseMixin.java");
+        String code = Files.readString(source, StandardCharsets.UTF_8);
+        assertTrue(code.contains("package com.muoniumplayer.mixin.configskija;"),
+                "标准 mixin/configskija 目录的声明包必须与 muonium.mixins.json 的 package 对齐");
+        for (Path loader : Arrays.asList(ProjectPaths.fabric(), ProjectPaths.loaderDir())) {
+            Path config = loader.resolve("src/main/resources/muonium.mixins.json");
+            com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(
+                    Files.readString(config, StandardCharsets.UTF_8)).getAsJsonObject();
+            assertEquals("com.muoniumplayer.mixin", json.get("package").getAsString(),
+                    config + " 的 Mixin 包前缀不匹配");
+            long entries = java.util.stream.StreamSupport.stream(
+                    json.getAsJsonArray("client").spliterator(), false)
+                    .filter(value -> value.getAsString().equals("configskija.ConfigToastMouseMixin"))
+                    .count();
+            assertEquals(1L, entries, config + " 必须在 client 中登记且只登记一次设置中心鼠标 Mixin");
+        }
+    }
 
     @Test
     @DisplayName("共享根与本树根没有同名文件 —— 类重复不该等到编译才发现")
@@ -298,7 +360,7 @@ class SharedLayoutStaticTest {
     }
 
     @Test
-    @DisplayName("清单里标「五树都要」的文件，本树确实有一份")
+    @DisplayName("清单里标「七树都要」的文件，本树确实有一份")
     void requiredRetainedFilesArePresent() throws IOException {
         List<String> missing = new ArrayList<String>();
         for (String rel : REQUIRED_MAIN_JAVA) {
@@ -341,7 +403,7 @@ class SharedLayoutStaticTest {
                 + " 个主源码文件，与「中立部分全部进共享」不符");
         assertTrue(treeMain <= REQUIRED_MAIN_JAVA.size() + OPTIONAL_MAIN_JAVA.size(),
                 "本树版本差异层有 " + treeMain + " 个文件，超出留守清单");
-        assertTrue(sharedTest > 90, "共享测试根只有 " + sharedTest + " 个文件，五树共用的断言不该这么少");
+        assertTrue(sharedTest > 90, "共享测试根只有 " + sharedTest + " 个文件，七树共用的断言不该这么少");
     }
 
     @Test
@@ -359,7 +421,7 @@ class SharedLayoutStaticTest {
                     loader + "/build.gradle 没挂共享资源根：字体与纹理会找不到");
             if (loader.equals("fabric")) {
                 assertTrue(build.contains("rootProject.file('../muonium-common/src/test/java')"),
-                        "fabric/build.gradle 没挂共享测试根：五树共用的断言一条都不会跑");
+                        "fabric/build.gradle 没挂共享测试根：七树共用的断言一条都不会跑");
             }
         }
     }

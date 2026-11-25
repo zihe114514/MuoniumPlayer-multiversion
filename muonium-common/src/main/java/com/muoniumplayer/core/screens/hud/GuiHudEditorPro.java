@@ -1026,11 +1026,9 @@ public class GuiHudEditorPro extends GuiScreen {
                 null, toggle, mouseX, mouseY, TEXT_PRIMARY, active.accent);
         if (collapsed) return;
 
-        if (OneConfigHudBridge.isAvailable()) {
-            int[] oneConfig = oneConfigButton(panelX, panelY, panelW, panelH);
-            drawGhostButton("header.oneconfig", fr, HudSettingsIcons.MODERN_UI, "OneConfig",
-                    oneConfig, mouseX, mouseY, TEXT_PRIMARY, active.accent);
-        }
+        int[] settingsCenter = settingsCenterButton(panelX, panelY, panelW, panelH);
+        drawGhostButton("header.settings", fr, HudSettingsIcons.MODERN_UI, "设置中心",
+                settingsCenter, mouseX, mouseY, TEXT_PRIMARY, active.accent);
 
         if (panelMoved()) {
             int[] restore = restorePositionButton(panelX, panelY, panelW, panelH);
@@ -1050,17 +1048,15 @@ public class GuiHudEditorPro extends GuiScreen {
         return new int[] { panelX + panelW - 14 - 22, buttonRowY(panelY, panelH), 22, 22 };
     }
 
-    /** OneConfig 可用时才存在；点击后注册并打开 OneConfig 的 MuoniumPlayer HUD 页。 */
-    private int[] oneConfigButton(int panelX, int panelY, int panelW, int panelH) {
-        int w = ghostWidth(FontManager.pf12, "OneConfig");
+    /** Open the embedded settings center at its parameter page. */
+    private int[] settingsCenterButton(int panelX, int panelY, int panelW, int panelH) {
+        int w = ghostWidth(FontManager.pf12, "设置中心");
         return new int[] { panelX + panelW - 14 - 22 - 6 - w, buttonRowY(panelY, panelH), w, 22 };
     }
 
     /** 只在面板被拖动过之后出现，用来把它送回默认摆位。 */
     private int[] restorePositionButton(int panelX, int panelY, int panelW, int panelH) {
-        int[] anchorButton = OneConfigHudBridge.isAvailable()
-                ? oneConfigButton(panelX, panelY, panelW, panelH)
-                : collapseButton(panelX, panelY, panelW, panelH);
+        int[] anchorButton = settingsCenterButton(panelX, panelY, panelW, panelH);
         return new int[] { anchorButton[0] - 6 - 22, anchorButton[1], 22, 22 };
     }
 
@@ -1834,12 +1830,10 @@ public class GuiHudEditorPro extends GuiScreen {
         }
 
         if (!collapsed) {
-            if (OneConfigHudBridge.isAvailable()) {
-                int[] oneConfig = oneConfigButton(panelX, panelY, panelW, panelH);
-                if (isInside(mouseX, mouseY, oneConfig[0], oneConfig[1], oneConfig[2], oneConfig[3])) {
-                    switchToOneConfig();
-                    return;
-                }
+            int[] settingsCenter = settingsCenterButton(panelX, panelY, panelW, panelH);
+            if (isInside(mouseX, mouseY, settingsCenter[0], settingsCenter[1], settingsCenter[2], settingsCenter[3])) {
+                switchToSettingsCenter();
+                return;
             }
             if (panelMoved()) {
                 int[] home = restorePositionButton(panelX, panelY, panelW, panelH);
@@ -2892,12 +2886,9 @@ public class GuiHudEditorPro extends GuiScreen {
 
     // ==================== 外部界面切换 ====================
 
-    /** 切到 OneConfig 的真实 UI，并把选择记到配置里。 */
-    private void switchToOneConfig() {
-        if (OneConfigHudBridge.open()) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
-            HudConfig.save();
-        }
+    /** Open the embedded settings center without crossing an optional-mod boundary. */
+    private void switchToSettingsCenter() {
+        com.muoniumplayer.configskija.host.SkijaConfigScreen.openSettings();
     }
 
     // ==================== 杂项 ====================

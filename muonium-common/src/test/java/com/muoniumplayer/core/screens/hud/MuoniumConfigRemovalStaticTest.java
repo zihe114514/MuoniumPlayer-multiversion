@@ -9,7 +9,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -145,11 +144,31 @@ class MuoniumConfigRemovalStaticTest {
     }
 
     @Test
-    @DisplayName("自动下载可以被系统属性关掉（开发期跑 runClient 用）")
-    void canBeDisabledForDevelopment() throws IOException {
+    @DisplayName("历史安装器永久停用，旧系统属性不能重新开启下载")
+    void independentInstallerIsPermanentlyDisabled() throws IOException {
         String text = source();
-        assertNotNull(text.contains("muonium.muoniumconfig.autoDownload") ? text : null,
-                "缺少 -Dmuonium.muoniumconfig.autoDownload=false 开关："
-                        + "开发期跑客户端会被自动下载打断");
+        int start = text.indexOf("private static boolean enabled()");
+        assertTrue(start >= 0);
+        String gate = text.substring(start, text.indexOf("\n    }", start));
+        assertTrue(gate.contains("return false;"));
+        assertFalse(gate.contains("System.getProperty"), "旧 autoDownload 属性不能重新激活安装器");
+        assertTrue(text.contains("if (!enabled()) return false;"), "旧安装入口也必须经过停用闸门");
+    }
+
+    @Test
+    @DisplayName("主更新、重启和下载中心均不接入独立配置包")
+    void mainRuntimePathsDoNotReferenceIndependentConfig() throws IOException {
+        Path java = com.muoniumplayer.testsupport.ProjectPaths.sharedJava();
+        for (String relative : new String[]{"core/update/UpdateChecker.java",
+                "core/update/GameRestart.java", "core/download/DownloadCatalog.java"}) {
+            String text = Files.readString(java.resolve("com/muoniumplayer/" + relative), StandardCharsets.UTF_8);
+            assertFalse(text.contains("MuoniumConfigDownload"), relative);
+            assertFalse(text.contains("addMuoniumConfig"), relative);
+            assertFalse(text.contains("\"muoniumconfig\""), relative);
+            if (relative.endsWith("GameRestart.java")) {
+                assertTrue(text.contains("SkijaNatives.companionRestartPending()"),
+                        "停用配置包重启不得移除渲染伴生包的重启能力");
+            }
+        }
     }
 }

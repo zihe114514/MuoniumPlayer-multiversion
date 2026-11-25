@@ -1955,10 +1955,9 @@ public final class HudSettingsModel {
                                         () -> HudConfig.spectrumEnabled)),
                         new Group("设置界面", HudSettingsIcons.MODERN_UI,
                                 choice("设置界面由谁渲染",
-                                        "MuoniumConfig 是本项目魔改的 OneConfig，界面与条目都由它维护（默认）。"
-                                        + "OneConfig / ModernUI 则交给玩家各自安装的界面。"
-                                        + "选中的外部界面不可用时自动回退 MuoniumConfig，不报错也不弹提示，"
-                                        + "切换在下次按 H 时生效。",
+                                        "内置 Skija 设置中心随 MuoniumPlayer 提供，无需安装额外配置模组。"
+                                        + "也可选择已安装且本车道支持的 ModernUI；不可用时回退内置 Skija。"
+                                        + "切换在下次打开设置时生效。",
                                         new Supplier<String>() {
                                             public String get() {
                                                 return uiLayerLabel();
@@ -1967,9 +1966,9 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 cycleUiLayer();
                                             }
-                                        }, new String[] {"MuoniumConfig", "ModernUI"},
+                                        }, new String[] {"内置 Skija", "ModernUI"},
                                                 HudSettingsModel::setUiLayerChoice,
-                                                new String[] {"本项目魔改的 OneConfig，界面与条目统一在这里维护（默认）。",
+                                                new String[] {"随主模组提供的内置 Skija 设置中心（默认）。",
                                                         "玩家自己装的 ModernUI，需本 Minecraft 版本有对应构件。"})),
                         new Group("外部播放器", HudSettingsIcons.NOTE,
                                 choice("播放态来源", "内置＝只播本模组自己队列里的歌（默认）。"
@@ -2635,30 +2634,22 @@ public final class HudSettingsModel {
     public static String uiLayerLabel() {
         if (HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)) {
             String status = ModernUiHudBridge.statusLabel();
-            return "可用".equals(status) ? "ModernUI" : "ModernUI（" + status + "·回退 MuoniumConfig）";
+            return "可用".equals(status) ? "ModernUI" : "ModernUI（" + status + "·回退内置 Skija）";
         }
-        // MuoniumConfig 与 OneConfig 走同一套 API，由 OneConfigHudBridge 统一打开。
-        // 未安装时写清「回退自绘」——玩家得知道按 H 出来的是哪一层、为什么。
-        return OneConfigHudBridge.isAvailable() ? "MuoniumConfig" : "MuoniumConfig（未安装·回退自绘）";
+        return "内置 Skija";
     }
 
-    /**
-     * MuoniumConfig → ModernUI 循环。
-     *
-     * <p>没有「内置」这一档：设置界面统一由 MuoniumConfig 渲染，自绘界面只在它未安装时兜底。
-     * 不可用的那层照旧能选中，只是打开时回退并写明原因。</p>
-     */
+    /** 内置 Skija 与 ModernUI 循环；旧界面值按内置档处理。 */
     private static void cycleUiLayer() {
         HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)
-                ? HudConfig.HUD_EDITOR_UI_MCONFIG
-                : HudConfig.HUD_EDITOR_UI_MODERNUI;
+                ? HudConfig.HUD_EDITOR_UI_BUILTIN : HudConfig.HUD_EDITOR_UI_MODERNUI;
         saveNow();
     }
 
     private static void setUiLayerChoice(String value) {
+        if (value == null) return;
         HudConfig.hudEditorUi = "ModernUI".equalsIgnoreCase(value)
-                ? HudConfig.HUD_EDITOR_UI_MODERNUI
-                : HudConfig.HUD_EDITOR_UI_MCONFIG;
+                ? HudConfig.HUD_EDITOR_UI_MODERNUI : HudConfig.HUD_EDITOR_UI_BUILTIN;
         saveNow();
     }
 

@@ -303,28 +303,26 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
 
             api.getGLStateManager().pushMatrix();
 
-            if (BlossomLyricStyle.isActive()) {
-                // Blossom 自己画毛玻璃面板，并且要按圆角裁剪文字，所以裁剪框由它自己开；
-                // 这里再套一层直角裁剪只会把圆角外面那四块底色切成方角。
-                try {
+            try {
+                if (BlossomLyricStyle.isActive()) {
+                    // Blossom owns its rounded clipping; the outer lyric transform is shared.
                     blossomStyle.render(wpsInterface.getX(), wpsInterface.getY(),
                             wpsInterface.getWidth(), wpsInterface.getHeight(),
                             lyricColor.getValue().getRGB(), currentLyricColor.getValue().getRGB(),
                             shouldNotDisplayOtherLyrics);
-                } finally {
-                    // Blossom 分支以前没有任何 pop：上面这层 push 每帧净增，
-                    // 帧内之后绘制的灵动岛等内容全带着桌面歌词的 translate/scale。
-                    // 经典路径的 pop 由 cleanupRender() 配对，两分支不能共用一处兜底，
-                    // 否则经典分支会双重 pop 把外层的整体变换也弹掉。
-                    api.getGLStateManager().popMatrix();
+                } else {
+                    try {
+                        StencilClipManager.beginClip(() -> Rect.draw(wpsInterface.getX() - 2,
+                                wpsInterface.getY(), wpsInterface.getWidth() + 4,
+                                wpsInterface.getHeight(), -1));
+                        renderAllLyrics(shouldNotDisplayOtherLyrics, songProgress);
+                    } finally {
+                        // Release the clip before popping the lyric transform it was created inside.
+                        StencilClipManager.endClip();
+                    }
                 }
-            } else {
-                StencilClipManager.beginClip(() -> Rect.draw(wpsInterface.getX() - 2, wpsInterface.getY(), wpsInterface.getWidth() + 4, wpsInterface.getHeight(), -1));
-
-                renderAllLyrics(shouldNotDisplayOtherLyrics, songProgress);
-
+            } finally {
                 cleanupRender();
-                StencilClipManager.endClip();
             }
         }
 

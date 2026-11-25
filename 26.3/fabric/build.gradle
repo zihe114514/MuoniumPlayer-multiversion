@@ -161,7 +161,7 @@ dependencies {
     testImplementation files(relocateRhino)
     // Simple Voice Chat 客户端插件 API（语音广播：合并进麦克风上行）。纯接口 jar，
     // 运行期类由 SVC mod 自己提供，所以只进编译类路径、不 include（嵌套）。
-    // maven.maxhenkel.de 本机不进构建体系，按 muoniumconfig 先例 vendor 进 libs/。
+    // maven.maxhenkel.de 本机不进构建体系，使用 libs/ 中的固定本地依赖。
     compileOnly files(rootProject.file('libs/voicechat-api-2.6.27.jar'))
     testImplementation files(rootProject.file('libs/voicechat-api-2.6.27.jar'))
     // MC 1.20.1 自带 gson 2.10，而 Cadence 相关代码按 2.11 API 编写，必须自带 2.11。
@@ -191,20 +191,8 @@ dependencies {
     // 开发期 runClient 用：只进运行时类路径，不进成品 jar（成品全平台走伴生包自动下载）
     runtimeOnly 'io.github.humbleui:skija-windows-x64:0.143.17'
 
-    // ==================== MuoniumConfig（按需下载的 HUD/设置界面库）====================
-    // MuoniumConfig 是 OneConfig 的精简分支（独立仓库 E:\oneconfig lite\MuoniumConfig-src），
-    // 与上游不再同步。它带整套 Compose 界面，**不进成品**：首次启动由
-    // MuoniumConfigDownload 拉取到 mods/，与 Skija 伴生包同一套做法（多镜像竞速 +
-    // 字节数/sha256 双钉 + 装好后重启生效——Fabric 只在启动阶段扫 mods/ 并织入 mixin，
-    // 运行中塞进去的 jar 不会被加载，热加载没有可行性）。
-    //
-    // 开发期同样**不走 classpath**：把 jar 放进 <树>/fabric/run/mods/，由 Loader
-    // 当 mod 加载。理由与 1.21.1 一致（详见那棵树 build.gradle 的说明）：classpath 上
-    // 的 jar 不是 mod，嵌套 jar 不展开、mixin 不织入，会造出一个与线上不同的类图，
-    // 把「开发能跑、线上崩」的问题掩盖掉。
-    //
-    // Compose 已**内嵌在 MuoniumConfig 自己**的 META-INF/jars/ 里（64 个嵌套 jar），
-    // 所以这里不再需要 compose-bundle —— 再挂一份会让同一个类有两个来源。
+    // 设置中心源码与资源随共享根编入主 mod，复用宿主 Skija 渲染栈。
+    // 无需独立设置 MOD 或 Compose 嵌套依赖。
     // skija-shared 的 provided 依赖，只在编译期需要（@Nullable 之类）。
     compileOnly 'org.jetbrains:annotations:20.1.0'
 

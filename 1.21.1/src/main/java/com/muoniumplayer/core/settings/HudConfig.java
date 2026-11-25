@@ -565,23 +565,16 @@ public final class HudConfig {
      */
     public static boolean animatedCoverEnabled = true;
 
-    /**
-     * HUD 设置界面用哪一层：内置界面、OneConfig 或 ModernUI。
-     * 外部那两层不可用时自动回退内置界面。
-     */
-    /** HUD 设置界面的选择：内置界面、OneConfig 或 ModernUI。外部界面不可用时自动回退内置界面。 */
+    /** HUD 设置界面默认使用内置 Skija；ModernUI 为可选适配。 */
     public static final String HUD_EDITOR_UI_BUILTIN = "builtin";
-    /** 私有的现代化呈现（MuoniumConfig），随本 mod 自带、永远可用。 */
+    /** 旧独立配置界面的持久化值，仅保留兼容；加载时归一到内置 Skija。 */
     public static final String HUD_EDITOR_UI_MCONFIG = "mconfig";
+    /** 旧 OneConfig 持久化值，兼容规则与 mconfig 相同。 */
     public static final String HUD_EDITOR_UI_ONECONFIG = "oneconfig";
-    /**
-     * 交给 ModernUI 渲染。它只需要玩家装了 ModernUI 就算「可用」的一半，另一半是本版本树
-     * 编入了面板实现 —— 后者取决于该 Minecraft 版本有没有对应的 ModernUI 构件。
-     * 缺任何一半都回退内置界面，见 {@code ModernUiHudBridge}。
-     */
+    /** ModernUI 及本车道面板均可用时使用，否则回退内置 Skija。 */
     public static final String HUD_EDITOR_UI_MODERNUI = "modernui";
 
-    public static volatile String hudEditorUi = HUD_EDITOR_UI_MCONFIG;
+    public static volatile String hudEditorUi = HUD_EDITOR_UI_BUILTIN;
 
     /**
      * 播放态由谁供给：内部播放器，还是系统里正在播的外部播放器（Windows SMTC）。
@@ -1474,11 +1467,10 @@ public final class HudConfig {
         }
     }
 
+    /** 旧 builtin/mconfig/oneconfig 及未知值统一使用内置 Skija，保留 ModernUI 选择。 */
     private static String normalizeHudEditorUi(String value) {
-        if (HUD_EDITOR_UI_BUILTIN.equalsIgnoreCase(value)) return HUD_EDITOR_UI_BUILTIN;
-        if (HUD_EDITOR_UI_ONECONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_ONECONFIG;
         if (HUD_EDITOR_UI_MODERNUI.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MODERNUI;
-        return HUD_EDITOR_UI_MCONFIG;
+        return HUD_EDITOR_UI_BUILTIN;
     }
 
     /**

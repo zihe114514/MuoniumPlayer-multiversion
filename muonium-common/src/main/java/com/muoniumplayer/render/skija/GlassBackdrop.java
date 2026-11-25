@@ -245,6 +245,9 @@ public final class GlassBackdrop {
         if (debugging()) {
             return true;
         }
+        if (com.muoniumplayer.configskija.host.SkijaConfigService.backgroundWanted()) {
+            return true;
+        }
         if (com.muoniumplayer.core.rendering.GlassMobileTier.active()) {
             return false;
         }

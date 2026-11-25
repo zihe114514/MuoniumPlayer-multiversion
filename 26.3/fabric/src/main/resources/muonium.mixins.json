@@ -24,7 +24,8 @@
     "CineFovMixin",
     "CineHudMixin",
     "SpinEntityMixin",
-    "SpinPacketMixin"
+    "SpinPacketMixin",
+    "configskija.ConfigToastMouseMixin"
   ],
   "injectors": {
     "defaultRequire": 1

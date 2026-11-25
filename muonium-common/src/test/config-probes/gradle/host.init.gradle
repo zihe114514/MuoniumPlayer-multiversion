@@ -1,0 +1,16 @@
+// Optional read-only classpath snapshot for host-specific probes. No MOD build/run tasks.
+gradle.projectsEvaluated {
+    def host = gradle.rootProject
+    def workspace = new File(host.projectDir.parentFile, 'muonium-common/src/test/config-probes')
+    host.subprojects.findAll { it.name in ['fabric', 'neoforge', 'forge'] }.each { target ->
+        target.tasks.register('skijaConfigClasspath') {
+            doLast {
+                def output = new File(workspace, "build/host/${host.projectDir.name}/${target.name}")
+                output.mkdirs()
+                def main = target.extensions.getByName('sourceSets').main
+                new File(output, 'compile-classpath.txt').text = (main.output + main.compileClasspath).asPath
+                new File(output, 'runtime-classpath.txt').text = main.runtimeClasspath.asPath
+            }
+        }
+    }
+}

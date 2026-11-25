@@ -40,6 +40,5 @@
     "java": ">=25"
   },
   "suggests": {
-    "oneconfigv1": "*"
   }
 }

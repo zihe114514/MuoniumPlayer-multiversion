@@ -124,14 +124,16 @@ class MConfigStaticTest {
     }
 
     @Test
-    @DisplayName("旧版内置编辑器不被这次改动牵连： GuiHudEditorPro 仍然分派可达")
+    @DisplayName("旧版编辑器源码保留，H 键直接打开共享 Skija 设置中心")
     void legacyEditorUntouched() throws IOException {
         String source = read(hud("GuiHudEditorPro.java"));
         assertFalse(source.contains("MConfigHudScreen"),
                 "旧版编辑器不许反向认识新版：两套呈现互不依赖，分派层负责切换");
         String client = read(ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "MuoniumPlayerClient.java")));
-        assertTrue(client.contains("new GuiHudEditorPro()"),
-                "内置编辑器仍是兜底档位，分派链不许拆它");
+        assertTrue(client.contains("SkijaConfigScreen.openSettings()"),
+                "H 键应打开内置设置中心");
+        assertTrue(source.contains("SkijaConfigScreen.openSettings()"),
+                "旧版编辑器的设置按钮应接到同一内置路由");
     }
 }

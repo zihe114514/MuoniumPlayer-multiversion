@@ -21,6 +21,7 @@
     "CineMouseMixin",
     "CineRollMixin",
     "CineFovMixin",
+    "configskija.ConfigToastMouseMixin",
     "CineHudMixin",
     "SpinEntityMixin",
     "SpinPacketMixin"

@@ -112,27 +112,20 @@ MuoniumPlayer 是 Minecraft **纯客户端**音乐 mod，mod id 为 `muonium`，
 
 - 音频线程不做网络、磁盘、模型加载或 UI 操作；AUTOMIX 端口直写、参数平滑和生命周期写入权沿用对应实现约定。
 - 网络/文件/解码任务不堵客户端/渲染线程；异步结果回到正确线程，并处理切歌、关屏和退出后的过期回调。
-- 模组自有播放器/HUD 沿用 Skija 栈；原版宿主提示按现有桥接边界处理，不强行把所有宿主 GUI 改成同一种 API。Compose 设置中心在外仓。
+- 模组自有播放器/HUD 和内置设置中心沿用 Skija 栈；原版宿主提示按现有桥接边界处理，不强行把所有宿主 GUI 改成同一种 API。
 - GL/Skija 资源创建、状态交接和释放保持同一生命周期；变更缓存必须说明失效条件、资源拥有者及退出/重载路径。
 - 一起听的播放控制走统一拦截/权限路径，不绕过房间控制权。协议或缓存格式变化要考虑旧数据/旧端兼容。
 - 具体行为查相应实现约定与测试；以上不是替代子系统文档的简化算法。
 
-### 6.2 H 打开的设置中心：MuoniumConfig
+### 6.2 H 打开的设置中心：内置 Skija
 
-Compose 界面源码位于独立仓库 `E:\Mu\oneconfig lite\MuoniumConfig-src`。本仓库负责设置数据、反射契约、下载/更新与宿主提示，不在这里重做 Compose 页面。
+设置中心直接内置于 MuoniumPlayer，UI、model 和版本中立 host 主体位于 `muonium-common/src/main/java/com/muoniumplayer/configskija/`，七树/十四个目标挂载同一份源码和共享资源。H 的宿主入口调用 `SkijaConfigScreen.openSettings()`，会话由 `SkijaConfigService` 管理，复用本模组 Skija 通路。本节取代旧的“Compose 设置中心在外仓”边界及其外仓构建、同步与自动下载验收流程。
 
-- 默认 UI 已是 `mconfig`；以本树 `HudConfig.HUD_EDITOR_UI_*` 及加载逻辑为准，旧文档的 `builtin` 默认说明已失效。
-- 改外仓前读其 `AGENTS.md`（如有）、`docs/MAINTENANCE.md`、`docs/PITFALLS.md`。
-- 反射桥重点：`OneConfigHudBridge`、`MuoniumHudProperties`、`MuoniumFavorites`、`MuoniumHudProviders`、`MuoniumFontBridge`、`MuoniumConfigDownload`。反射使用的类名、方法、字段、类型与可见性都是接口，不能只看编译是否通过。
-- 改设置 schema/default/key 时检查七树、持久化兼容、外仓消费方及契约测试；不能只改一个树内 `HudConfig`。
-- 外仓构建后必须同步开发包到**实际测试车道/加载器**，再确认 `run/mods` 中加载的是新包。以下仅以 1.21.1 为例：
-
-```powershell
-# 在 MuoniumConfig-src 内执行；其他车道先查外仓支持的 lane 名
-python tools/build-all.py --lane 1.21.1
-python tools/sync-dev-mods.py --lane 1.21.1
-python tools/check-music-contract.py --jar <MuoniumConfig产物>
-```
+- 正常打开、编辑和保存设置直接调用内置实现，不依赖 OneConfig/MuoniumConfig 独立 MOD、外仓 Compose 页面、反射发现或下载/重启安装链路。旧桥接名称和旧持久化值如仍存在，仅按实际兼容/迁移职责维护，不能据此恢复独立 MOD 前置。
+- `configskija/model/`、`ui/` 和中立 `host/` 各保留一份；Java 包名必须匹配目录，尤其 `configskija.model` 文件必须放在 `/model`。MC/窗口差异仅留七树各自的五个 host 适配类及一个鼠标 Mixin，具体清单与接线见共享层/26.3 规范和 `docs/实现约定-内置Skija设置中心.md`。
+- 每侧 `muonium.mixins.json` 使用实际包前缀 `com.muoniumplayer.mixin`，在 `client` 中注册一次 `configskija.ConfigToastMouseMixin`；源码位于标准 `src/main/java/com/muoniumplayer/mixin/configskija/`，声明包为 `com.muoniumplayer.mixin.configskija`。
+- 改设置 schema/default/key 时核对七树 `HudConfig`、内置 model/host 消费方、持久化兼容与契约测试。共享调用契约、线程与资源所有权沿用子系统实现约定；不能为适配一个版本回搬整份界面。
+- 验收区分布局/接线静态核对、指定目标测试、构建和游戏实测。用户限定的阶段性检查不构成七树或双加载器通过；探针登记也不代表探针已运行。旧外仓 jar 校验、同步开发包流程仅用于历史独立 MOD 维护，不作为内置设置中心验收。
 
 ## 7. 标准开发流程
 

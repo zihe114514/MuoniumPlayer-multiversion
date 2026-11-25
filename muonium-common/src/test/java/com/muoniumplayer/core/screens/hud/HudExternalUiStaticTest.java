@@ -1,7 +1,6 @@
 package com.muoniumplayer.core.screens.hud;
 
 import com.muoniumplayer.testsupport.ProjectPaths;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +15,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * HUD 设置界面的「外部渲染层」插座（OneConfig / ModernUI）的不变量。
+ * 内置 Skija 默认路由与可选 ModernUI 宿主边界。
  *
  * <p>只读源码，不触发 OpenAPI / 渲染线程初始化。</p>
  *
@@ -29,37 +28,35 @@ class HudExternalUiStaticTest {
     private static final Path SHARED_JAVA = ProjectPaths.sharedJava();
 
     @Test
-    @DisplayName("H 键尊重内置选择，ModernUI 不可用时仍尝试 OneConfig 桥")
-    void dispatchKeepsOneConfigFallback() throws IOException {
-        String client = read(ProjectPaths.sourceFile(Paths.get(
-                "com", "muoniumplayer", "MuoniumPlayerClient.java")));
+    @DisplayName("H 键默认打开 Skija 调参页，显式 ModernUI 不可用时回到内置调参页")
+    void dispatchUsesEmbeddedSkija() throws IOException {
+        String client = read(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "MuoniumPlayerClient.java")));
         int start = client.indexOf("private void openHudEditor(Minecraft mc)");
         assertTrue(start >= 0, "缺少 H 键界面分派");
-        String dispatch = client.substring(start, client.indexOf("new GuiHudEditorPro()", start))
-                .replace("\r\n", "\n");
-        assertTrue(dispatch.contains("if (!HudConfig.HUD_EDITOR_UI_BUILTIN.equals(HudConfig.hudEditorUi)"
-                        + "\n                && OneConfigHudBridge.open())"),
-                "内置选择必须跳过 OneConfig 桥，ModernUI 未打开时仍应尝试该桥");
+        String dispatch = client.substring(start, client.indexOf("\n    }", start));
+        assertTrue(dispatch.contains("HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)"));
+        assertTrue(dispatch.contains("ModernUiHudBridge.open()"));
+        assertTrue(dispatch.contains("SkijaConfigScreen.openSettings()"));
+        assertTrue(dispatch.indexOf("ModernUiHudBridge.open()") < dispatch.indexOf("SkijaConfigScreen.openSettings()"));
+        assertTrue(!client.contains("OneConfigHudBridge.open()"), "内置界面不能重新进入独立 MOD");
+        assertTrue(!client.contains("MuoniumConfigNotice.draw"), "不再展示独立设置 MOD 下载提示");
+        String screen = read(ProjectPaths.sharedJava().resolve("com/muoniumplayer/configskija/host/SkijaConfigScreen.java"));
+        assertTrue(screen.contains("new SkijaConfigScreen(Navigation.Page.SETTINGS)"),
+                "调参入口必须显式选择设置页，不受上次 HUD 编辑路由记忆影响");
     }
 
     @Test
-    @DisplayName("hudEditorUi 认 modernui / mconfig，未知值归到 mconfig（本项目默认就是它）")
-    @Disabled("hotfix 2.4.2 先行：MuoniumConfig 主路径的 HudConfig/分派/模型段只在 26.3 收口，六树 compat 待移植后恢复")
-    void configAcceptsModernUiLayer() throws IOException {
+    @DisplayName("内置 Skija 是持久化默认档，设置模型不再按独立 OneConfig 安装状态降级")
+    void configAndModelExposeEmbeddedDefault() throws IOException {
         String config = read(settings("HudConfig.java"));
-        assertTrue(config.contains("public static final String HUD_EDITOR_UI_MODERNUI = \"modernui\""),
-                "少了 modernui 这一档常量");
-        assertTrue(config.contains("HUD_EDITOR_UI_MODERNUI.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MODERNUI"),
-                "load() 的归一化必须认 modernui，否则存了下次就读不回来");
-        assertTrue(config.contains("public static final String HUD_EDITOR_UI_MCONFIG = \"mconfig\""),
-                "少了 mconfig（MuoniumConfig）这一档常量");
-        assertTrue(config.contains("public static String hudEditorUi = HUD_EDITOR_UI_MCONFIG;"),
-                "默认档必须直接是 MuoniumConfig：设置界面统一由它渲染，自绘界面只在它缺席时兜底");
-        assertTrue(config.contains("return HUD_EDITOR_UI_MCONFIG;"),
-                "归一化的兜底也要是 mconfig：老配置里的 builtin 与手改坏的值都该落到默认档");
-        assertTrue(!config.contains("return HUD_EDITOR_UI_BUILTIN;"),
-                "内置自绘界面已不是可选档位，归一化不该再把值落到它上面");
+        assertTrue(config.contains("hudEditorUi = HUD_EDITOR_UI_BUILTIN;"));
         assertTrue(config.contains("o.addProperty(\"hudEditorUi\", hudEditorUi)"));
+        String model = read(hud("HudSettingsModel.java"));
+        assertTrue(model.contains("new String[] {\"内置 Skija\", \"ModernUI\"}"));
+        assertTrue(model.contains("HudSettingsModel::setUiLayerChoice"));
+        assertTrue(model.contains("ModernUiHudBridge.statusLabel()"));
+        assertTrue(model.contains("回退内置 Skija"));
+        assertTrue(!model.contains("OneConfigHudBridge.isAvailable()"));
     }
 
     @Test
@@ -74,40 +71,6 @@ class HudExternalUiStaticTest {
                 "「装了 ModernUI」与「本构建编入了面板」要分开判：只装没面板时不能谎报可用");
         assertTrue(bridge.contains("if (!isAvailable()) return false;"),
                 "不可用时 open() 要直接返回 false，由调用方回落");
-    }
-
-    @Test
-    @DisplayName("打开顺序：modernui 先试，MuoniumConfig 是主路径，自绘界面只在它缺席时兜底")
-    @Disabled("hotfix 2.4.2 先行：MuoniumConfig 主路径的 HudConfig/分派/模型段只在 26.3 收口，六树 compat 待移植后恢复")
-    void dispatchTriesModernUiThenOneConfigThenBuiltin() throws IOException {
-        String client = read(ProjectPaths.sourceFile(Paths.get(
-                "com", "muoniumplayer", "MuoniumPlayerClient.java")));
-        int modern = client.indexOf("HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)");
-        int oneConfig = client.indexOf("OneConfigHudBridge.open()");
-        // 兜底那一档只认构造调用：26.x 是 mc.gui.setScreen(...)，更早的树是 mc.setScreen(...)。
-        int builtin = client.indexOf("new GuiHudEditorPro())");
-        assertTrue(modern >= 0 && oneConfig >= 0 && builtin >= 0,
-                "三档分派都在 openHudEditor 里");
-        assertTrue(modern < oneConfig && oneConfig < builtin,
-                "ModernUI 是玩家显式选的先试，之后是 MuoniumConfig（主路径），"
-                        + "最后才是自绘兜底：" + modern + "," + oneConfig + "," + builtin);
-        assertTrue(!client.contains("HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi)"),
-                "mconfig 不再是分派条件——它是默认落脚点，不在任何 if 里");
-    }
-
-    @Test
-    @DisplayName("各套界面共用的模型里有「设置界面由谁渲染」，且不可用时把原因写在值上")
-    @Disabled("hotfix 2.4.2 先行：MuoniumConfig 主路径的 HudConfig/分派/模型段只在 26.3 收口，六树 compat 待移植后恢复")
-    void modelExposesLayerChoiceWithReason() throws IOException {
-        String model = read(hud("HudSettingsModel.java"));
-        assertTrue(model.contains("choice(\"设置界面由谁渲染\""),
-                "用户要能在设置里选外部层，而不是只能改配置文件");
-        assertTrue(model.contains("new String[] {\"MuoniumConfig\", \"ModernUI\"}"),
-                "只剩 MuoniumConfig 与 ModernUI 两档：内置自绘界面已下线");
-        assertTrue(model.contains("HudSettingsModel::setUiLayerChoice"));
-        assertTrue(model.contains("ModernUiHudBridge.statusLabel()"),
-                "选中的层不可用时要在当前值上写明原因，否则玩家分不清没装还是没有本版本构件");
-        assertTrue(model.contains("回退 MuoniumConfig"), "文案要点明「不可用会自动回退」这件事");
     }
 
     @Test

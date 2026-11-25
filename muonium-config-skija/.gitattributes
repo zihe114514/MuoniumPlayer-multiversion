@@ -1,5 +1,0 @@
-# Preserve source fingerprints and byte-copied upstream resources across checkouts.
-* -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
-# These two verbatim upstream licenses intentionally retain their original spacing.
-reference/UPSTREAM-LICENSE.txt -whitespace
-src/main/resources/META-INF/licenses/OneConfig-LICENSE.txt -whitespace

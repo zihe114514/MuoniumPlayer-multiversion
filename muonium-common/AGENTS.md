@@ -51,6 +51,18 @@ Kotlin 根可按需创建；不要用空业务类占目录。Java/资源由各 l
 - 现有树内留守类仍按守卫维护；收敛历史副本须单独评估其 API 与行为差异，不机械合并。
 - Mixin 留树内并校验注入阶段与描述符；源码碰巧相同不构成共享理由。
 
+### 3.1 内置 Skija 设置中心接线（2026-11-24）
+
+- `src/main/java/com/muoniumplayer/configskija/{model,ui,host}/` 是七树同一份设置中心主体；资源位于 `src/main/resources/assets/muoniumconfigskija/`。沿用十四个 loader 的共享 sourceSets，不另建 Gradle 模块或依赖独立设置 MOD。
+- 设置中心文字复用 `FontManager` 与当前 UI 字体，不引入独立字体资产；环境音仅保留一个共用循环，界面操作音效独立保留。离屏探针放在 `src/test/config-probes/`，不打进生产包。
+- model 按声明包名放入 `configskija/model/`，包含 `Notifications` 等模型；不能因为 javac 能接受错位路径就留在包根。`SharedLayoutStaticTest` 检查共享入口和所有该目录 Java 文件的包名/路径。
+- 树内仅登记六个必要触点：`host/WindowAccess`、`host/avatar/AvatarSkinAccess`、`host/avatar/AvatarTextureAccess`、`host/keys/NativeKeyAccess`、`host/sound/McSoundBackend`（五者在 `com/muoniumplayer/configskija/` 下），以及标准 `com/muoniumplayer/mixin/configskija/ConfigToastMouseMixin.java`。全部列入 REQUIRED，不能改成可随意缺失的 OPTIONAL；其原因见 `docs/实现约定-内置Skija设置中心.md`。
+- Mixin 源码位于标准 `src/main/java/com/muoniumplayer/mixin/configskija/`，声明包为 `com.muoniumplayer.mixin.configskija`。守卫对照每树两侧 `muonium.mixins.json` 的包前缀和 `client` 注册项，不从物理文件路径推断全限定名；静态登记不能证明注入命中。
+- `SkijaConfigService.tick/afterHud/afterScreen` 和 `SkijaConfigScreen.openHud` 由各树宿主接入；共享 UI/model 不直接注册 loader 事件、不另建渲染上下文，不恢复 OneConfig/MuoniumConfig 外置下载依赖。入口线程、调用阶段和资源释放按实际调用链核实。
+- `26.3/src/test/.../MConfigHudRenderProbeTest.java` 是用户保留的版本探针：依赖本树 Minecraft/Screen 构造及 Unsafe 单例夹具、Windows Skija 原生字体/raster 环境，因此列入 OPTIONAL_TEST，不移动到共用测试、不删除。它画的是 `MConfigHudScreen.renderProbe`，不等于已覆盖迁入的 `configskija.ui.ConfigView` 或真实游戏通路。
+
+- 并行用户的 `26.3/src/test/.../WorldBillboardCanvasPictureCacheTest.java` 只引用本树包可见内部 API `WorldBillboard.CanvasPictureCache`；其他六树当前未定义该类型。该测试检查 Picture/纹理对象身份、像素尺寸和失效规则，按版本差异测试登记 OPTIONAL_TEST；不是直接调用原版 MC 新 API 的证据。本轮只读确认归属，未执行或改动测试，不计入设置中心验证成果。
+
 ## 4. 新文件与归属变更
 
 ### 4.1 日常新增版本中立文件

@@ -25,3 +25,7 @@ gradlew text eol=lf
 # 演示媒体：Git LFS 不启用，直接存二进制，禁止行尾转换
 *.mp4 binary
 *.gif binary
+
+# 上游许可按原始字节保留，包含原文空格，不做行尾归一化。
+muonium-common/src/main/resources/META-INF/licenses/OneConfig-LICENSE.txt -text -whitespace
+muonium-common/src/test/config-probes/reference/UPSTREAM-LICENSE.txt -text -whitespace

@@ -5,7 +5,6 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.muoniumplayer.core.settings.JsonConfigStorage;
-import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.update.SemVer;
 import com.muoniumplayer.core.update.UpdateChecker;
 import com.muoniumplayer.core.utils.network.HttpDownloadRace;
@@ -21,60 +20,11 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * MuoniumConfig（HUD 设置界面）的<b>按需安装与自更新</b>。
+ * 独立 MuoniumConfig 下载器的历史兼容入口。
  *
- * <p>它是 OneConfig 的精简分支，带 mixin 与整套 Compose 界面，塞进主包会让成品多出
- * 9.5 MB。因此改成启动时按需拉取，与 Skija 伴生包同一套做法：多镜像竞速、字节数与
- * sha256 双钉、装好后<b>必须重启</b>才生效（加载器在启动阶段扫描 mods/ 并织入 mixin，
- * 运行中塞进去的 jar 不会被加载，热加载没有可行性）。</p>
- *
- * <p>为什么落在 {@code mods/}：这是玩家手动装 mod 的同一位置，重启后由加载器自己发现。
- * 放 config 目录再由我们手动挂 classloader 也能做到，但那样要自己处理 mod 发现与 mixin
- * 配置注册，出错面大得多。</p>
- *
- * <p>失败不阻挡进游戏：MuoniumConfig 只提供设置界面，下载失败时主体功能（听歌、HUD 绘制）
- * 照常运行，只少了那个界面。这与 Skija 缺原生库不同 —— 那个缺了渲染层整个起不来。</p>
- *
- * <h2>选择 MuoniumConfig 时检查更新</h2>
- * 以前这里只做「mods/ 里没有就下一次」，于是 MuoniumConfig 的 bug 修复只能等玩家升级
- * 整个播放器 —— 客户端把版本号钉死在 {@link #BUILDS} 里，老客户端永远看不到新版。
- * 选择该界面时每次启动读一次远端清单（{@link MuoniumConfigIndex}），比已装版本新才下载：
- *
- * <ol>
- *   <li>清单优先，{@link #BUILDS} 只是<b>兜底</b>（断网 / 镜像全挂时退回内置值）；</li>
- *   <li>已装版本 &ge; 目标版本就什么都不做（玩家手装的更新版本不会被降级）；</li>
- *   <li>需要更新时：先下新包并校验 → 再尽力让旧包退场 → 最后置"待重启"。</li>
- * </ol>
- *
- * <h2>旧包退场：能删就删，删不掉就明确告诉用户</h2>
- * 两个同 id 的 jar 同时躺在 mods/ 里，<b>下一次启动</b>会被加载器当成重复 mod 直接拒绝
- * 启动 —— 这是这个功能里唯一真正危险的状态，所以处理方式必须写清楚：
- *
- * <p><b>实测结论（2026-11-09，Windows 11 + JDK 21，26.3 NeoForge 真实 runClient）：</b>
- * 游戏运行期间，加载器对 mod jar 持有<b>独占锁</b>，{@link Files#delete} 与
- * {@link Files#move} 都是 {@code WinError 32}（另一个程序正在使用此文件）。进程退出后
- * 锁立刻释放。早先一次独立小实验里 {@code ZipFileSystem} 能删同名文件，但那不能推广到
- * 真实加载器 —— 以真实 runClient 的结论为准。</p>
- *
- * <p>因此三级处理：</p>
- * <ol>
- *   <li>{@link Files#delete} 直接删掉（有些环境/平台放得开，这是最好结果）；</li>
- *   <li>删不掉就改名成 {@code <名>.jar.disabled} —— 扩展名不再是 {@code .jar}，
- *       加载器不会扫到它，效果等同删除；</li>
- *   <li>两者都失败（运行期就是这种情况）：<b>保留新包</b>，把要删的文件名记进待处理清单，
- *       并在提示里<b>点名文件 + 说清后果</b>（不删下次启动会因重复 mod 失败）。</li>
- * </ol>
- *
- * <h2>为什么第 3 档选择"保留新包"而不是回滚</h2>
- * 新包落进 mods/ 对<b>当前这一局</b>没有任何影响（加载器只在启动阶段扫 mods/）。
- * 而回滚掉新包会让自动更新在被锁的环境里<b>永远失败</b>——运行期根本删不掉旧包。
- * 保留新包 + 提示手动删旧包，用户动一次手就完成了升级，这条路是能走通的。
- *
- * <p>代价是必须在提示里把后果讲清楚，并且这时<b>不能自动重启</b>：带着两个同 id 的 jar
- * 重启，正好会撞上加载失败。</p>
- *
- * <p>下一次启动时 {@link #retryPendingRemoval()} 会再试一次删旧包（那时锁已随进程退出
- * 释放，通常一次就成），但提示依然以"请手动删"为准 —— 自动重试是惊喜，不能当承诺。</p>
+ * <p>设置中心已内置于主模组；所有自动安装和会话重试入口永久停用，
+ * 旧 autoDownload 系统属性也不能重新启用。保留状态、清单和旧包处理代码，
+ * 供尚有引用的旧兼容调用及其安全守卫使用；主更新、重启和下载中心不再接入。</p>
  */
 public final class MuoniumConfigDownload {
     private static final String TAG = "MuoniumConfigDownload";
@@ -173,9 +123,6 @@ public final class MuoniumConfigDownload {
             return bytes > 0 && sha256 != null && sha256.length() == 64;
         }
     }
-
-    /** 开关：{@code -Dmuonium.muoniumconfig.autoDownload=false} 可关（开发期跑测试用）。 */
-    private static final String PROP_ENABLED = "muonium.muoniumconfig.autoDownload";
 
     /** 被让位的旧包的扩展名。不再以 {@code .jar} 结尾的任何加载器都不会扫到。 */
     private static final String DISABLED_SUFFIX = ".jar.disabled";
@@ -279,12 +226,12 @@ public final class MuoniumConfigDownload {
     }
 
     public static boolean isRestartRequired() {
-        return restartRequired;
+        return false;
     }
 
     private static boolean enabled() {
-        String value = System.getProperty(PROP_ENABLED);
-        return value == null || value.isBlank() || !"false".equalsIgnoreCase(value.trim());
+        // 即使旧入口仍调用 ensureDownloaded/tick，也不得下载独立配置模组。
+        return false;
     }
 
     /** 目标落点：游戏目录的 mods/ 下的文件名。 */
@@ -393,11 +340,9 @@ public final class MuoniumConfigDownload {
         return shouldRetry() && retry();
     }
 
-    /** 根据 OneConfig 探测结果和当前界面选择判断是否应下载/更新。 */
+    /** 独立包已退役；任何旧选择值都不再触发安装或更新。 */
     private static boolean wantsMuoniumConfig() {
-        return HudInitialSelection.wantsMuoniumConfig(
-                HudInitialSelection.isOneConfigInstalled(),
-                HudConfig.HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi));
+        return false;
     }
 
     /**
@@ -827,7 +772,6 @@ public final class MuoniumConfigDownload {
      * （纯外观损失，常驻会变成骚扰），由各树渲染器自己管窗口。</p>
      */
     public static boolean noticeVisible() {
-        if (HudInitialSelection.noticeVisible()) return true;
         State current = state();
         if (current.phase() == Phase.DOWNLOADING || current.phase() == Phase.DONE) {
             return true;
@@ -850,9 +794,6 @@ public final class MuoniumConfigDownload {
      * 而它至少能解释为什么没动静。</p>
      */
     public static List<String> noticeLines() {
-        if (HudInitialSelection.noticeVisible()) {
-            return List.of("检测到已安装 OneConfig，为避免冲突", "已将 HUD 设置界面切换为内置界面，并且不下载MuoniumConfig");
-        }
         State current = state();
         List<String> lines = new ArrayList<>();
         switch (current.phase()) {

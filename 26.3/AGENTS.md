@@ -71,3 +71,17 @@
 
 
 2026-11-24：普通世界通路的商籁整幅画布使用 `WorldBillboard.SONNET_CANVAS_PIPELINE` 与本树已有 `worldlyrics_text` shaders，避免 vanilla `text.fsh` 的 alpha<0.1 裁剪吞掉细线/入退场尾部。SonnetGpuProbeTest 同时核对实际管线对象及编译其资源着色器后的低 alpha 合成；光影包继续按既有 beacon/final-present 分发，探针不代替光影/天气游戏实测。
+
+## 内置 Skija 设置中心接线（2026-11-24）
+
+主体与资源由两侧既有 sourceSets 挂载 `muonium-common`，详见 `docs/实现约定-内置Skija设置中心.md`。H 走 `SkijaConfigScreen.openSettings()`，客户端接入 `SkijaConfigService.tick()`、HUD 后 `afterHud()` 和屏幕后 `afterScreen()`；不要求 OneConfig/MuoniumConfig 独立 MOD。调用阶段以本树入口/渲染桥实际调用链为准，注册存在不等于运行语义已验证。
+
+本树只保留 `configskija/host/WindowAccess.java`、`host/avatar/{AvatarSkinAccess,AvatarTextureAccess}.java`、`host/keys/NativeKeyAccess.java`、`host/sound/McSoundBackend.java` 与标准 `mixin/configskija/ConfigToastMouseMixin.java` 六个适配触点；其余 host、UI、model 在共享根。窗口密度取 SDL display scale，当前屏幕读取 `mc.gui.screen()`，原生键型使用 `InputConstants.Type.KEYBOARD`，鼠标按钮经 SDL/legacy 编号转换。以上为源码触点，不能由同属 26.x 推断其他树或 NeoForge 契约相同。
+
+鼠标 Mixin 位于 `src/main/java/com/muoniumplayer/mixin/configskija/`，声明包为 `com.muoniumplayer.mixin.configskija`，两侧 `muonium.mixins.json` 包前缀是 `com.muoniumplayer.mixin`，`client` 项须为 `configskija.ConfigToastMouseMixin`。本树源码描述符为 `onMove(JDDDD)V` 与 `onButton(JLnet/minecraft/client/input/MouseButtonInfo;I)V`；布局守卫核对登记，描述符、加载和命中仍须逐 loader 另行验证。
+
+用户的 `src/test/java/com/muoniumplayer/core/screens/hud/MConfigHudRenderProbeTest.java` 留本树，已登记为版本探针。它使用 Unsafe 构造本树 Minecraft/Screen 最小夹具，在 Windows 加载真 Skija 字体，对 `MConfigHudScreen.renderProbe` 输出 raster PNG 并检查非空；不启动游戏，但会生成测试图片。登记不意味着执行成功，也不能作为迁入 `ConfigView` 的完整 UI、GPU、Mixin 或游戏验收。
+
+本轮用户限定仅验证 26.3 Fabric，不构建、不启动游戏；26.3 NeoForge 与其他六树两侧仅只读适配/接线核对。不得将此阶段检查写成十四目标通过；完整验收仍按后续授权执行。
+
+本次补充只读确认并行用户的 `WorldBillboardCanvasPictureCacheTest` 依赖本树 `WorldBillboard` 包可见嵌套类型 `CanvasPictureCache`（其他六树未定义），登记 OPTIONAL_TEST 及原因。没有修改或执行该测试，也不将其计为设置中心验证成果。用户已报告在 26.3 Fabric 执行 `SettingsNavigationTest` 3 项通过：分类唯一、逐分类点击、历史滚动；这是用户提供的指定测试结果。此次路径/登记修改后不重跑布局测试，等主 agent 最终 Gradle 统一；最终构建尚未运行，其他车道无新增测试结论。

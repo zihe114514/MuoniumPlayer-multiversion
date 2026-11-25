@@ -18,7 +18,6 @@ import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
 import com.muoniumplayer.core.screens.hud.MConfigHudScreen;
 import com.muoniumplayer.core.screens.hud.ModernUiHudBridge;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
-import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.screens.ncm.IslandSearchOverlay;
 import com.muoniumplayer.core.utils.KeyboardUtils;
@@ -227,6 +226,7 @@ public final class MuoniumPlayerClient {
         if (this.api == null) {
             return;
         }
+        com.muoniumplayer.configskija.host.SkijaConfigService.tick();
 
         // ---- Gnetum 共存兼容：检测 + 自动关其「muonium」HUD 元素缓存 + 聊天栏告知 ----
         // Gnetum 的 HUD 分帧缓存只认走原版 GUI 管线的回调；本 mod 的 HUD 是 Skija 离屏 +
@@ -300,7 +300,7 @@ public final class MuoniumPlayerClient {
 
         // ---- 【只给开发验证】一个文件等价于按一次 H（打开 HUD 设置界面）----
         // 同 dev_open_player 的理由：自动化环境驱动不了 KeyMapping，而「按键 → 桥 →
-        // MuoniumConfig 界面 → Skia 绘制」这条链路只有真的开出来才算验过。
+        // 内置 Skija 设置界面 → Skia 绘制」这条链路只有真的开出来才算验过。
         devOpenHudEntry(mc);
 
         // ---- 系统播放器镜像（SMTC）----
@@ -490,9 +490,6 @@ public final class MuoniumPlayerClient {
         }
         try {
             RenderLayerNotice.draw(graphics, onScreen);
-            // MuoniumConfig 自动下载/更新提示：同一挂点、同一代际 API；钉在左上角，
-            // 与左下角的渲染层停用提示同时出现也不叠。
-            com.muoniumplayer.core.screens.MuoniumConfigNotice.draw(graphics, onScreen);
         } catch (Throwable t) {
             noticeRenderDisabled = true;
             System.err.println("[MuoniumPlayer] 停用提示渲染已关闭：" + t);
@@ -539,21 +536,25 @@ public final class MuoniumPlayerClient {
      * 因此同一帧只更新一次动画。
      */
     public void onHudRender() {
-        if (hudRenderDisabled || this.api == null) {
+        if (this.api == null) {
             return;
         }
         try {
+            if (hudRenderDisabled) return;
             inSkijaFrame(this::onHudRenderUnguarded);
         } catch (Throwable t) {
             hudRenderDisabled = true;
             reportRenderFailure("HUD", t);
+        } finally {
+            com.muoniumplayer.configskija.host.SkijaConfigService.afterHud();
         }
     }
 
     /** 当前屏幕是否是 HUD 设置编辑器（抑制真实 HUD 用）。各树取当前屏幕的 API 不同。 */
     private static boolean currentScreenIsHudEditor() {
         Minecraft mc = Minecraft.getInstance();
-        return mc != null && mc.screen instanceof GuiHudEditorPro;
+        return mc != null && (mc.screen instanceof GuiHudEditorPro
+                || mc.screen instanceof com.muoniumplayer.configskija.host.SkijaConfigScreen);
     }
 
     /**
@@ -573,15 +574,12 @@ public final class MuoniumPlayerClient {
     }
 
     /**
-     * 当前屏幕是否是 HUD 设置编辑器（外部编辑器按类名认，因为它编译期不可见）。
+     * 当前屏幕是否是内置 HUD 设置编辑器。
      */
     private static boolean isHudEditorScreen(Screen screen) {
-        if (screen == null) return false;
-        if (screen instanceof GuiHudEditorPro || screen instanceof MConfigHudScreen) {
-            return true;
-        }
-        String name = screen.getClass().getName();
-        return name.equals("org.polyfrost.oneconfig.internal.ui.compose.impls.HudEditorUIScreen");
+        return screen instanceof GuiHudEditorPro || screen instanceof MConfigHudScreen
+                || screen instanceof com.muoniumplayer.configskija.host.SkijaConfigScreen configScreen
+                && configScreen.editingHud();
     }
 
     private void onHudRenderUnguarded() {
@@ -589,12 +587,7 @@ public final class MuoniumPlayerClient {
         // 背包/原版设置/聊天等任何其它界面同理：mod 的 HUD 附加层叠在上面挡操作又无意义。
         // 全屏播放器不走这条回调（自管）；下载进度灵动岛保留——它是主动触发的进度反馈。
         Screen open = currentScreen();
-        // HUD 编辑器要看到真实 HUD：编辑器的意义就是「一边拖一边看效果」。
-        // 外部编辑器（MuoniumConfig 的 HUD 设计器）尤其必要 —— 它的 Hud 对象是我们通过
-        // NormalizedHudProvider 接进去的空壳（Content() 不画东西），真正画 HUD 的仍是本方法；
-        // 不放行就是一片空白，只剩拖动框。之前这里没有这个放行，症状正是「打开了编辑器，
-        // 桌面歌词与信息卡不渲染」。判定只认类名白名单：认不出就按「不是编辑器」处理，
-        // 宁可编辑器里没预览，也不能让 HUD 叠到背包/聊天上挡住操作。
+        // 仅为内置 HUD 编辑器放行实时预览。
         if (open != null && !(open instanceof NCMScreen)
                 && !isHudEditorScreen(open)
                 && !DownloadDynamicIsland.isDownloadActive()
@@ -621,7 +614,9 @@ public final class MuoniumPlayerClient {
 
             // 驱动所有满足渲染条件的 Widget（歌曲信息卡片 / 歌词等）
             for (ExtensionWidget widget : this.api.getWidgets()) {
-                if (widget.renderPredicate()) {
+                // HUD 设计器已绘制宿主预览，避免真实 Widget 重复叠加。
+                if (!(open instanceof com.muoniumplayer.configskija.host.SkijaConfigScreen configScreen
+                        && configScreen.editingHud()) && widget.renderPredicate()) {
                     widget.render();
                 }
             }
@@ -645,7 +640,7 @@ public final class MuoniumPlayerClient {
      * 【只给开发验证】存在 {@code config/muonium/dev_open_hud} 就等价于按了一次 H。
      *
      * <p>走的是与真实按键完全相同的 {@code openHudEditor(mc)}，不绕任何闸门：
-     * 桥的可用性判断、MuoniumConfig 的加载状态、兜底界面的回退，全都照常生效。
+     * 显式 ModernUI 选择与内置 Skija 界面路由照常生效。
      * 文件用完即删；删不掉也不会每 tick 重开一次界面。</p>
      */
     private void devOpenHudEntry(Minecraft mc) {
@@ -741,25 +736,13 @@ public final class MuoniumPlayerClient {
     /** dev_open_hud 的「本次启动已触发」闸，与 devTriggerUsed 分开：两者互不影响。 */
     private boolean devHudTriggerUsed;
 
-    /**
-     * 按用户选择打开 HUD 设置；外部界面（ModernUI / OneConfig）不可用时自动回退到内置界面。
-     * MuoniumConfig（mconfig）是自带呈现、永远可用，排在两外部层之后、内置兜底之前。
-     */
+    /** 默认打开内置 Skija 调参页；HUD 工作室由设置页单独进入。 */
     private void openHudEditor(Minecraft mc) {
         if (HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)
                 && ModernUiHudBridge.open()) {
             return;
         }
-        // "oneconfig" 与 "mconfig" 都指向同一个界面：前者是玩家自己装的 OneConfig，
-        // 后者是本项目魔改并自动下载的那一份，两者 API 相同，由 OneConfigHudBridge 统一接。
-        // 显式选择内置界面时跳过外部桥；其他界面不可用时再回退。
-        if (!HudConfig.HUD_EDITOR_UI_BUILTIN.equals(HudConfig.hudEditorUi)
-                && OneConfigHudBridge.open()) {
-            return;
-        }
-        // MuoniumConfig 不在（还没下载完 / 下载失败 / 玩家自己卸了）：
-        // 兜底到自绘界面，只为了让玩家还能动 HUD。
-        mc.setScreen(new GuiHudEditorPro());
+        com.muoniumplayer.configskija.host.SkijaConfigScreen.openSettings();
     }
 
     /**
@@ -768,14 +751,17 @@ public final class MuoniumPlayerClient {
      * 都使用同一套全局坐标和尺寸。HUD 编辑器已经绘制专用实时预览，避免重复叠加。
      */
     public void onScreenRendered(Screen screen) {
-        if (screenRenderDisabled || this.api == null) {
+        if (this.api == null) {
             return;
         }
         try {
+            if (screenRenderDisabled) return;
             onScreenRenderedUnguarded(screen);
         } catch (Throwable t) {
             screenRenderDisabled = true;
             reportRenderFailure("GuiScreen 覆盖层", t);
+        } finally {
+            com.muoniumplayer.configskija.host.SkijaConfigService.afterScreen();
         }
     }
 

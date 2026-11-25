@@ -1,0 +1,30 @@
+{
+  "ui.open": {
+    "sounds": [
+      "muoniumconfigskija:ui/open"
+    ]
+  },
+  "ui.close": {
+    "sounds": [
+      "muoniumconfigskija:ui/close"
+    ]
+  },
+  "ui.click": {
+    "sounds": [
+      "muoniumconfigskija:ui/click"
+    ]
+  },
+  "ui.slider": {
+    "sounds": [
+      "muoniumconfigskija:ui/slider"
+    ]
+  },
+  "ui.pad_loop": {
+    "sounds": [
+      {
+        "name": "muoniumconfigskija:ui/pad_loop",
+        "stream": true
+      }
+    ]
+  }
+}

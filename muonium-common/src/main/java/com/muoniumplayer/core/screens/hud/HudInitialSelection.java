@@ -3,27 +3,16 @@ package com.muoniumplayer.core.screens.hud;
 import com.muoniumplayer.core.settings.HudConfig;
 
 /**
- * 检测到独立 OneConfig 时，避免它与 MuoniumConfig 冲突。
- *
- * <p>已接入检测的 Fabric 入口使用加载器查询 mod ID {@code oneconfig}，并将结果传入本类。
- * 已核对的 MuoniumConfig 1.8.0 Fabric 包的 mod ID 是 {@code muoniumconfigv1}，
- * 与独立 OneConfig 不同；单独安装该包不会因其自身 ID 命中这项检测。</p>
- *
- * <p>检测到独立 OneConfig 且当前选择为 {@code mconfig} 时，将
- * {@link HudConfig#hudEditorUi} 切换为 {@code builtin}，并调用 {@link HudConfig#save()}
- * 保存；OneConfig 仍存在时，启动检查再次遇到 {@code mconfig} 也会重新切换。</p>
+ * 旧入口保留的界面选择兼容层。内置 Skija 不依赖独立 OneConfig 的安装状态。
+ * 旧 mconfig/oneconfig 值迁移到 builtin，ModernUI 的显式选择保持不变。
  */
 public final class HudInitialSelection {
     private static volatile boolean oneConfigInstalled;
-    private static volatile boolean detectionReady;
-    private static volatile boolean noticePending;
-    private static long noticeShownAt;
 
     private HudInitialSelection() {}
 
     public static void setOneConfigInstalled(boolean installed) {
         oneConfigInstalled = installed;
-        detectionReady = true;
     }
 
     public static boolean isOneConfigInstalled() {
@@ -31,45 +20,24 @@ public final class HudInitialSelection {
     }
 
     static boolean wantsMuoniumConfig(boolean oneConfig, boolean selected) {
-        return !oneConfig && selected;
+        return false;
     }
 
     static String choose(boolean detectionReady, boolean oneConfig, String current) {
-        return detectionReady && oneConfig && HudConfig.HUD_EDITOR_UI_MCONFIG.equals(current)
-                ? HudConfig.HUD_EDITOR_UI_BUILTIN : current;
+        return HudConfig.HUD_EDITOR_UI_MODERNUI.equalsIgnoreCase(current)
+                ? HudConfig.HUD_EDITOR_UI_MODERNUI : HudConfig.HUD_EDITOR_UI_BUILTIN;
     }
 
-    /**
-     * 检测到独立 OneConfig 且当前界面为 {@code mconfig} 时，切换到内置界面并保存。
-     *
-     * @see HudConfig#save()
-     */
+    /** 将旧入口内存中的界面选择按当前持久化规则迁移；没有独立配置包提示。 */
     public static synchronized void initialize() {
-        String selected = choose(detectionReady, oneConfigInstalled, HudConfig.hudEditorUi);
-        if (selected.equals(HudConfig.hudEditorUi)) {
-            return;
-        }
+        String selected = choose(false, oneConfigInstalled, HudConfig.hudEditorUi);
+        if (selected.equals(HudConfig.hudEditorUi)) return;
         HudConfig.hudEditorUi = selected;
         HudConfig.save();
-
-        noticeShownAt = 0L;
-        noticePending = true;
-
-        System.out.println("[MuoniumPlayer] 检测到已安装 OneConfig，为避免冲突已将 HUD 设置界面切换为内置界面，并且不下载MuoniumConfig");
     }
 
-    /**
-     * 仅用于显示一次性提示文案（10 秒后自动隐藏）。
-     * 配置修改和保存请求在 {@link #initialize()} 中进行，此处不再复原。
-     */
-    public static synchronized boolean noticeVisible() {
-        if (!noticePending) return false;
-        long now = System.nanoTime();
-        if (noticeShownAt == 0L) noticeShownAt = now;
-        if (now - noticeShownAt >= 10_000_000_000L) {
-            noticePending = false;
-            return false;
-        }
-        return true;
+    /** 兼容旧提示层调用；内置设置无需下载或重启提示。 */
+    public static boolean noticeVisible() {
+        return false;
     }
 }
