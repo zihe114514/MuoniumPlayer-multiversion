@@ -12,6 +12,8 @@ import java.util.Properties;
 /** Installs this platform on first background use, then loads the JavaCPP audio and bounded video-cover bindings. */
 public final class FfmpegRuntime {
     private static volatile boolean loaded;
+    /* Nested mod JARs do not reliably expose native entries through the outer
+       class loader; Windows is the embedded lane, so let JavaCPP verify it. */
     private static final boolean EMBEDDED_NATIVE = detectEmbeddedNative();
     private static volatile String platformOverride;
     private static volatile Path nativeDirectory;
@@ -86,6 +88,7 @@ public final class FfmpegRuntime {
     private static boolean detectEmbeddedNative() {
         try {
             String platform = platform();
+            if (platform.equals("windows-x86_64")) return true;
             String jni = platform.startsWith("windows") ? "jniavutil.dll"
                     : platform.startsWith("macosx") ? "libjniavutil.dylib" : "libjniavutil.so";
             return FfmpegRuntime.class.getResource("/org/bytedeco/ffmpeg/" + platform + "/" + jni) != null;
