@@ -93,6 +93,16 @@ final class HudOverlayStage {
         bubble = null;
     }
 
+    /** Deterministic selection hook used only by the shared Skija raster probe. */
+    void probeSelect(Kind kind) {
+        selected = kind == null ? Kind.NONE : kind;
+        engaged = Kind.NONE;
+        pressed = false;
+        moved = false;
+        guides.clear();
+        bubble = null;
+    }
+
     /**
      * 每帧推进一次。
      *

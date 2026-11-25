@@ -1,6 +1,5 @@
 package com.muoniumplayer.core.screens.hud;
 
-import com.muoniumplayer.compat.mc.Gui;
 import com.muoniumplayer.compat.mc.GuiScreen;
 import com.muoniumplayer.compat.mc.GuiTextField;
 import com.muoniumplayer.compat.gl.GL11;
@@ -30,6 +29,7 @@ import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
 import com.muoniumplayer.render.skija.SkijaClip;
 import com.muoniumplayer.render.skija.SkijaGfx;
 import com.muoniumplayer.render.skija.SkijaShapes;
+import io.github.humbleui.skija.Canvas;
 
 import java.awt.Color;
 import java.io.IOException;
@@ -265,6 +265,10 @@ public class MConfigHudScreen extends GuiScreen {
     private GuiTextField hexColorInput;
     private boolean settingsDirty;
     private boolean resetConfirmationVisible;
+    /** True only for the deterministic raster probe; never set by the live screen. */
+    private boolean probeMode;
+    private int[] probeInfoRect;
+    private int[] probeLyricRect;
 
     private final HudOverlayStage stage = new HudOverlayStage();
     private float popGate;
@@ -311,6 +315,111 @@ public class MConfigHudScreen extends GuiScreen {
 
     private static final Map<CFontRenderer, GlyphInkMetrics> GRID_CACHE =
             new IdentityHashMap<CFontRenderer, GlyphInkMetrics>();
+
+    /**
+     * Renders the real settings surface into a caller-owned raster canvas.
+     * The live Screen path and this probe share the same layout, cards and overlays.
+     */
+    public static boolean renderProbe(Canvas target, int targetWidth, int targetHeight,
+                                      int category, String surface) {
+        if (target == null || targetWidth <= 0 || targetHeight <= 0) return false;
+        final MConfigHudScreen screen = new MConfigHudScreen();
+        screen.probeMode = true;
+        screen.width = targetWidth;
+        screen.height = targetHeight;
+        screen.categoryIndex = Math.max(0, Math.min(HudSettingsModel.categories().length - 1, category));
+        screen.scrollByCategory = new int[HudSettingsModel.categories().length];
+        screen.pageFade = 1.0;
+        screen.listFade = 1.0;
+        screen.plate = 1.0f;
+        screen.layerAlpha = 1.0f;
+        screen.editGate = "hud-editor".equals(surface) ? 1.0f : 0.0f;
+        screen.configureProbeSurface(surface);
+        return SkijaGfx.renderTo(target, new Runnable() {
+            @Override
+            public void run() {
+                target.clear(0xFF0B1017);
+                screen.drawProbeSurface(surface);
+            }
+        });
+    }
+
+    private void configureProbeSurface(String surface) {
+        if (surface == null) surface = "page";
+        if ("dropdown".equals(surface)) {
+            openChoice = firstEntry(HudSettingsModel.Kind.CHOICE);
+        } else if ("color-picker".equals(surface)) {
+            HudSettingsModel.Entry color = firstEntry(HudSettingsModel.Kind.COLOR);
+            if (color != null) {
+                editingColor = color.colorTarget;
+                pickerHue = 0.66f;
+                pickerSaturation = 0.72f;
+                pickerBrightness = 0.88f;
+            }
+        } else if ("reset-dialog".equals(surface)) {
+            resetConfirmationVisible = true;
+        } else if ("hud-editor".equals(surface)) {
+            editing = true;
+            stage.probeSelect(HudOverlayStage.Kind.INFO);
+        } else if ("search".equals(surface)) {
+            searchQuery = "歌词";
+        } else {
+            HudSetting slider = firstSlider();
+            if (slider != null) {
+                expandedEntry = firstEntry(slider);
+            }
+        }
+    }
+
+    private HudSettingsModel.Entry firstEntry(HudSettingsModel.Kind kind) {
+        for (HudSettingsModel.Category category : HudSettingsModel.categories()) {
+            for (HudSettingsModel.Group group : category.groups) {
+                for (HudSettingsModel.Entry entry : group.entries) {
+                    if (entry.isVisible() && entry.kind == kind) return entry;
+                }
+            }
+        }
+        return null;
+    }
+
+    private HudSetting firstSlider() {
+        HudSettingsModel.Entry entry = firstEntry(HudSettingsModel.Kind.SLIDER);
+        return entry == null ? null : entry.setting;
+    }
+
+    private HudSettingsModel.Entry firstEntry(HudSetting setting) {
+        if (setting == null) return null;
+        for (HudSettingsModel.Category category : HudSettingsModel.categories()) {
+            for (HudSettingsModel.Group group : category.groups) {
+                for (HudSettingsModel.Entry entry : group.entries) {
+                    if (entry.setting == setting) return entry;
+                }
+            }
+        }
+        return null;
+    }
+
+    private void drawProbeSurface(String surface) {
+        CFontRenderer fr = FontManager.pf12;
+        if (fr == null) return;
+        if ("hud-editor".equals(surface)) {
+            int[] info = { 116, 116, 230, 56 };
+            int[] lyrics = { 420, 286, 330, 112 };
+            probeInfoRect = info;
+            probeLyricRect = lyrics;
+            drawStageOverlays(fr, info, lyrics, 235, 144);
+            return;
+        }
+        int[] panel = panelBounds();
+        drawPanel(fr, panel, 0, 0, 0, true);
+        if ("dropdown".equals(surface)) {
+            drawChoiceDropdown(fr, panel, panel[0] + panel[2] - 80, panel[1] + 230);
+        } else if ("color-picker".equals(surface) && editingColor != HudSettingsModel.ColorTarget.NONE) {
+            drawColorPicker(fr, panel, panel[0] + panel[2] / 2, panel[1] + panel[3] / 2);
+        } else if ("reset-dialog".equals(surface)) {
+            drawResetConfirmation(fr, panel[0], panel[1]);
+        }
+    }
 
     // ==================== 生命周期 ====================
 
@@ -496,7 +605,7 @@ public class MConfigHudScreen extends GuiScreen {
             // 吸附参考线：紫色的（OneConfig 语言）。编辑态才画。
             if (editGate > 0.01f) {
                 for (int[] guide : stage.guides) {
-                    Gui.drawRect(guide[0], guide[1], guide[0] + guide[2], guide[1] + guide[3],
+                    drawRoundedRect(guide[0], guide[1], guide[2], guide[3], 0,
                             fade(MConfigTheme.SNAP_PURPLE, editGate));
                 }
             }
@@ -583,6 +692,14 @@ public class MConfigHudScreen extends GuiScreen {
         return new int[] { (width - panelW) / 2, (height - panelH) / 2, panelW, panelH };
     }
 
+    private int layoutWidth() {
+        return probeMode ? width : (int) RenderSystem.getLayoutWidth();
+    }
+
+    private int layoutHeight() {
+        return probeMode ? height : (int) RenderSystem.getLayoutHeight();
+    }
+
     /**
      * 内容区够不够摆两列。窄窗口（手机竖屏、小尺寸 GUI 缩放）下强行双列会把
      * 卡内文字压成两三个字一行，此时退回单列，卡片仍然有展开箭头。
@@ -628,13 +745,13 @@ public class MConfigHudScreen extends GuiScreen {
         boolean frosted = GlassLook.paintFrost(GlassLook.Surface.EDITORS,
                 panelX, panelY, panelW, panelH, PANEL_RADIUS, layerAlpha);
         drawRoundedRect(panelX, panelY, panelW, panelH, PANEL_RADIUS,
-                frosted ? GlassLook.tintedArgb(GlassLook.Surface.EDITORS, MConfigTheme.GRAY_800)
-                        : MConfigTheme.GRAY_800);
+                frosted ? GlassLook.tintedArgb(GlassLook.Surface.EDITORS, MuoniumDesignSystem.surface())
+                        : MuoniumDesignSystem.surface());
         if (frosted) {
             GlassLook.paintEdge(GlassLook.Surface.EDITORS, panelX, panelY, panelW, panelH,
                     PANEL_RADIUS, layerAlpha);
         }
-        drawRoundedRect(panelX + 8, panelY, panelW - 16, 1, 1, MConfigTheme.PANEL_EDGE);
+        drawRoundedRect(panelX + 8, panelY, panelW - 16, 1, 1, MuoniumDesignSystem.outline());
 
         HudSettingsModel.Category[] categories = HudSettingsModel.categories();
         HudSettingsModel.Category active = categories[clampCategory()];
@@ -677,7 +794,7 @@ public class MConfigHudScreen extends GuiScreen {
         } else {
             setScroll(scroll(), maxScroll);
         }
-        displayScroll = Interpolations.interpolate(displayScroll, scroll(), 19f);
+        displayScroll = probeMode ? scroll() : Interpolations.interpolate(displayScroll, scroll(), 19f);
         if (Math.abs(displayScroll - scroll()) < 0.4f) displayScroll = scroll();
         layoutRows(contentX, listY, contentW, active);
 
@@ -774,8 +891,8 @@ public class MConfigHudScreen extends GuiScreen {
     }
 
     private void drawSearch(CFontRenderer fr, int x, int y, int mouseX, int mouseY) {
-        ensureSearchInput();
-        boolean focused = searchInput.isFocused();
+        if (!probeMode) ensureSearchInput();
+        boolean focused = !probeMode && searchInput != null && searchInput.isFocused();
         float focus = motion("search.focus", focused ? 1f : 0f, FOCUS_MS);
         float hp = named("search.box", isInside(mouseX, mouseY, x, y, SEARCH_W, SEARCH_H));
 
@@ -786,7 +903,7 @@ public class MConfigHudScreen extends GuiScreen {
         drawIcon(FontManager.settingsIcon24, HudSettingsIcons.SEARCH, x + 12, y + SEARCH_H / 2.0,
                 mix(MConfigTheme.TEXT_TERTIARY, MConfigTheme.TEXT_SECONDARY, Math.max(hp, focus)));
 
-        String text = searchInput.getText();
+        String text = probeMode ? searchQuery : searchInput.getText();
         boolean hasText = !text.isEmpty();
         int clearSize = 16;
         if (hasText) {
@@ -801,10 +918,12 @@ public class MConfigHudScreen extends GuiScreen {
 
         int textLeft = x + 24;
         int textRight = x + SEARCH_W - (hasText ? clearSize + 8 : 10);
-        searchInput.xPosition = textLeft;
-        searchInput.yPosition = y + 5;
-        searchInput.width = Math.max(10, textRight - textLeft);
-        searchInput.height = SEARCH_H - 8;
+        if (!probeMode && searchInput != null) {
+            searchInput.xPosition = textLeft;
+            searchInput.yPosition = y + 5;
+            searchInput.width = Math.max(10, textRight - textLeft);
+            searchInput.height = SEARCH_H - 8;
+        }
         if (!hasText && !focused) {
             drawText(fr, "搜索设置…", textLeft, y + 6, MConfigTheme.TEXT_TERTIARY);
         } else {
@@ -1420,7 +1539,7 @@ public class MConfigHudScreen extends GuiScreen {
         int inputX = cell.x + cell.w - 14 - VALUE_W;
         int trackX = cell.x + 14;
         int trackW = Math.max(60, inputX - 10 - trackX);
-        ensureSliderValueInput();
+        if (!probeMode) ensureSliderValueInput();
         boolean inputting = editingSliderValue == setting && sliderValueInput != null
                 && sliderValueInput.isFocused();
         if (inputting) {
@@ -1773,18 +1892,22 @@ public class MConfigHudScreen extends GuiScreen {
         Color preview = Color.getHSBColor(pickerHue, pickerSaturation, pickerBrightness);
         drawRoundedRect(x + 14, svY + SV_H + 14, 24, HEX_INPUT_H, 6, preview.getRGB() | 0xFF000000);
 
-        ensureHexColorInput();
+        if (!probeMode) ensureHexColorInput();
         int inputX = x + 48;
         int inputY = svY + SV_H + 14;
-        hexColorInput.xPosition = inputX + 6;
-        hexColorInput.yPosition = inputY + 5;
-        hexColorInput.width = HEX_INPUT_W - 12;
-        hexColorInput.height = HEX_INPUT_H - 10;
+        if (hexColorInput != null) {
+            hexColorInput.xPosition = inputX + 6;
+            hexColorInput.yPosition = inputY + 5;
+            hexColorInput.width = HEX_INPUT_W - 12;
+            hexColorInput.height = HEX_INPUT_H - 10;
+        }
         drawRoundedRect(inputX, inputY, HEX_INPUT_W, HEX_INPUT_H, 6, MConfigTheme.GRAY_850);
         drawOutline(inputX, inputY, HEX_INPUT_W, HEX_INPUT_H, 6, 1,
-                hexColorInput.isFocused() ? MConfigTheme.primary() : MConfigTheme.GRAY_700);
-        drawText(fr, hexColorInput.getText(), inputX + 7, inputY + 5, MConfigTheme.TEXT_PRIMARY);
-        if (hexColorInput.isFocused()) {
+                hexColorInput != null && hexColorInput.isFocused()
+                        ? MConfigTheme.primary() : MConfigTheme.GRAY_700);
+        String hex = hexColorInput == null ? toHex(preview) : hexColorInput.getText();
+        drawText(fr, hex, inputX + 7, inputY + 5, MConfigTheme.TEXT_PRIMARY);
+        if (hexColorInput != null && hexColorInput.isFocused()) {
             int caretX = inputX + 8 + fr.getStringWidth(hexColorInput.getText());
             drawRoundedRect(caretX, inputY + 5, 1, HEX_INPUT_H - 10, 1, 0xFFEAF3FF);
         }
@@ -1793,23 +1916,20 @@ public class MConfigHudScreen extends GuiScreen {
 
     private void drawSaturationBrightnessArea(int x, int y, int w, int h) {
         int hueRgb = Color.HSBtoRGB(pickerHue, 1.0f, 1.0f) | 0xFF000000;
-        Gui.drawRect(x, y, x + w, y + h, hueRgb);
-        for (int col = 0; col < w; col++) {
-            int alpha = (int) (255.0f * (1.0f - col / (float) (w - 1)));
-            Gui.drawRect(x + col, y, x + col + 1, y + h, alpha << 24 | 0xFFFFFF);
-        }
-        for (int rowIndex = 0; rowIndex < h; rowIndex++) {
-            int alpha = (int) (255.0f * (rowIndex / (float) (h - 1)));
-            Gui.drawRect(x, y + rowIndex, x + w, y + rowIndex + 1, alpha << 24);
-        }
+        drawRoundedRect(x, y, w, h, 6, hueRgb);
+        SkijaShapes.gradientRect(x, y, x + w, y + h,
+                fade(0xFFFFFFFF, layerAlpha), fade(0x00FFFFFF, layerAlpha), true);
+        SkijaShapes.gradientRect(x, y, x + w, y + h,
+                fade(0x00000000, layerAlpha), fade(0xFF000000, layerAlpha), false);
         drawPickerMarker(x + Math.round(pickerSaturation * (w - 1)),
                 y + Math.round((1.0f - pickerBrightness) * (h - 1)));
     }
 
     private void drawHueBar(int x, int y, int w, int h) {
         for (int row = 0; row < h; row++) {
-            Gui.drawRect(x, y + row, x + w, y + row + 1,
-                    Color.HSBtoRGB(1.0f - row / (float) (h - 1), 1.0f, 1.0f) | 0xFF000000);
+            drawRoundedRect(x, y + row, w, 1, 0,
+                    fade(Color.HSBtoRGB(1.0f - row / (float) (h - 1), 1.0f, 1.0f)
+                            | 0xFF000000, layerAlpha));
         }
         int markerY = y + Math.round((1.0f - pickerHue) * (h - 1));
         drawRoundedRect(x - 2, markerY - 5, w + 4, 10, 5, 0xFF000000);
@@ -1817,17 +1937,7 @@ public class MConfigHudScreen extends GuiScreen {
     }
 
     private static void drawPickerMarker(int x, int y) {
-        drawRing(x, y, 3, 0xFF000000);
-        drawRing(x, y, 2, 0xFFFFFFFF);
-    }
-
-    private static void drawRing(int cx, int cy, int r, int color) {
-        for (int a = 0; a < 64; a++) {
-            double t = a / 64.0 * Math.PI * 2;
-            int px = cx + (int) Math.round(Math.cos(t) * r);
-            int py = cy + (int) Math.round(Math.sin(t) * r);
-            Gui.drawRect(px, py, px + 1, py + 1, color);
-        }
+        SkijaShapes.radialRing(x, y, 2.0, 3.5, 0xFFFFFFFF, 0xFF000000);
     }
 
     // ==================== 按钮 ====================
@@ -2406,7 +2516,7 @@ public class MConfigHudScreen extends GuiScreen {
     // ==================== 恢复默认确认 ====================
 
     private void drawResetConfirmation(CFontRenderer fr, int mouseX, int mouseY) {
-        Gui.drawRect(0, 0, width, height, fade(0x6D000000, dialogGate));
+        drawRoundedRect(0, 0, width, height, 0, fade(0x6D000000, dialogGate));
         int[] box = resetDialogBounds();
         drawSoftShadow(box[0], box[1], box[2], box[3], 12);
         drawRoundedRect(box[0], box[1], box[2], box[3], 12, MConfigTheme.FLOAT_BG);
@@ -2480,16 +2590,19 @@ public class MConfigHudScreen extends GuiScreen {
     }
 
     private int[] widgetRect(HudOverlayStage.Kind kind) {
+        if (probeMode) {
+            return kind == HudOverlayStage.Kind.INFO ? probeInfoRect : probeLyricRect;
+        }
         if (kind == HudOverlayStage.Kind.INFO) {
             int w = (int) (INFO_BASE_W * HudConfig.infoScale);
             int h = (int) (INFO_BASE_H * HudConfig.infoScale);
-            return new int[] { (int) (HudConfig.infoX * (RenderSystem.getLayoutWidth() - w)),
-                    (int) (HudConfig.infoY * (RenderSystem.getLayoutHeight() - h)), w, h };
+            return new int[] { (int) (HudConfig.infoX * (layoutWidth() - w)),
+                    (int) (HudConfig.infoY * (layoutHeight() - h)), w, h };
         }
         int w = (int) (HudConfig.lyricWidth * HudConfig.lyricScale);
         int h = (int) (HudConfig.lyricHeight * HudConfig.lyricScale);
-        return new int[] { (int) (HudConfig.lyricX * (RenderSystem.getLayoutWidth() - w)),
-                (int) (HudConfig.lyricY * (RenderSystem.getLayoutHeight() - h)), w, h };
+        return new int[] { (int) (HudConfig.lyricX * (layoutWidth() - w)),
+                (int) (HudConfig.lyricY * (layoutHeight() - h)), w, h };
     }
 
     private int widgetPopoverH() {
@@ -2508,7 +2621,7 @@ public class MConfigHudScreen extends GuiScreen {
         if (!stage.hasSelection()) return new int[] { 0, 0, WIDGET_POPOVER_W, widgetPopoverH() };
         return HudOverlayStage.popoverBounds(widgetRect(stage.selected()),
                 WIDGET_POPOVER_W, widgetPopoverH(),
-                (int) RenderSystem.getLayoutWidth(), (int) RenderSystem.getLayoutHeight());
+                layoutWidth(), layoutHeight());
     }
 
     /**
@@ -2550,7 +2663,7 @@ public class MConfigHudScreen extends GuiScreen {
         if (stage.bubble != null) {
             int textW = fr.getStringWidth(stage.bubble);
             int chipW = textW + 18;
-            int chipX = Math.max(4, Math.min((int) RenderSystem.getLayoutWidth() - chipW - 4,
+            int chipX = Math.max(4, Math.min(layoutWidth() - chipW - 4,
                     r[0] + (r[2] - chipW) / 2));
             int chipY = Math.max(4, r[1] - 24);
             drawRoundedRect(chipX, chipY, chipW, 18, 9, MConfigTheme.FLOAT_BG);
@@ -3132,10 +3245,10 @@ public class MConfigHudScreen extends GuiScreen {
 
     /** 实线边框（整数坐标版，编辑态框用）。 */
     private void drawRectBorder(int x, int y, int w, int h, int t, int color) {
-        Gui.drawRect(x, y, x + w, y + t, color);
-        Gui.drawRect(x, y + h - t, x + w, y + h, color);
-        Gui.drawRect(x, y, x + t, y + h, color);
-        Gui.drawRect(x + w - t, y, x + w, y + h, color);
+        drawRoundedRect(x, y, w, t, 0, color);
+        drawRoundedRect(x, y + h - t, w, t, 0, color);
+        drawRoundedRect(x, y, t, h, 0, color);
+        drawRoundedRect(x + w - t, y, t, h, 0, color);
     }
 
     private void drawSoftShadow(int x, int y, int w, int h, int radius) {
@@ -3158,7 +3271,15 @@ public class MConfigHudScreen extends GuiScreen {
     private int scissorDepth;
 
     private void beginScissor(int x, int y, int w, int h) {
-        if (w <= 0 || h <= 0) {
+        if (probeMode) {
+            Canvas target = SkijaGfx.canvas();
+            if (target != null) {
+                SkijaGfx.pushMatrix();
+                int clipW = w <= 0 || h <= 0 ? width : w;
+                int clipH = w <= 0 || h <= 0 ? height : h;
+                target.clipRect(io.github.humbleui.types.Rect.makeXYWH(x, y, clipW, clipH), false);
+            }
+        } else if (w <= 0 || h <= 0) {
             SkijaClip.scissorBegin(0, 0, (int) RenderSystem.getLayoutWidth(),
                     (int) RenderSystem.getLayoutHeight());
         } else {
@@ -3170,7 +3291,8 @@ public class MConfigHudScreen extends GuiScreen {
     private void endScissor() {
         if (scissorDepth > 0) {
             scissorDepth--;
-            SkijaClip.scissorEnd();
+            if (probeMode) SkijaGfx.popMatrix();
+            else SkijaClip.scissorEnd();
         }
     }
 

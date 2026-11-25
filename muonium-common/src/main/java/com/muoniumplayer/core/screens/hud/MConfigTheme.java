@@ -125,38 +125,34 @@ public final class MConfigTheme {
      * 用 {@code ELEMENT_BACKGROUND} 才能和播放器里的行卡片对上。
      */
     public static int surface() {
-        resolveThemeColors();
-        return surfaceCache;
+        // MD3 owns the live semantic surface; the cache remains as a legacy fallback for
+        // callers that still use the older palette helpers below.
+        return MuoniumDesignSystem.surfaceContainer();
     }
 
     /** 卡片悬停面 = 主题「控件悬停」，原样使用（主题自己已经把它提亮过一档）。 */
     public static int surfaceHover() {
-        resolveThemeColors();
-        return surfaceHoverCache;
+        return MuoniumDesignSystem.surfaceContainerHigh();
     }
 
     /** 卡片展开面：悬停面再往主色偏一点，表达「这张卡正在被操作」。 */
     public static int surfaceActive() {
-        resolveThemeColors();
-        return surfaceActiveCache;
+        return mix(MuoniumDesignSystem.surfaceContainerHigh(), MuoniumDesignSystem.accentContainer(), 0.42f);
     }
 
     /** 卡片说明文字 = 主题「次要文字」，补足可读 alpha。 */
     public static int descriptionText() {
-        resolveThemeColors();
-        return descriptionCache;
+        return fade(MuoniumDesignSystem.onSurfaceVariant(), 0.88f);
     }
 
     /** 卡片内分隔线：主题描边色压到很低，只留一道「这里分层了」的暗示。 */
     public static int divider() {
-        resolveThemeColors();
-        return dividerCache;
+        return fade(MuoniumDesignSystem.outline(), 0.36f);
     }
 
     /** 浮层（tooltip / 下拉 / 取色器）：主题输入框底色再压深一点，保证压得住下面的内容。 */
     public static int floatSurface() {
-        resolveThemeColors();
-        return floatCache;
+        return MuoniumDesignSystem.surfaceContainerHigh();
     }
 
     private static void resolveThemeColors() {

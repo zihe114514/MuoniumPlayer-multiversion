@@ -51,6 +51,7 @@ public final class SkijaGfx {
     /** 当前颜色，ARGB。对应 {@code glColor4f}。默认不透明白，与 GL 一致。 */
     private static int currentColor = 0xFFFFFFFF;
     private static BlendMode currentBlend = DEFAULT_BLEND;
+    private static final ThreadLocal<Canvas> CANVAS_OVERRIDE = new ThreadLocal<Canvas>();
 
     // ---- 属性栈（颜色 + 混合模式）----
     private static int[] colorStack = new int[64];
@@ -99,12 +100,35 @@ public final class SkijaGfx {
 
     /** 帧内且宿主层可用时为 true。false 时所有绘制都必须整段跳过。 */
     public static boolean active() {
-        return SkijaHost.inFrame() && SkijaHost.canvas() != null;
+        return CANVAS_OVERRIDE.get() != null || SkijaHost.inFrame() && SkijaHost.canvas() != null;
     }
 
     /** 当前帧的 canvas，帧外为 null。 */
     public static Canvas canvas() {
-        return SkijaHost.canvas();
+        Canvas override = CANVAS_OVERRIDE.get();
+        return override == null ? SkijaHost.canvas() : override;
+    }
+
+    /** Runs the production Skija drawing path against a caller-owned raster canvas. */
+    public static boolean renderTo(Canvas target, Runnable draw) {
+        if (target == null || draw == null || SkijaHost.inFrame() || CANVAS_OVERRIDE.get() != null) {
+            return false;
+        }
+        int matrixBase = matrixDepth;
+        int attribBase = attribDepth;
+        int colorBase = currentColor;
+        BlendMode blendBase = currentBlend;
+        CANVAS_OVERRIDE.set(target);
+        try {
+            draw.run();
+            return true;
+        } finally {
+            restoreDepthTo(matrixBase);
+            attribDepth = attribBase;
+            currentColor = colorBase;
+            currentBlend = blendBase;
+            CANVAS_OVERRIDE.remove();
+        }
     }
 
     // ------------------------------------------------------------------
