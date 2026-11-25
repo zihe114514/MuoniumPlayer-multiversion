@@ -26,6 +26,8 @@ import java.util.Objects;
 final class SonnetCanvasRenderer implements AutoCloseable {
     static final float STAGE_WIDTH = 1280, STAGE_HEIGHT = 720;
     private static final float DESIGN_WIDTH = 200, DESIGN_HEIGHT = DESIGN_WIDTH * STAGE_HEIGHT / STAGE_WIDTH;
+    private static final double PLACEMENT_X_RATIO = 0.24, PLACEMENT_Y_RATIO = 0.15;
+    private static final double MAX_PLACEMENT_YAW = Math.toRadians(11), MAX_PLACEMENT_PITCH = Math.toRadians(4);
     private static final double STABLE_BLOB_PREWARM_LEAD_MS = 240.0;
     private static final int STABLE_BLOB_PREWARM_BUDGET = 2;
     private static SonnetCanvasRenderer instance;
@@ -58,6 +60,7 @@ final class SonnetCanvasRenderer implements AutoCloseable {
     private long pictureTime = Long.MIN_VALUE, pictureOptions;
     private int pictureShot = -1, pictureWidth;
     private double anchorX, anchorY, anchorZ, lastCamX, lastCamY, lastCamZ;
+    private int placementYawSign = 1, placementPitchSign = 1;
     private int anchorShot = -1;
     private float anchorYaw, anchorPitch;
     private long lastSongTime = Long.MIN_VALUE;
@@ -154,6 +157,7 @@ final class SonnetCanvasRenderer implements AutoCloseable {
                 anchorZ = camZ + camera.lookZ() * settings.distance;
                 anchorYaw = (float) camera.yawDeg(); anchorPitch = (float) camera.pitchDeg();
             }
+            if (camera != null) offsetNewAnchorFromCenter(camX, camY, camZ, settings);
             anchorShot = shotIndex;
         } else if (settings.keepDistance) {
             anchorX += camX - lastCamX;
@@ -225,6 +229,25 @@ final class SonnetCanvasRenderer implements AutoCloseable {
         }
     }
 
+    /** Keeps the canvas at a stable, song-specific off-center position without animating the camera. */
+    private void offsetNewAnchorFromCenter(double camX, double camY, double camZ,
+                                           WorldLyricsSettings settings) {
+        double rx = anchorX - camX, ry = anchorY - camY, rz = anchorZ - camZ;
+        double distance = Math.sqrt(rx * rx + ry * ry + rz * rz);
+        if (distance < 0.001) return;
+        double yaw = Math.atan2(-rx, rz);
+        double pitch = Math.atan2(-ry, Math.hypot(rx, rz));
+        double ratio = WorldLyricsState.PX_TO_WORLD * settings.scale / WorldLyricsState.DISTANCE_NORM;
+        yaw += placementYawSign * Math.min(MAX_PLACEMENT_YAW,
+                Math.atan(DESIGN_WIDTH * ratio * PLACEMENT_X_RATIO));
+        pitch += placementPitchSign * Math.min(MAX_PLACEMENT_PITCH,
+                Math.atan(DESIGN_HEIGHT * ratio * PLACEMENT_Y_RATIO));
+        double cosPitch = Math.cos(pitch);
+        anchorX = camX - Math.sin(yaw) * cosPitch * distance;
+        anchorY = camY - Math.sin(pitch) * distance;
+        anchorZ = camZ + Math.cos(yaw) * cosPitch * distance;
+    }
+
     private static double wrapDegrees(double angle) { return angle - Math.floor((angle + 180) / 360) * 360; }
 
     private static void reportRoute(String route) {
@@ -256,6 +279,9 @@ final class SonnetCanvasRenderer implements AutoCloseable {
         this.revision = revision;
         trackKey = key;
         program = SonnetProgram.compile(lyrics == null ? List.of() : lyrics, key);
+        int placementSeed = SonnetTypography.hash(key == null ? "sonnet" : key);
+        placementYawSign = (placementSeed & 1) == 0 ? -1 : 1;
+        placementPitchSign = (placementSeed & 2) == 0 ? -1 : 1;
         clearScenes();
         anchorShot = -1;
         lastSongTime = Long.MIN_VALUE;

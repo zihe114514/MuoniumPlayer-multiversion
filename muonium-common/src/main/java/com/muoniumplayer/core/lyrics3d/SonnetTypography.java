@@ -103,7 +103,7 @@ final class SonnetTypography {
                     heroScale = editorial == 3 ? 3.8f : editorial == 4 ? 4.2f : editorial == 2 ? 3.2f : 4;
                     supportScale = editorial == 3 ? 1.3f : editorial == 4 ? 1.25f : 1.2f;
                     vertical = (main || semi) && editorial != 2 && editorial != 3; break;
-                case TYPE_IMPACT: heroScale = 5.5f; supportScale = 1.5f; break;
+                case TYPE_IMPACT: heroScale = 4.8f; supportScale = 1.5f; break;
                 case FRAGMENT_COLLAGE:
                     heroScale = 3.2f; supportScale = 1.35f; vertical = semi || i % 4 == 0; break;
                 case TRACKING_RIBBON: heroScale = 3.5f; supportScale = 1.5f; break;
@@ -120,7 +120,8 @@ final class SonnetTypography {
             boolean rotates = vertical && visible(box.segment) > 1 && !cjk(box.segment.text);
             box.vertical = vertical && !rotates;
             box.rotationRad = rotates ? (float) Math.PI / 2 : 0;
-            measure(box, measure, width * 0.82f, height * 0.82f);
+            float fitRatio = kind == Kind.TYPE_IMPACT && main ? 0.72f : 0.82f;
+            measure(box, measure, width * fitRatio, height * fitRatio);
             if (kind == Kind.POSTER_BLOCKS && cjk(box.segment.text)) {
                 Box alternative = box.copy(); alternative.vertical = true; alternative.rotationRad = 0;
                 measure(alternative, measure, width * 0.82f, height * 0.82f);
@@ -137,10 +138,12 @@ final class SonnetTypography {
         List<Box> output = new ArrayList<>();
         if (kind != Kind.QUIET_TABLEAU && kind != Kind.POSTER_BLOCKS) {
             int count = 0;
+            float outlineScaleLimit = kind == Kind.TYPE_IMPACT ? 4.8f : 5.5f;
             for (Box b : boxes) {
                 if (!b.hero) continue;
                 Box copy = b.copy(); copy.role = Role.DECORATION; copy.hero = copy.semiHero = false;
-                float size = baseFontSize * Math.max(2.8f, Math.min(b.fontSize / baseFontSize * 3.5f, 5.5f));
+                float size = baseFontSize * Math.max(2.8f,
+                        Math.min(b.fontSize / baseFontSize * 3.5f, outlineScaleLimit));
                 copy.vertical = false; copy.fontSize = size;
                 copy.x = b.x - width * (0.1f - count * 0.03f);
                 copy.y = b.y - height * (0.05f - count * 0.02f);

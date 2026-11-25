@@ -44,8 +44,23 @@ class SonnetTypographyTest {
         SonnetTypography.Box hero = impact.stream().filter(b -> b.role == SonnetTypography.Role.HERO).findFirst().orElseThrow();
         SonnetTypography.Box support = impact.stream().filter(b -> b.role == SonnetTypography.Role.SUPPORT).findFirst().orElseThrow();
         assertTrue(hero.fontSize > support.fontSize * 2);
+        assertTrue(impact.stream().filter(b -> b.role == SonnetTypography.Role.DECORATION)
+                .allMatch(b -> b.fontSize <= 4.8f * 40 + 1e-3f));
         assertTrue(SonnetTypography.layout(lines, SonnetTypography.Kind.POSTER_BLOCKS, 1280, 720, 40, MEASURE)
                 .stream().noneMatch(b -> b.role == SonnetTypography.Role.DECORATION));
+    }
+
+    @Test void typeImpactHeroIsSlightlySmallerWithoutChangingSupportScale() {
+        List<List<SonnetTypography.Segment>> lines = List.of(segments("a", "overwhelming", "a"));
+        List<SonnetTypography.Box> impact = SonnetTypography.layout(lines,
+                SonnetTypography.Kind.TYPE_IMPACT, 1280, 720, 100, MEASURE);
+        SonnetTypography.Box hero = impact.stream()
+                .filter(box -> box.role == SonnetTypography.Role.HERO).findFirst().orElseThrow();
+        SonnetTypography.Box support = impact.stream()
+                .filter(box -> box.role == SonnetTypography.Role.SUPPORT).findFirst().orElseThrow();
+        assertTrue(hero.fontSize < 4.8f * 100);
+        assertTrue(hero.width <= 1280 * 0.72f + 1e-3f);
+        assertEquals(1.5f * 100, support.fontSize, 1e-3f);
     }
 
     @Test void verticalLatinIsQuarterTurnedAsABlockAndCjkKeepsItsGlyphColumns() {

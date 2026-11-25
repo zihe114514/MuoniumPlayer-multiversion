@@ -160,6 +160,39 @@ class SonnetLivePipelineTest {
         }
     }
 
+    @Test void newAndReanchoredSonnetCanvasStayOffCenterAtItsConfiguredDistance() throws Exception {
+        try (Harness run = new Harness("[00:01.000]微光穿过夜色\n[00:04.000]再次出现")) {
+            run.settings.stayOnScreen = true;
+            run.settings.distance = 14;
+            run.camera = view(100, 64, 0, 0);
+            run.frame(1700, true);
+            double firstDistance = Math.sqrt(run.relX * run.relX + run.relY * run.relY + run.relZ * run.relZ);
+            double firstYawOffset = Math.atan2(-run.relX, run.relZ);
+            assertEquals(run.settings.distance, firstDistance, 1e-3);
+            assertTrue(Math.abs(firstYawOffset) > Math.toRadians(8),
+                    "The normal lyric-row anchor should also start away from center");
+
+            run.camera = view(0, 64, 0, 0);
+            run.frame(1700, false);
+
+            double distance = Math.sqrt(run.relX * run.relX + run.relY * run.relY + run.relZ * run.relZ);
+            double yawOffset = Math.atan2(-run.relX, run.relZ);
+            double pitchOffset = Math.atan2(-run.relY, Math.hypot(run.relX, run.relZ));
+            assertEquals(run.settings.distance, distance, 1e-3,
+                    "Position bias must not change the configured radial distance");
+            assertTrue(Math.abs(yawOffset) > Math.toRadians(8),
+                    "A new canvas should not be pinned to the horizontal view center");
+            assertTrue(Math.abs(pitchOffset) > Math.toRadians(2),
+                    "A new canvas should not be pinned to the vertical view center");
+
+            double x = run.relX, y = run.relY, z = run.relZ;
+            run.frame(1900, false);
+            assertEquals(x, run.relX, 1e-6, "Playback must not animate the canvas position");
+            assertEquals(y, run.relY, 1e-6, "Playback must not animate the canvas position");
+            assertEquals(z, run.relZ, 1e-6, "Playback must not animate the canvas position");
+        }
+    }
+
     private static WorldLyricsState.CameraView view(double x, double y, double z, double yaw) {
         return new WorldLyricsState.CameraView() {
             public double eyeX() { return x; } public double eyeY() { return y; } public double eyeZ() { return z; }
