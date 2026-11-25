@@ -252,10 +252,10 @@ class TouchScrollWiringStaticTest {
             assertTrue(source.contains("isVerticalDrag()"),
                     relative + " 必须对纵向手势让位（滚列表滑过滑条不得误触）");
         }
-        // ControlsBar 的进度条 seek 同时改成了松手沿点按。
+        // ControlsBar 的顶边进度条：按下只起手，松手沿才结算 seek；纵向手势锁定时整段让位（拖到一半的也撤掉）。
         String controls = read(Paths.get("core", "screens", "ncm", "panels", "ControlsBar.java").toString());
-        assertTrue(controls.contains("tapEdge") && controls.contains("lastPressWasDrag()"),
-                "底栏进度条 seek 必须走松手沿 + 非拖动判定");
+        assertTrue(controls.contains("} else if (this.pressed) {") && controls.contains("TouchGestures.get().isVerticalDrag()"),
+                "底栏进度条 seek 必须在松手沿结算，并对纵向手势让位");
         // ThemePaletteOverlay 的滑条补上了按下即起手（延迟分发后 click 不再承载拖动起手）。
         String palette = read(Paths.get("core", "screens", "ncm", "ThemePaletteOverlay.java").toString());
         assertTrue(palette.contains("this.dragging = true;\n                applyFromMouse(mouseX);"),

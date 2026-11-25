@@ -133,8 +133,8 @@ class SegmentControlStaticTest {
 
         // 轨道宽度取两半里较宽的那个，否则另一串字会溢出自己那一半。
         String nav = read(NAVIGATE);
-        assertTrue(nav.contains("Math.max(FontManager.pf10bold.getStringWidthD(\"歌曲\"),")
-                        && nav.contains("FontManager.pf10bold.getStringWidthD(\"歌单\"))"),
+        assertTrue(nav.contains("Math.max(FontManager.pf12bold.getStringWidthD(\"歌曲\"),")
+                        && nav.contains("FontManager.pf12bold.getStringWidthD(\"歌单\"))"),
                 "搜索栏那格的轨道宽度只按一个词算：两个词谁宽谁溢出");
     }
 

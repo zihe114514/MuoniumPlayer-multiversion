@@ -297,7 +297,7 @@ class SheetMotionStaticTest {
 
         // 起点在按下那一刻量，落点由卡片自己认领。
         String nav = read(NCM.resolve("panels").resolve("NavigateBar.java"));
-        assertTrue(nav.contains("openMusicSourceManager(SheetHeroRelay.from(sourceMenu.getX()"),
+        assertTrue(nav.contains("private final class SourcePill") && nav.contains("openMusicSourceManager(SheetHeroRelay.from(this.getX(), this.getY(),"),
                 "来源按钮不再交出起点：接力整趟放弃");
         assertTrue(read(ProjectPaths.sourceFile(Paths.get("com/muoniumplayer/core/screens/ncm", "MusicSourceOverlay.java"))).contains("hero(card)"),
                 "音乐来源没有标出落点卡片");

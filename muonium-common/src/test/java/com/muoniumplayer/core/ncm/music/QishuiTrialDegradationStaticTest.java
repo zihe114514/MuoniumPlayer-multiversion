@@ -196,8 +196,8 @@ class QishuiTrialDegradationStaticTest {
         assertTrue(badge.contains("QishuiMusicService.membershipBadgeText()"),
                 "汽水侧经服务层门面取文案（SessionStore 包私有，不直接暴露）");
         // 底板三件套的显隐与文案都跟随该方法，宽度假定过 null 收 alpha。
-        assertTrue(nav.contains("membershipBadgeText() != null"),
-                "底板/图标的 alpha 必须按文案判空收放");
+        assertTrue(nav.contains("String badge = membershipBadgeText();") && nav.contains("if (badge != null)"),
+                "会员标必须按文案判空显隐（普通用户不亮）");
 
         String service = read(MUSIC + "QishuiMusicService.java");
         String facade = methodBody(service, "public static String membershipBadgeText()");

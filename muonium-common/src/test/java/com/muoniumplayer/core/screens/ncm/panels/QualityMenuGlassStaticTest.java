@@ -44,14 +44,16 @@ class QualityMenuGlassStaticTest {
     }
 
     @Test
-    @DisplayName("触发按钮与弹出菜单都贴真背景（PLATE），底色按浓度压薄")
+    @DisplayName("弹出菜单贴真背景（PLATE），底色按浓度压薄；触发标签无底")
     void selectorAndMenuUsePlate() throws Exception {
         String src = source();
-        String selector = blockOf(src, "qualitySelector\n");
-        assertTrue(selector.contains("setGlassPlate(GlassLook.Surface.PLAYER)"),
-                "音质按钮没有上 PLATE，它就还是页脚那颗实心深色胶囊");
-        assertTrue(selector.contains("setFillAlpha(GlassLook.washAlpha"),
-                "音质按钮的底色没压薄：贴上去的真背景会被自己的实心色挡回去");
+        // 触发标签是 SPlayer 的 border 小标签：只有描边、没有底，玻璃主题下也就没有一块实心色挡住背景。
+        int chip = src.indexOf("private final class QualityChip");
+        int chipEnd = src.indexOf("private final class ProgressStrip", chip);
+        assertTrue(chip >= 0 && chipEnd > chip, "找不到音质标签控件");
+        String selector = src.substring(chip, chipEnd);
+        assertTrue(selector.contains("SPlayerStyle.stroke(") && !selector.contains("SPlayerStyle.fill("),
+                "音质标签长出了实心底：它应该是只有描边的小标签");
         String menu = blockOf(src, ".setGlassPlate(GlassLook.Surface.PLAYER)\n                .setBeforeRenderCallback");
         assertTrue(menu.contains("setFillAlpha(GlassLook.washAlpha"), "菜单底色没压薄");
     }
@@ -76,7 +78,8 @@ class QualityMenuGlassStaticTest {
         int at = src.indexOf("setFillAlpha(qualityOption.isHovering()");
         assertTrue(at > 0, "档位选项的 fillAlpha 不再按「选中/悬停」分档，选中状态会被压没");
         String tile = src.substring(at, at + 400);
-        assertTrue(tile.contains("1.0f"), "选中那一格也被 washAlpha 压薄了");
-        assertTrue(tile.contains("washAlpha"), "未选中的那一格没有压薄，菜单里就还是八块实心板");
+        assertTrue(tile.contains("selected && !unavailable ? .10f"), "选中那一格没有自己的高亮底");
+        assertFalse(tile.contains("washAlpha"), "选中/悬停那一格也被 washAlpha 压薄了");
+        assertTrue(tile.contains(": 0f)"), "未选中的那一格应当透明，只留 RIM 边光");
     }
 }

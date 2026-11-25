@@ -195,6 +195,15 @@ public final class ConfigPaths {
     public static final File LOCAL_LIBRARY = new File(CONFIG_DIRECTORY, "local_library.json");
 
     /**
+     * 本机收听统计：每天的实际收听秒数、每首歌的播放次数、每天新增的收藏数。
+     *
+     * <p>只给主页的「本周时长 / 新增收藏 / 连续收听」与「反复聆听」用，不上传、不与任何平台同步。
+     * 计时口径与网易云听歌上报一致（暂停不计、单帧最多记 1.5 秒）。条目数有上限，见
+     * {@code ListeningStats}。</p>
+     */
+    public static final File LISTENING_STATS = new File(CONFIG_DIRECTORY, "listening_stats.json");
+
+    /**
      * Bilibili 的 Web Cookie 与本地账号资料（扫码登录后落盘）。
      *
      * <p>与 {@link #KUGOU_AUTH}、{@link #QISHUI_AUTH} 同样的理由单开一个文件：

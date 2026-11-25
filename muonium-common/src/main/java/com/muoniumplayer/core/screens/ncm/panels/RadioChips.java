@@ -30,18 +30,21 @@ final class RadioChips {
         }
     }
 
-    /** 配色：选中 = 强调色实底；未选中 = 玻璃薄底，hover 只推一层 ELEMENT_HOVER。 */
+    /**
+     * 配色（SPlayer 的胶囊标签）：选中 = {@code bg-primary/16 text-primary}；未选中 =
+     * {@code bg-on-surface/6}，悬停 /10。{@code hoverColor} 保留在签名里给调用方，现在悬停只抬透明度。
+     */
     static void paint(RoundedButtonWidget chip, boolean selected, int accentColor, int hoverColor) {
-        chip.setRadius(6);
-        chip.setGlassPlate(GlassLook.Surface.PLAYER);
+        chip.setRadius(chip.getHeight() * .5);
+        chip.setGlassRim(GlassLook.Surface.PLAYER);
         if (selected) {
-            chip.setFillAlpha(1.0f);
             chip.setColor(accentColor);
+            chip.setFillAlpha(chip.isHovering() ? .22f : .16f);
+            chip.setTextColor(accentColor);
         } else {
-            chip.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            chip.setColor(chip.isHovering() ? hoverColor
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            chip.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            chip.setFillAlpha(chip.isHovering() ? .10f : .06f);
+            chip.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         }
-        chip.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
     }
 }

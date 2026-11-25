@@ -2098,6 +2098,7 @@ public class CloudMusic implements SharedConstants {
                         NeteasePlaybackHistoryReporter.finish(activePlayer,
                                 NeteasePlaybackHistoryReporter.EndReason.REPLACED);
                         KuGouPlaybackReporter.finish(activePlayer, KuGouPlaybackReporter.EndReason.REPLACED);
+                        ListeningStats.finish(activePlayer);
                     }
                 } finally {
                     closeQuietly(activePlayer);
@@ -2528,6 +2529,7 @@ public class CloudMusic implements SharedConstants {
                 }
                 NeteasePlaybackHistoryReporter.observe(activePlayer);
                 KuGouPlaybackReporter.observe(activePlayer);
+                ListeningStats.observe(activePlayer);
                 // 播放记忆心跳：store 内部按 15s 去抖，绝大多数 tick 是一次墙钟比较就返回。
                 CloudMusic.noteHeartbeatForResume();
 
@@ -2654,6 +2656,7 @@ public class CloudMusic implements SharedConstants {
             NeteasePlaybackHistoryReporter.finish(completedPlayer,
                     NeteasePlaybackHistoryReporter.EndReason.COMPLETED);
             KuGouPlaybackReporter.finish(completedPlayer, KuGouPlaybackReporter.EndReason.COMPLETED);
+            ListeningStats.finish(completedPlayer);
 
             if (!dontAdd && playedFrom != null && curIdx >= 0 && curIdx < playList.size()) {
                 playList.get(curIdx).updPlayCount(playedFrom, completedPlayer.getCurrentTimeSeconds());
@@ -2773,6 +2776,8 @@ public class CloudMusic implements SharedConstants {
             NeteasePlaybackHistoryReporter.start(song, currentPlaylistContext, activePlayer);
             KuGouPlaybackReporter.start(song, activePlayer);
             QishuiPlaybackReporter.start(song, currentPlaylistContext);
+            // 主页「本周时长 / 反复聆听」的本机统计，与上面几家上报同一个起播时刻。
+            ListeningStats.start(song, activePlayer);
             final AudioPlayer callbackPlayer = activePlayer;
             callbackPlayer.setAfterPlayed(() -> {
                 // 已被下一首复用/替换的播放器回调不能结束新会话。

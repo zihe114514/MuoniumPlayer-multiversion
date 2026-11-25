@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.screens.ncm.panels;
 
+import com.muoniumplayer.core.screens.ncm.SPlayerStyle;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
@@ -70,7 +71,7 @@ public final class DifmPanel extends NCMPanel {
         cardWidgets.clear();
         pendingCards = null;
 
-        LabelWidget title = new LabelWidget("DIFM 电台", FontManager.pf25bold);
+        LabelWidget title = new LabelWidget("DIFM 电台", SPlayerStyle.text2xl());
         addChild(title);
         title.setClickable(false);
         title.setBeforeRenderCallback(() -> title
@@ -97,10 +98,10 @@ public final class DifmPanel extends NCMPanel {
         btnBack.setBeforeRenderCallback(() -> {
             btnBack.setBounds(28, 22);
             btnBack.setPosition(Math.max(8, getWidth() - btnBack.getWidth() - 12), 8);
-            btnBack.setRadius(6);
-            btnBack.setColor(btnBack.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            btnBack.setRadius(btnBack.getHeight() * .5);
+            // SPlayer tertiary 圆钮：bg-on-surface/5，悬停 /10。
+            btnBack.setColor(SPlayerStyle.onSurface());
+            btnBack.setFillAlpha(btnBack.isHovering() ? .10f : .05f);
             btnBack.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
         btnBack.setOnClickCallback((relativeX, relativeY, mouseButton) -> {

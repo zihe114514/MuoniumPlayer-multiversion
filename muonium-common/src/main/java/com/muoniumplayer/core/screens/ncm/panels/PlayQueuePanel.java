@@ -23,6 +23,7 @@ import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.screens.ncm.NCMPanel;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.screens.ncm.SPlayerStyle;
 import com.muoniumplayer.core.screens.ncm.SheetClock;
 import com.muoniumplayer.core.screens.ncm.TransitionCurveCache;
 import com.muoniumplayer.core.utils.Location;
@@ -207,8 +208,8 @@ public class PlayQueuePanel extends NCMPanel {
         this.drawer
                 .setShouldOverrideMouseCursor(false)
                 .setBeforeRenderCallback(() -> this.drawer
-                        .setRadius(9.0)
-                        .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND))
+                        .setRadius(SPlayerStyle.RADIUS_XL)
+                        .setColor(SPlayerStyle.bright())
                         .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f)));
         // 抽屉盖住了下面的歌曲列表，落在空白处的点击必须由它吃掉，不能穿透触发播放。
         this.drawer.setOnClickCallback((relativeX, relativeY, mouseButton) -> true);
@@ -278,10 +279,9 @@ public class PlayQueuePanel extends NCMPanel {
                     .setPosition(this.drawer.getWidth() - DRAWER_PADDING - 16.0 - 4.0 - 34.0
                                     - 4.0 - FLOW_BUTTON_WIDTH,
                             DRAWER_PADDING + Math.max(0.0, (HEADER_HEIGHT - 14.0) * .5))
-                    .setRadius(3.0)
-                    .setColor(flowSort.isHovering()
-                            ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                            : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+                    .setRadius(SPlayerStyle.RADIUS_MD)
+                    .setColor(SPlayerStyle.mix(SPlayerStyle.bright(), SPlayerStyle.onSurface(),
+                            flowSort.isHovering() ? .12 : .06));
         });
         flowSort.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton == 0) {
@@ -324,10 +324,9 @@ public class PlayQueuePanel extends NCMPanel {
             clearAll.setBounds(34.0, 14.0)
                     .setPosition(this.drawer.getWidth() - DRAWER_PADDING - 16.0 - 4.0 - 34.0,
                             DRAWER_PADDING + Math.max(0.0, (HEADER_HEIGHT - 14.0) * .5))
-                    .setRadius(3.0)
-                    .setColor(clearAll.isHovering()
-                            ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                            : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+                    .setRadius(SPlayerStyle.RADIUS_MD)
+                    .setColor(SPlayerStyle.mix(SPlayerStyle.bright(), SPlayerStyle.onSurface(),
+                            clearAll.isHovering() ? .12 : .06));
         });
         clearAll.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton == 0 && !this.rows.isEmpty()) {
@@ -352,10 +351,9 @@ public class PlayQueuePanel extends NCMPanel {
                 .setBounds(16.0, 14.0)
                 .setPosition(this.drawer.getWidth() - DRAWER_PADDING - 16.0,
                         DRAWER_PADDING + Math.max(0.0, (HEADER_HEIGHT - 14.0) * .5))
-                .setRadius(3.0)
-                .setColor(close.isHovering()
-                        ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                        : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)));
+                .setRadius(SPlayerStyle.RADIUS_MD)
+                .setColor(SPlayerStyle.mix(SPlayerStyle.bright(), SPlayerStyle.onSurface(),
+                        close.isHovering() ? .12 : .06)));
         close.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton == 0) this.setOpen(false);
             return true;
@@ -926,13 +924,10 @@ public class PlayQueuePanel extends NCMPanel {
                 if (!this.coverLoaded) this.coverLoaded = loadCover(this.music);
 
                 boolean dragging = this == PlayQueuePanel.this.draggingRow;
-                this.setRadius(4.0);
-                this.setColor(dragging
-                        ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
-                        : (this.isHovering()
-                                ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                                : NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND)));
-                        this.setFillAlpha(dragging ? 1.0f : GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+                this.setRadius(SPlayerStyle.RADIUS_MD);
+                // SPlayer 队列行：静止没有底，悬停 bg-on-surface/8；拖起来的那一行仍是实心主色。
+                this.setColor(dragging ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT) : SPlayerStyle.onSurface());
+                this.setFillAlpha(dragging ? 1.0f : this.isHovering() ? .08f : 0f);
             });
 
             // 拖起来的一行略微放大浮起，放手后 lift 归零就自己恢复原样。放大比例必须和
@@ -999,10 +994,9 @@ public class PlayQueuePanel extends NCMPanel {
                 remove.setHidden(this.removing || !this.canRemove);
                 remove.setBounds(14.0, 14.0)
                         .setPosition(Math.max(0.0, this.getWidth() - 32.0), (ROW_HEIGHT - 14.0) * .5)
-                        .setRadius(3.0)
-                        .setColor(remove.isHovering()
-                                ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                                : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+                        .setRadius(SPlayerStyle.RADIUS_MD)
+                        .setColor(SPlayerStyle.mix(SPlayerStyle.bright(), SPlayerStyle.onSurface(),
+                                remove.isHovering() ? .12 : .06));
                 remove.setAlpha(remove.isHovering() ? .95f : .55f);
             });
             remove.setOnClickCallback((relativeX, relativeY, mouseButton) -> {

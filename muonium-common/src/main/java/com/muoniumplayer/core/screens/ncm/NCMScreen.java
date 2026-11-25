@@ -470,12 +470,14 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.basePanel.addChild(this.currentPanelBg);
 
         this.currentPanelBg.setBeforeRenderCallback(() -> {
-            double controlsHeight = Math.min(this.getPanelHeight(), Math.max(28.0, this.getPanelHeight() * .07));
+            // SPlayer 默认布局：侧栏贴左、顶栏压在内容区上方、播放栏横跨整个底边。
+            // 内容区只占「侧栏右侧 × 顶栏与播放栏之间」那一块。
+            double headerHeight = this.getHeaderHeight();
             this.currentPanelBg.setBounds(
                     playlistsPanel.getWidth(),
-                    0,
+                    headerHeight,
                     Math.max(0.0, this.currentPanelBg.getParentWidth() - playlistsPanel.getWidth()),
-                    Math.max(0.0, this.getPanelHeight() - controlsHeight)
+                    Math.max(0.0, this.getPanelHeight() - headerHeight - this.getControlsHeight())
             );
             this.currentPanelBg.setColor(getColor(ColorType.GENERIC_BACKGROUND));
             // 这一层是<em>叠在 bg 之上</em>的第二张底，走内层那一档：两档共用一条曲线时，
@@ -540,6 +542,17 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     public double getSpacing() {
         return 16.0;
+    }
+
+    /** 顶栏高（SPlayer {@code h-16}）。面板被压得很矮时不超过面板高的 12%。 */
+    public double getHeaderHeight() {
+        return Math.min(SPlayerStyle.HEADER_HEIGHT, this.getPanelHeight() * .12);
+    }
+
+    /** 底部播放栏高（SPlayer {@code h-20}），横跨整个面板宽度。 */
+    public double getControlsHeight() {
+        // 下限 28 与旧底栏一致：面板压得很矮时传输键与进度条仍要放得下。
+        return Math.min(this.getPanelHeight(), Math.max(28.0, Math.min(SPlayerStyle.BAR_HEIGHT, this.getPanelHeight() * .16)));
     }
 
     public double getPlayerBorderThickness() {
@@ -749,10 +762,18 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                         this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
                 this.basePanel.setAlpha(alpha);
                 if (cachedViewport) {
-                    // 快照已包含内容区底色；这里仅画侧栏，避免半透明背景被叠两次。
-                    StencilClipManager.beginClip(() -> Rect.draw(this.basePanel.getX(), this.basePanel.getY(),
-                            Math.max(0.0, this.currentPanelBg.getX() - this.basePanel.getX()),
-                            this.basePanel.getHeight(), -1));
+                    // 快照已包含内容区底色；这里只画内容区以外的三条（侧栏列、顶栏条、播放栏条），
+                    // 避免半透明背景被叠两次。
+                    StencilClipManager.beginClip(() -> {
+                        Rect.draw(this.basePanel.getX(), this.basePanel.getY(),
+                                Math.max(0.0, this.currentPanelBg.getX() - this.basePanel.getX()),
+                                this.basePanel.getHeight(), -1);
+                        Rect.draw(this.currentPanelBg.getX(), this.basePanel.getY(), this.currentPanelBg.getWidth(),
+                                Math.max(0.0, this.currentPanelBg.getY() - this.basePanel.getY()), -1);
+                        double contentBottom = this.currentPanelBg.getY() + this.currentPanelBg.getHeight();
+                        Rect.draw(this.currentPanelBg.getX(), contentBottom, this.currentPanelBg.getWidth(),
+                                Math.max(0.0, this.basePanel.getY() + this.basePanel.getHeight() - contentBottom), -1);
+                    });
                 }
                 this.basePanel.renderWidget(mouseX, mouseY, baseDWheel);
                 if (cachedViewport) StencilClipManager.endClip();
@@ -893,9 +914,23 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                     StencilClipManager.endClip();
                 }
 
+                // 顶栏（后退/前进、搜索、音源、账号、设置）画在内容页与队列抽屉之上：
+                // 搜索联想下拉要压住内容区，而不是被内容区盖住。
+                if (this.playlistsPanel != null) {
+                    NavigateBar.HeaderLayer header = this.playlistsPanel.getHeaderLayer();
+                    header.setAlpha(alpha * pageReveal);
+                    header.setBounds(this.currentPanelBg.getX(), this.basePanel.getY(), this.currentPanelBg.getWidth(),
+                            Math.max(0.0, this.currentPanelBg.getY() - this.basePanel.getY()));
+                    header.renderWidget(mouseX, mouseY, baseDWheel);
+                    StencilClipManager.restoreActiveClip();
+                }
+
                 if (this.controlsBar != null && (this.initialLayoutStage == 0 || this.initialLayoutStage >= 4)) {
                     this.controlsBar.setAlpha(alpha * controlsReveal);
-                    this.controlsBar.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY() + this.currentPanelBg.getHeight(), this.currentPanelBg.getWidth(), this.getPanelHeight() - this.currentPanelBg.getHeight());
+                    double controlsHeight = this.getControlsHeight();
+                    this.controlsBar.setBounds(this.basePanel.getX(),
+                            this.basePanel.getY() + this.getPanelHeight() - controlsHeight,
+                            this.getPanelWidth(), controlsHeight);
                     this.controlsBar.renderWidget(mouseX, mouseY, baseDWheel);
                     StencilClipManager.restoreActiveClip();
                 }
@@ -1526,6 +1561,16 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     }
 
     // 独立的二级面板仍可提供有用的退路。
+    /** 沿历史栈前进一页（顶栏「前进」按钮与鼠标侧键共用）。已经在最新一页时什么都不做。 */
+    public void navigateForward() {
+        if (currentActionPointer >= actions.size() - 1) {
+            currentActionPointer = Math.max(0, actions.size() - 1);
+        } else {
+            currentActionPointer++;
+            actions.get(currentActionPointer).run();
+        }
+    }
+
     public void navigateBack() {
         // 两条出口（退历史、退回主页）都是后退。方向标志只能紧挨着真正那次换页设：
         // 它在 innerSetCurrentPanel 里被取走并清零，所以在「已经在主页、按了个空」这条
@@ -2027,6 +2072,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             return;
         }
 
+        if (this.playlistsPanel != null
+                && this.playlistsPanel.getHeaderLayer().onKeyTypedReceived(typedChar, keyCode)) {
+            return;
+        }
+
         if (this.basePanel.onKeyTypedReceived(typedChar, keyCode)) {
             return;
         }
@@ -2294,6 +2344,14 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                     suggestionVisible, suggestionRow)) {
                 return;
             }
+            // 顶栏与内容区、侧栏互不重叠（联想下拉已在上面前置消费），先交给它。
+            if (this.playlistsPanel != null) {
+                NavigateBar.HeaderLayer header = this.playlistsPanel.getHeaderLayer();
+                if (header.consumeOpenMenuClick(mouseX, mouseY, mouseButton)) {
+                    return;
+                }
+                header.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            }
             this.basePanel.onMouseClickReceived(mouseX, mouseY, mouseButton);
 
             if (this.currentPanel != null && !this.contentHitStateStale)
@@ -2303,15 +2361,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
             // 前进
             if (mouseButton == 4) {
-
-                // 是否最后
-                if (currentActionPointer >= actions.size() - 1) {
-                    currentActionPointer = actions.size() - 1;
-                } else {
-                    currentActionPointer ++;
-                    actions.get(currentActionPointer).run();
-                }
-
+                this.navigateForward();
             }
             /** 播放器主题的颜色语义；具体颜色由 {@link NCMTheme} 提供。 */
             else if (mouseButton == 3) {

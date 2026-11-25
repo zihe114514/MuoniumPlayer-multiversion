@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.screens.ncm.panels;
 
+import com.muoniumplayer.core.screens.ncm.SPlayerStyle;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -126,7 +127,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         final double margin = 12.0;
         final boolean hotSearch = this.page == Page.HOT_SEARCH;
 
-        LabelWidget title = new LabelWidget(() -> pageTitle(), FontManager.pf25bold);
+        LabelWidget title = new LabelWidget(() -> pageTitle(), SPlayerStyle.text2xl());
         addChild(title);
         title.setClickable(false);
         title.setBeforeRenderCallback(() -> title
@@ -238,8 +239,8 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         for (Entry entry : entries) {
             RoundedButtonWidget row = new RoundedButtonWidget(entry::getTitle, FontManager.pf14bold);
             list.addChild(row);
-            row.setRadius(5);
-            row.setGlassPlate(GlassLook.Surface.PLAYER);
+            row.setRadius(SPlayerStyle.RADIUS_LG);
+            row.setGlassRim(GlassLook.Surface.PLAYER);
             row.setOnClickCallback((x, y, button) -> {
                 if (button != 0 || entry.action == null) return button == 0;
                 entry.action.run();
@@ -247,10 +248,9 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
             });
             row.setBeforeRenderCallback(() -> {
                 row.setBounds(Math.max(1.0, list.getWidth()), 28);
-                row.setColor(row.isHovering() && entry.action != null
-                        ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                        : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-                row.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+                // SPlayer 列表行：静止没有底色，悬停 bg-on-surface/6。
+                row.setColor(SPlayerStyle.onSurface());
+                row.setFillAlpha(row.isHovering() && entry.action != null ? .06f : 0f);
                 row.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             });
 

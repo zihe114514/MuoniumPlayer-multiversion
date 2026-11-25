@@ -62,6 +62,8 @@ public abstract class NcmSheet extends NCMPanel {
 
     /** 弹窗内容到左右边缘的留白。 */
     protected static final double PAD = 20.0;
+    /** 弹窗底板圆角（SPlayer SDialog 的 rounded-xl，按弹窗自身的尺度放大一档）。 */
+    private static final double SHEET_RADIUS = 10.0;
 
     /**
      * 卡片左右各预留的空隙，悬停放大就往这块空隙里长。
@@ -240,7 +242,8 @@ public abstract class NcmSheet extends NCMPanel {
         mask.setColor(0x000000);
         mask.setBeforeRenderCallback(() -> {
             mask.setMargin(0);
-            mask.setAlpha((float) (presentation * .52));
+            // SPlayer SDialog 的遮罩：bg-black/40。
+            mask.setAlpha((float) (presentation * .40));
         });
         setOnClickCallback((x, y, button) -> {
             if (button == 0) dispose();
@@ -267,11 +270,28 @@ public abstract class NcmSheet extends NCMPanel {
                     getHeight() * .5 - sheetHeight * .5 + (1.0 - presentation) * 14.0);
         });
 
+        // shadow-xl：GPU 上的高斯遮罩，画在底板之前，压在遮罩之上。
+        final Panel shadow = new Panel() {
+            @Override
+            public void onRender(double mouseX, double mouseY) {
+                io.github.humbleui.skija.Canvas canvas = com.muoniumplayer.render.skija.SkijaGfx.canvas();
+                if (canvas == null || getAlpha() <= .004f) return;
+                canvas.drawRRect(io.github.humbleui.types.RRect.makeXYWH((float) getX(), (float) (getY() + 8.0),
+                                (float) getWidth(), (float) getHeight(), (float) SHEET_RADIUS),
+                        com.muoniumplayer.render.skija.SkijaGfx.fillBlurred(
+                                SPlayerStyle.a(0x000000, .45, getAlpha()), 18f));
+            }
+        };
+        dialog.addChild(shadow);
+        shadow.setClickable(false);
+        shadow.setBeforeRenderCallback(() -> shadow.setBounds(0, 0, dialog.getWidth(), dialog.getHeight()));
+
         final RoundedRectWidget background = new RoundedRectWidget();
         dialog.addChild(background);
-        background.setClickable(false).setRadius(14).setBeforeRenderCallback(() -> {
+        background.setClickable(false).setRadius(SHEET_RADIUS).setBeforeRenderCallback(() -> {
             background.setMargin(0);
-            background.setColor(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
+            // SPlayer 对话框的底是 surfaceAlt —— 比内容区底色抬一档（SPlayer 主题下就是 #27272A）。
+            background.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER));
             // 底板自己那层深色要压薄，否则它把刚贴上去的糊背景整个盖死——那正是
             // 2026-09-30「二级菜单没有液态玻璃」的后半段：接了背景，但背景在底色底下。
             background.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
@@ -282,16 +302,8 @@ public abstract class NcmSheet extends NCMPanel {
         // 不压就是「在压暗的桌面上开一扇透着大晴天的窗」，压过头又变回一块不透明的板。
         background.setGlassSheet(GlassLook.Surface.PLAYER);
 
-        // 顶部一道极淡的白，把标题那一段轻轻托起来。没有它整块弹窗是一片死板的纯色。
-        final Wash gloss = new Wash(false, 14.0);
-        background.addChild(gloss);
-        gloss.tint(0xFFFFFF, 0xFFFFFF).alphas(.055, 0.0);
-        gloss.setBeforeRenderCallback(() -> {
-            gloss.setBounds(Math.max(1, background.getWidth()), Math.min(96, background.getHeight()));
-            gloss.setPosition(0, 0);
-        });
-
-        stroke(background, 14.0, () -> NCMScreen.getColor(NCMScreen.ColorType.BORDER), () -> .55);
+        // border-outline-variant/30：SPlayer 的对话框是平的，没有顶部高光，只有一圈很淡的边。
+        stroke(background, SHEET_RADIUS, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), () -> .10);
         return dialog;
     }
 
@@ -405,7 +417,7 @@ public abstract class NcmSheet extends NCMPanel {
                         final DoubleSupplier height, final IntSupplier color) {
         final Card bg = new Card();
         host.addChild(bg);
-        bg.setRadius(12);
+        bg.setRadius(SHEET_RADIUS);
         bg.setGlassRim(GlassLook.Surface.PLAYER);
         bg.setBeforeRenderCallback(() -> {
             bg.reveal = cardGate(slot);
@@ -419,11 +431,7 @@ public abstract class NcmSheet extends NCMPanel {
             bg.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             bg.setAlpha((float) bg.reveal);
         });
-        bg.setTransformations(() -> {
-            double w = Math.max(1, bg.getWidth());
-            bg.scaleAtPos(bg.getX() + w * .5, bg.getY() + bg.getHeight() * .5,
-                    1.0 + (CARD_INSET * 2 / w) * bg.hover);
-        });
+        // SPlayer 的可点卡片（SCard hoverable）悬停时不变大，只是描边提亮一档（见 Card#onRender）。
         return bg;
     }
 
@@ -661,10 +669,11 @@ public abstract class NcmSheet extends NCMPanel {
 
         final RoundedRectWidget plate = new RoundedRectWidget();
         crown.addChild(plate);
-        plate.setClickable(false).setRadius(11).setBeforeRenderCallback(() -> {
+        plate.setClickable(false).setRadius(8).setBeforeRenderCallback(() -> {
             plate.setBounds(34, 34);
             plate.setPosition(PAD, 18);
-            plate.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND), accent.getAsInt(), .28));
+            // SPlayer 图标块：bg-primary/10 rounded-lg（主色按调用方给的强调色走）。
+            plate.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), accent.getAsInt(), .14));
         });
         plate.setGlassRim(GlassLook.Surface.PLAYER);
         // 字形必须留在 plate 底下：那两个 17 是「34 见方的盘子的中心」，换成弹窗坐标系就跑到盘子外面去了。
@@ -722,10 +731,11 @@ public abstract class NcmSheet extends NCMPanel {
         });
         back.setBeforeRenderCallback(() -> {
             back.setBounds(30, 30);
+            back.setRadius(15);
             back.setPosition(PAD - 4, 20);
-            back.setColor(back.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            back.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+            // SPlayer tertiary 圆钮：bg-on-surface/5，悬停 /10。
+            back.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            back.setFillAlpha(back.isHovering() ? .10f : .05f);
             back.setTextColor(0x00FFFFFF);
         });
         icon(back, PartyIcons.CHEVRON_LEFT, ICON_M, () -> 15.0, () -> 15.0,
@@ -742,13 +752,14 @@ public abstract class NcmSheet extends NCMPanel {
             tick.setBounds(3, 11);
             tick.setPosition(PAD + CARD_INSET, top.getAsDouble() + 1);
             tick.setColor(accent.getAsInt());
-            tick.setAlpha(.85f);
+            // SPlayer 的分组头没有竖条：保留控件（排版锚点不动），但不画出来。
+            tick.setAlpha(0f);
         });
 
         final LabelWidget caption = label(host, () -> text, FontManager.pf12bold);
         caption.setBeforeRenderCallback(() -> {
             caption.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            caption.setPosition(PAD + CARD_INSET + 9, inkTop(caption, top.getAsDouble() + 6.5));
+            caption.setPosition(PAD + CARD_INSET + 2, inkTop(caption, top.getAsDouble() + 6.5));
         });
     }
 
@@ -778,8 +789,8 @@ public abstract class NcmSheet extends NCMPanel {
         line.setClickable(false).setBeforeRenderCallback(() -> {
             line.setBounds(Math.max(1, dialog.getWidth() - PAD * 2), 1);
             line.setPosition(PAD, y.getAsDouble());
-            line.setColor(NCMScreen.getColor(NCMScreen.ColorType.BORDER));
-            line.setAlpha(.5f);
+            line.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            line.setAlpha(.10f);
         });
     }
 
@@ -797,7 +808,7 @@ public abstract class NcmSheet extends NCMPanel {
         // 内置标题留空：它只会把文字居中到整颗按钮中间，而这里要居中的是“图标 + 文字”整组。
         final RoundedButtonWidget button = new RoundedButtonWidget("", font);
         host.addChild(button);
-        button.setRadius(9);
+        button.setRadius(6);
         // 弹窗里的这颗也是玻璃面：文字是它的子控件，边缘光不会把它一起淡掉。
         button.setGlassRim(GlassLook.Surface.PLAYER);
         button.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
@@ -1207,6 +1218,10 @@ public abstract class NcmSheet extends NCMPanel {
             easeMs(hoverBox, hoverStamp, inside ? 1.0 : 0.0, 60.0 / SheetClock.speed());
             hover = hoverBox[0];
             super.onRender(mouseX, mouseY);
+            // SCard：border border-primary/20，可点的卡悬停提亮到 /28（纯展示卡 plain() 不吃点击，hover 恒 0）。
+            double lift = isClickable() ? .08 * hover : 0.0;
+            SPlayerStyle.stroke(getX(), getY(), getWidth(), getHeight(), getRadius(), 1.0,
+                    SPlayerStyle.a(SPlayerStyle.primary(), .20 + lift, getAlpha()));
         }
     }
 }

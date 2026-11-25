@@ -65,11 +65,11 @@ class AutomixCueMarkerStaticTest {
     @DisplayName("记号画在拖拽判定之后，命中链一行未动")
     void drawingStaysBehindTheHitTest() throws IOException {
         String controls = read(CONTROLS);
-        // 控制栏那处进度条是一个匿名子类：命中走 prevMouse + seekToMillis，画记号必须排在整块
+        // 控制栏那处进度条（ProgressStrip）：命中走 pressed + seekToMillis，画记号必须排在整块
         // 判定之后，否则新增语句会插进「按下—拖动—松开」那套记账中间。
         ordered(controls, "拖拽命中在前、记号在后",
-                "CloudMusic.seekToMillis((float) (percent * total));",
-                "drawAutomixCue(this.getX()");
+                "CloudMusic.seekToMillis((float) (this.dragFraction * total));",
+                "drawAutomixCue(x, lineY");
 
         String lyrics = read(LYRICS);
         ordered(lyrics, "歌词页：填色画完再画记号，而命中判定仍在记号之后",

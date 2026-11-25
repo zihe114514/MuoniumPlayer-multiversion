@@ -4,6 +4,7 @@ import com.muoniumplayer.core.rendering.RGBA;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.screens.ncm.SPlayerStyle;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.screens.ncm.ThemeTransitionRenderer;
 import com.muoniumplayer.render.skija.SkijaClip;
@@ -27,9 +28,9 @@ import java.awt.Color;
  *   <tr><td>圆角</td><td>clamp(8, 面板高 × .028, 18)</td><td>{@code getPlayerCornerRadius}</td></tr>
  *   <tr><td>面板底色</td><td>GENERIC_BACKGROUND，alpha = 1 − 玻璃量 × .14</td><td>{@code NCMScreen#layout} 里那块 bg</td></tr>
  *   <tr><td>液态玻璃</td><td>同一个 {@link ThemeTransitionRenderer#renderLiquidGlassSurface}</td><td>{@code ThemeGlassWidget}</td></tr>
- *   <tr><td>侧栏宽</td><td>max(面板宽 × .15, min(92, 面板宽 × .30))</td><td>{@code NavigateBar#layout}</td></tr>
+ *   <tr><td>侧栏宽</td><td>max(min(SPlayer w-60, 面板宽 × .2), min(92, 面板宽 × .30))，高到底栏为止</td><td>{@code NavigateBar#layout}</td></tr>
  *   <tr><td>侧栏底色</td><td>NAVIGATION_BACKGROUND，alpha = .9 − 玻璃量 × .22</td><td>同上</td></tr>
- *   <tr><td>底栏高</td><td>min(面板高, max(28, 面板高 × .07))</td><td>{@code NCMScreen#layout} 里 currentPanelBg 让出来的那条</td></tr>
+ *   <tr><td>底栏</td><td>高 min(面板高, max(28, min(SPlayer h-20, 面板高 × .16)))，横跨整个面板宽</td><td>{@code NCMScreen#getControlsHeight}</td></tr>
  *   <tr><td>底栏底色</td><td>NAVIGATION_BACKGROUND，alpha = .95 − 玻璃量 × .22</td><td>{@code ControlsBar} 的 bg</td></tr>
  *   <tr><td>面板描边</td><td>白 .8 粗 + 一条随玻璃量加深的渐变描边</td><td>{@code NCMScreen#drawScreen} 末尾</td></tr>
  * </table>
@@ -96,8 +97,8 @@ public final class OnboardingChrome {
             this.width = width;
             this.height = height;
             this.radius = Math.max(8.0, Math.min(18.0, height * .028));
-            this.sidebarWidth = Math.max(width * .15, Math.min(92.0, width * .30));
-            this.controlsHeight = Math.min(height, Math.max(28.0, height * .07));
+            this.sidebarWidth = Math.max(Math.min(SPlayerStyle.SIDEBAR_WIDTH, width * .2), Math.min(92.0, width * .30));
+            this.controlsHeight = Math.min(height, Math.max(28.0, Math.min(SPlayerStyle.BAR_HEIGHT, height * .16)));
         }
 
         /** 内容区：侧栏右边、底栏上边。引导正文只许画在这里头。 */
@@ -117,7 +118,10 @@ public final class OnboardingChrome {
             return Math.max(1.0, height - controlsHeight);
         }
 
-        /** 底栏那条，引导的导航放在这里。 */
+        /**
+         * 底栏里放引导导航的那一段：侧栏右侧。底栏本身（SPlayer 布局）横跨整个面板宽，见 {@link #draw}；
+         * 导航按钮仍只排在内容区正下方，不伸到侧栏底下。
+         */
         public double controlsX() {
             return x + sidebarWidth;
         }
@@ -169,7 +173,7 @@ public final class OnboardingChrome {
                     panel.height - panel.controlsHeight, 0,
                     OnboardingUi.themed(NCMScreen.ColorType.NAVIGATION_BACKGROUND,
                             GlassLook.washAlpha(GlassLook.Surface.PLAYER, alpha * .9f)));
-            OnboardingUi.roundedRect(panel.controlsX(), panel.controlsY(), panel.controlsWidth(),
+            OnboardingUi.roundedRect(panel.x, panel.controlsY(), panel.width,
                     panel.controlsHeight, 0,
                     OnboardingUi.themed(NCMScreen.ColorType.NAVIGATION_BACKGROUND,
                             GlassLook.washAlpha(GlassLook.Surface.PLAYER, alpha * .95f)));

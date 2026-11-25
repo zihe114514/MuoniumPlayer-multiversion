@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.screens.ncm.panels;
 
+import com.muoniumplayer.core.screens.ncm.SPlayerStyle;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
@@ -279,7 +280,7 @@ public final class PersonalFmPanel extends NCMPanel {
         // 标题与副标题先装配：右边那两颗按钮要读它本帧的真实位置来对齐，而子组件是按列表
         // 顺序正序渲染的，排在后面的回调才量得到前面那一格。
         LabelWidget title = new LabelWidget(this.treeQishui ? "发现流 FM"
-                : this.treeQQ ? "QQ 私人 FM" : "私人 FM", FontManager.pf25bold);
+                : this.treeQQ ? "QQ 私人 FM" : "私人 FM", SPlayerStyle.text2xl());
         addChild(title);
         title.setClickable(false);
         title.setBeforeRenderCallback(() -> title
@@ -305,10 +306,10 @@ public final class PersonalFmPanel extends NCMPanel {
             back.setBounds(28, 22)
                     .setPosition(Math.max(MARGIN, getWidth() - back.getWidth() - MARGIN),
                             headerCenter(title) - back.getHeight() * .5)
-                    .setRadius(6)
-                    .setColor(back.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                            : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            back.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+                    .setRadius(11)
+                    .setColor(SPlayerStyle.onSurface());
+            // SPlayer tertiary 圆钮：bg-on-surface/5，悬停 /10。
+            back.setFillAlpha(back.isHovering() ? .10f : .05f);
             back.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
         back.setOnClickCallback((x, y, button) -> {
@@ -380,15 +381,15 @@ public final class PersonalFmPanel extends NCMPanel {
                     // 而标题被推到下面一行去对刷新那条线。
                     .setPosition(Math.max(MARGIN, back.getRelativeX() - BUTTON_GAP - refresh.getWidth()),
                             headerCenter(title) - refresh.getHeight() * .5)
-                    .setRadius(4)
+                    .setRadius(8.5)
                     .setClickable(!loading)
                     // 只把字压暗是不够的：原来加载中这颗按钮只是变成 45% 透明，看着像被禁用了，
                     // 却没有任何地方说「正在来的东西在哪」。转轮盖在它身上，一句话都不用改。
                     .setAlpha(loading ? .35f : 1.0f)
-                    .setColor(refresh.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                            : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            refresh.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            refresh.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                    .setColor(SPlayerStyle.primary());
+            // SPlayer secondary 胶囊：bg-primary/16 text-primary，悬停 /22。
+            refresh.setFillAlpha(refresh.isHovering() ? .22f : .16f);
+            refresh.setTextColor(SPlayerStyle.primary());
         });
         refresh.setOnClickCallback((x, y, button) -> {
             if (button != 0 || PersonalFmManager.isLoading()) return button == 0;
@@ -1022,6 +1023,8 @@ public final class PersonalFmPanel extends NCMPanel {
     private void addHero(Music current, boolean stale) {
         // 卡底一层就够：面板底色就是 GENERIC_BACKGROUND，同色同 alpha 的「卡」等于没画，
         // 所以往文字色提亮一点，才读得出这是一张卡。
+        // SPlayer 的 SCard 圆角（rounded-xl）。卡底只许一层：再叠一圈同尺寸的圆角描边会把裁剪录歪
+        // （见 PersonalFmLayoutStaticTest），所以这里不画 SCard 的那圈边。
         RoundedRectWidget card = new RoundedRectWidget();
         addChild(card);
         card.setGlassPlate(GlassLook.Surface.PLAYER);
@@ -1029,10 +1032,9 @@ public final class PersonalFmPanel extends NCMPanel {
         card.setBeforeRenderCallback(() -> card
                 .setBounds(heroWidth(), HERO_H)
                 .setPosition(MARGIN, heroTop())
-                .setRadius(6)
+                .setRadius(10)
                 .setColor(NcmSheet.mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND),
                         NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), .055))
-                .setAlpha(.9f)
                 .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f)));
 
         // 交接是一进一出同一趟：内容淡出的那两百多毫秒里骨架淡进来，中间不会出现

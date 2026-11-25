@@ -81,22 +81,23 @@ class QualityMenuStaticTest {
         assertTrue(body.contains("QUALITY_ROW_INSET + QUALITY_ICON_SIZE + QUALITY_ICON_GAP")
                         && body.contains("+ QUALITY_CHECK_GAP + QUALITY_CHECK_SIZE + QUALITY_ROW_INSET"),
                 "行宽不再包含勾选位：切档时列宽会跳一下");
-        assertTrue(body.contains("qualityOptionCheck.setHidden(!selected)"),
-                "勾选不再随选中态开关");
-        assertTrue(body.contains("new LabelWidget(() -> formatQuality(option)"),
+        // SPlayer 外观下选项行整行自绘：勾是矢量、只在选中时画，文字就是档位名本身。
+        assertTrue(flat(body).contains("if (selected) { FoliaLucideIcons.draw(FoliaLucideIcons.CHECK,"),
+                "勾选不再随选中态开关，或者又换回了字符");
+        assertTrue(body.contains("SPlayerStyle.text(FontManager.pf12bold, formatQuality(option),"),
                 "标签里还拼着勾选符号或补位空格");
-        // 「✓」与那两枚全角箭头各只许出现一次：那一次是矢量画不出来时的字体兜底，不是画在界面上的东西。
-        assertEquals(1, count(body, "\u2713"), "「✓」出现了不止一次：文字里大概还留着一个");
-        assertEquals(1, count(body, "\uFE3F"), "全角「︿」出现了不止一次：按钮文字里大概还留着一个");
-        assertEquals(1, count(body, "\uFE40"), "全角「﹀」出现了不止一次：按钮文字里大概还留着一个");
+        // 勾与箭头都是矢量：文字里一枚都不许留，留着就是画在界面上的杂字。
+        assertEquals(0, count(body, "\u2713"), "勾选符号又回到了文字里");
+        assertEquals(0, count(body, "\uFE3F"), "全角上箭头又回到了按钮文字里");
+        assertEquals(0, count(body, "\uFE40"), "全角下箭头又回到了按钮文字里");
     }
 
     @Test
     @DisplayName("展开动画走真毫秒时钟，进场比退场长")
     void menuRunsOnARealClock() throws IOException {
         String body = read(CONTROLS);
-        String ticking = between(body, "RoundedRectWidget qualitySelector = new RoundedRectWidget();",
-                "LabelWidget qualityText");
+        // 推进挂在播放栏自己的每帧回调上（音质标签窄面板下会被隐藏，挂在它身上动画会停在半路）。
+        String ticking = between(body, "private void advanceQualityMenu()", "private void buildQualityMenu(");
         assertFalse(ticking.contains("Interpolations.interpolate"),
                 "展开动画又回到帧耦合指数：没有时长也没有终点，读起来是「先窜一下再慢慢糊住」");
         assertTrue(ticking.contains("System.nanoTime"), "没有自己的真实时间来源");

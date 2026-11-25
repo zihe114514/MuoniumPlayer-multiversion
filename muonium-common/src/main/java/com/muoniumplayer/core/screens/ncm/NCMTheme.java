@@ -21,7 +21,7 @@ public final class NCMTheme {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final long TRANSITION_DURATION_NANOS = 950_000_000L;
 
-    private static ThemePreset current = ThemePreset.VELVET_ROSE;
+    private static ThemePreset current = ThemePreset.SPLAYER;
     private static boolean loaded;
     private static int[] transitionFromColors;
     private static float transitionFromGlass;
@@ -53,7 +53,7 @@ public final class NCMTheme {
                 readCustomColors(object.getAsJsonObject("custom"));
             }
         } catch (Throwable ignored) {
-            current = ThemePreset.VELVET_ROSE;
+            current = ThemePreset.SPLAYER;
             CUSTOM_BY_THEME.clear();
         }
     }
@@ -88,7 +88,7 @@ public final class NCMTheme {
 
     /** 手机档把真玻璃主题退回默认主题；桌面原样返回。只在内存里生效，不回写存档。 */
     private static ThemePreset usableTheme(ThemePreset preset) {
-        return selectableLocked(preset) ? preset : ThemePreset.VELVET_ROSE;
+        return selectableLocked(preset) ? preset : ThemePreset.SPLAYER;
     }
 
     /** 切换至下一款预设主题，并保存当前视觉状态作为动画起点。 */
@@ -312,7 +312,7 @@ public final class NCMTheme {
         return root;
     }
 
-    public static ThemePreset defaultTheme() { return ThemePreset.VELVET_ROSE; }
+    public static ThemePreset defaultTheme() { return ThemePreset.SPLAYER; }
 
     public static ThemePreset byIdOrNull(String id) {
         if (id != null) for (ThemePreset preset : ThemePreset.values())
@@ -535,6 +535,13 @@ public final class NCMTheme {
 
     /** 深浅与氛围各不相同的播放器预设主题。 */
     public enum ThemePreset {
+        /**
+         * SPlayer-Next 深色纯色色板（{@code SOLID_PALETTE_DARK}）：内容区 surface #101014、
+         * 侧栏/卡片/播放栏 surfacePanel #18181C、文字 onSurface #E4E4E7 / onSurfaceVariant #A1A1AA、
+         * 悬停 surfaceAlt #27272A、细线 outlineVariant #2E2E33。强调色取 SPlayer 默认封面取色
+         * 落出来的桃色（tone 90），卡片描边与选中底色在绘制处按强调色 20% / 10% 叠出。
+         */
+        SPLAYER("splayer", "SPlayer", 0x101014, 0x18181C, 0x27272A, 0xE4E4E7, 0xA1A1AA, 0xFFDBCB, 0xFFE9DF, 0x27272A, 0x18181C, 0x2E2E33, false),
         OBSIDIAN_RED("obsidian_red", "曜石红", 0x1E1E1E, 0x252525, 0x383838, 0xFFFFFF, 0x9B9B9B, 0xD60017, 0xF04455, 0x292727, 0x191919, 0x454545, false),
         AURORA_TIDE("aurora_tide", "极光海", 0x0D1720, 0x142631, 0x203D4A, 0xEFFBFF, 0x91AAB5, 0x54D6C1, 0x7DE8D6, 0x10212B, 0x091118, 0x2B5160, false),
         VELVET_ROSE("velvet_rose", "丝绒玫瑰", 0x211821, 0x30212C, 0x493342, 0xFFF7FB, 0xC2AAB7, 0xE48AAB, 0xF4A9C4, 0x2A1D27, 0x1A1219, 0x604252, false),
@@ -610,7 +617,7 @@ public final class NCMTheme {
                     if (preset.id.equalsIgnoreCase(id)) return preset;
                 }
             }
-            return VELVET_ROSE;
+            return SPLAYER;
         }
     }
 }

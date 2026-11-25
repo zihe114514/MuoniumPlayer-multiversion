@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.screens.ncm.panels;
 
+import com.muoniumplayer.core.screens.ncm.SPlayerStyle;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
@@ -105,7 +106,7 @@ public final class RadioDetailPanel extends NCMPanel {
             cover.setBounds(MARGIN, HERO_TOP, HERO_COVER, HERO_COVER).setRadius(6);
         });
 
-        LabelWidget name = new LabelWidget(radio::displayName, FontManager.pf25bold);
+        LabelWidget name = new LabelWidget(radio::displayName, SPlayerStyle.text2xl());
         addChild(name);
         name.setClickable(false);
         name.setBeforeRenderCallback(() -> name
@@ -135,32 +136,34 @@ public final class RadioDetailPanel extends NCMPanel {
         RoundedButtonWidget btnPlayAll = new RoundedButtonWidget("播放全部", FontManager.pf16bold);
         addChild(btnPlayAll);
         btnPlayAll.setShouldOverrideMouseCursor(true);
-        btnPlayAll.setRadius(3);
+        btnPlayAll.setRadius(10);
         btnPlayAll.setOnClickCallback((x, y, button) -> {
             if (button != 0 || programs.isEmpty()) return false;
             CloudMusic.play(new ArrayList<>(programs), 0);
             return true;
         });
         btnPlayAll.setBeforeRenderCallback(() -> {
-            btnPlayAll.setBounds(72, 17);
-            btnPlayAll.setPosition(HERO_TEXT_X, HERO_TOP + HERO_COVER - 17);
+            btnPlayAll.setBounds(72, 20);
+            btnPlayAll.setPosition(HERO_TEXT_X, HERO_TOP + HERO_COVER - 20);
+            // SPlayer 详情页的「播放全部」：type=primary variant=secondary（主色 16% 底 + 主色字）。
             btnPlayAll.setColor(this.accentColor);
-            btnPlayAll.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            btnPlayAll.setFillAlpha(btnPlayAll.isHovering() ? .22f : .16f);
+            btnPlayAll.setTextColor(this.accentColor);
         });
 
         RoundedButtonWidget btnSubscribe = new RoundedButtonWidget(
                 () -> radio.isSubscribed() ? "已订阅" : "订阅电台", FontManager.pf16bold);
         addChild(btnSubscribe);
         btnSubscribe.setShouldOverrideMouseCursor(true);
-        btnSubscribe.setRadius(3);
+        btnSubscribe.setRadius(10);
         btnSubscribe.setOnClickCallback((x, y, button) -> {
             if (button != 0 || togglingSubscribe) return false;
             toggleSubscribe();
             return true;
         });
         btnSubscribe.setBeforeRenderCallback(() -> {
-            btnSubscribe.setBounds(72, 17);
-            btnSubscribe.setPosition(HERO_TEXT_X + 80, HERO_TOP + HERO_COVER - 17);
+            btnSubscribe.setBounds(72, 20);
+            btnSubscribe.setPosition(HERO_TEXT_X + 80, HERO_TOP + HERO_COVER - 20);
             if (radio.isSubscribed()) {
                 // 已订阅：强调色只描边不铺底，与"取消收藏歌单"的确认语义同一档克制。
                 btnSubscribe.setGlassPlate(GlassLook.Surface.PLAYER);
@@ -169,9 +172,9 @@ public final class RadioDetailPanel extends NCMPanel {
                 btnSubscribe.setTextColor(this.accentColor);
             } else {
                 btnSubscribe.setGlassPlate(GlassLook.Surface.PLAYER);
-                btnSubscribe.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-                btnSubscribe.setColor(btnSubscribe.isHovering() ? this.hoverColor
-                        : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+                // SPlayer secondary：bg-on-surface/12，悬停 /18。
+                btnSubscribe.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                btnSubscribe.setFillAlpha(btnSubscribe.isHovering() ? .18f : .12f);
                 btnSubscribe.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             }
         });
@@ -238,10 +241,10 @@ public final class RadioDetailPanel extends NCMPanel {
         btnBack.setBeforeRenderCallback(() -> {
             btnBack.setBounds(28, 22);
             btnBack.setPosition(Math.max(8, getWidth() - btnBack.getWidth() - 12), 8);
-            btnBack.setRadius(6);
-            btnBack.setColor(btnBack.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            btnBack.setRadius(btnBack.getHeight() * .5);
+            // SPlayer tertiary 圆钮：bg-on-surface/5，悬停 /10。
+            btnBack.setColor(SPlayerStyle.onSurface());
+            btnBack.setFillAlpha(btnBack.isHovering() ? .10f : .05f);
             btnBack.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
         btnBack.setOnClickCallback((relativeX, relativeY, mouseButton) -> {

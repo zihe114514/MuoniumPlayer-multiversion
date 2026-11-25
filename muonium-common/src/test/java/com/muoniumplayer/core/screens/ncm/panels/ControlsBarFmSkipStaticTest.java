@@ -45,17 +45,17 @@ class ControlsBarFmSkipStaticTest {
     @DisplayName("让位公式不再为 FM 外扩传输簇右缘")
     void transportRightHasNoPersonalFmWidening() throws IOException {
         String body = read(BAR);
-        String shift = lineOf(body, "double transportRight");
+        String shift = lineOf(body, "this.transportRight = ");
         assertFalse(shift.contains("isPersonalFmActive"),
                 "transportRight 仍在按 FM 外扩：按钮组会再次被推离居中的进度条");
         assertFalse(shift.contains("54.0"), "FM 外扩的 54 单位又回到了让位公式里");
-        // 居中簇右缘 = 半宽 + playMode 右缘（50+20）。这个数错了，窄面板避让就全部失准。
-        assertTrue(shift.contains("half + 70.0"), "transportRight 不再按「half + 70.0」算居中簇右缘");
+        // 居中簇右缘 = 居中簇左缘 + 五颗按钮的固定总宽（SPlayer 播放栏 grid 的 auto 列）。
+        assertTrue(shift.contains("clusterLeft + clusterWidth"), "transportRight 不再按居中簇的固定总宽算");
         // FM 分支删干净之后，播放条级回调里不应再有 isPersonalFmActive 的布局分支。
         // （播放模式按钮的 F 字形降级在它自己的回调里，不受影响。）
         String panelCallback = between(body,
-                "this.setBeforeRenderCallback(() -> {\n            double half = this.getWidth() * .5;",
-                "centerClusterRight = besideLabel");
+                "this.setBeforeRenderCallback(() -> {\n            this.advanceQualityMenu();",
+                "queuePanel.setAnchorRight(queueToggle.getX() + queueToggle.getWidth());");
         assertFalse(panelCallback.contains("isPersonalFmActive"),
                 "让位回调里还留着 FM 分支：布局又在按模式分叉了");
     }

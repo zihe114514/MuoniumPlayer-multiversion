@@ -194,25 +194,16 @@ class PlaylistImportStaticTest {
         assertTrue(source.contains("setOnSecondaryClick"), "导入项未挂右键移除");
         assertTrue(source.contains("removeImportedPlaylist"), "缺少移除逻辑");
         assertTrue(source.contains("removeLocalPlaylist"), "自建单没有自己的移除逻辑（删的和导入的不是同一件事）");
-        assertTrue(source.contains("RoundedRectWidget plusH") && source.contains("RoundedRectWidget plusV"),
-                "「＋」又退回成一个文字字符（那不是图标）");
-        assertTrue(source.contains("importHit.setOnClickCallback"), "「＋」没有接上点击导入");
-        // 「＋」挂在导入歌单标题行，且不再按平台分支：所有渠道都有导入入口。
-        int plusRow = source.indexOf("importHeader.addChild(importHit)");
-        assertTrue(plusRow > 0, "「＋」没有并进「导入歌单」标题行");
+        // 「＋」是 SPlayer 分组头那颗 26px 的圆按钮，里面是 lucide 的 plus 矢量，不是文字字符。
+        assertTrue(source.contains(".withAction(SPlayerIcons.PLUS, () -> NCMScreen.getInstance().openPlaylistCreate())"),
+                "「＋」又退回成一个文字字符（那不是图标），或没有接上建单入口");
+        // 「＋」挂在「Mu本地歌单」标题行，且不再按平台分支：所有渠道都有入口。
+        int plusRow = source.indexOf("new SectionHeader(\"Mu本地歌单\", true)");
+        assertTrue(plusRow > 0, "「＋」没有并进「Mu本地歌单」标题行");
         assertFalse(source.contains("\"加\""), "旧的整行「加」导入条目还留在侧栏里");
-
-        // 标题文字与「＋」共用同一条墨迹中心线：一个按行盒顶部摆、一个按 em 方格居中摆的话，
-        // 加号会明显沉在文字下方（用户实拍反馈过）。
-        assertTrue(source.contains("NcmSheet.inkTop(lblImported, importHeader.getHeight() * .5)"),
-                "「导入歌单」标题没有按墨迹居中，会和「＋」错开");
-        assertTrue(source.contains("NcmSheet.inkTop(lblPlaylists, playlistsHeader.getHeight() * .5)"),
-                "「我的账号歌单」标题没有按墨迹居中，会和上一栏标题错开");
-        // 「＋」两条短条都以 (cx, cy) 为中心，cy 取行高中点即与上面那条基准重合；臂长按栏名墨迹量。
-        assertTrue(source.contains("double cy = importHit.getHeight() * .5"),
-                "「＋」没有居中到栏名那条中心线上");
-        assertTrue(source.contains("NcmSheet.labelInkHeight(lblImported)"),
-                "「＋」的臂长写死了，没跟着栏名的墨迹高度走");
+        // 栏名与「＋」共用同一条行中线：栏名按墨迹居中画在 rowTop + 20，按钮在 40 高的行里垂直居中。
+        assertTrue(source.contains("rowTop + SPlayerStyle.px(20)"), "分组标题没有按行中线居中");
+        assertTrue(source.contains("rowTop + (SPlayerStyle.px(40) - size) * .5"), "「＋」没有居中到栏名那条中心线上");
         assertFalse(source.contains("PartyIcons.ADD"), "「＋」又换回了 15 像素的实心圆盘");
     }
 

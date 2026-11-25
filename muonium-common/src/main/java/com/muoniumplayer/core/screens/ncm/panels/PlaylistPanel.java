@@ -29,6 +29,7 @@ import com.muoniumplayer.core.screens.ncm.CoverflowOverlay;
 import com.muoniumplayer.core.screens.ncm.NCMPanel;
 import com.muoniumplayer.core.screens.ncm.PlaylistCoverHero;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.screens.ncm.SPlayerStyle;
 import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
@@ -63,6 +64,10 @@ public class PlaylistPanel extends NCMPanel {
      * 见 {@link PanelItemEntrance.RevealQueue}。</p>
      */
     private final PanelItemEntrance.RevealQueue revealQueue = new PanelItemEntrance.RevealQueue();
+
+    /** 头部按钮（SPlayer SButton 默认档：{@code h-9 px-4 rounded-full}）。宽度统一，链式折行按它算。 */
+    private static final double HEADER_BUTTON_W = SPlayerStyle.px(104);
+    private static final double HEADER_BUTTON_H = SPlayerStyle.px(36);
 
     /** 左上角那张大封面。返回时要问它现在在屏幕上的哪儿，好把接力交回主页卡片。 */
     private RoundedImageWidget heroCover;
@@ -162,19 +167,16 @@ public class PlaylistPanel extends NCMPanel {
         boolean backButtonAllowed = showBackButton && !playList.isSearchResultList();
         RoundedButtonWidget btnBack = new RoundedButtonWidget(FontelloIcons.BACK, FontManager.fontello18);
         // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
-        btnBack.setGlassPlate(GlassLook.Surface.PLAYER)
-                .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         this.addChild(btnBack);
         btnBack.setShouldOverrideMouseCursor(true);
         btnBack.setBeforeRenderCallback(() -> {
             btnBack.setHidden(!backButtonAllowed);
-            btnBack.setBounds(28, 22);
-            btnBack.setPosition(Math.max(8, getWidth() - btnBack.getWidth() - 12), 8);
-            btnBack.setRadius(6);
-            btnBack.setColor(btnBack.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            btnBack.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            btnBack.setBounds(HEADER_BUTTON_H + 2, HEADER_BUTTON_H + 2);
+            btnBack.setPosition(Math.max(8, getWidth() - btnBack.getWidth() - SPlayerStyle.px(20)), SPlayerStyle.px(12));
+            btnBack.setRadius((HEADER_BUTTON_H + 2) * .5);
+            btnBack.setColor(SPlayerStyle.onSurface());
+            btnBack.setFillAlpha(btnBack.isHovering() ? .10f : .05f);
+            btnBack.setTextColor(SPlayerStyle.onSurface());
         });
         btnBack.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton != 0) return false;
@@ -202,8 +204,8 @@ public class PlaylistPanel extends NCMPanel {
         if (!playList.isSearchMode()) {
             RoundedImageWidget cover = new RoundedImageWidget(this.playList.getCoverLocation(), 0, 0, 0, 0);
 
-            cover.setPosition(24, 24);
-            cover.setBounds(128, 128);
+            cover.setPosition(SPlayerStyle.px(20), SPlayerStyle.px(16));
+            cover.setBounds(SPlayerStyle.px(160), SPlayerStyle.px(160));
             cover.fadeIn();
             cover.setLinearFilter(true);
 
@@ -215,11 +217,11 @@ public class PlaylistPanel extends NCMPanel {
                 if (PlaylistCoverHero.consumeHandoff(this)) {
                     cover.setAlpha(1.0f);
                 }
-                cover.setRadius(4);
-                // 窄内容区收成 96：判据每帧现读（见上方注释），跨过阈值当场切档。
-                double coverSize = getWidth() < 400.0 ? 96.0 : 128.0;
+                cover.setRadius(SPlayerStyle.RADIUS_XL);
+                // 窄内容区收成 size-20（SPlayer 详情页滚动后折叠的那一档）：判据每帧现读，跨过阈值当场切档。
+                double coverSize = getWidth() < 400.0 ? SPlayerStyle.px(80) : SPlayerStyle.px(160);
                 cover.setBounds(coverSize, coverSize);
-                headerHeight[0] = cover.getRelativeY() + cover.getHeight() + 24;
+                headerHeight[0] = cover.getRelativeY() + cover.getHeight() + SPlayerStyle.px(16);
                 // 每帧回报落点：接力封面要朝这里飞，而这一帧封面本身让位（纹理供给换成 null，
                 // 控件照常跑回调），所以屏幕上任何时刻只有一张封面。
                 PlaylistCoverHero.setTarget(this, this.playList, cover.getX(), cover.getY(),
@@ -228,24 +230,23 @@ public class PlaylistPanel extends NCMPanel {
             cover.setLocImg(() -> PlaylistCoverHero.coversYield(this) ? null : this.playList.getCoverLocation());
 
 //        LabelWidget lblPlaylistName = new LabelWidget(playList.name, FontManager.pf);
-            RoundedButtonWidget btnPlay = new RoundedButtonWidget("播放歌单", FontManager.pf16bold);
+            RoundedButtonWidget btnPlay = new RoundedButtonWidget("播放全部", FontManager.pf16bold);
             // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
-            btnPlay.setGlassPlate(GlassLook.Surface.PLAYER)
-                    .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             this.addChild(btnPlay);
 
             btnPlay.setBeforeRenderCallback(() -> {
-                btnPlay.setBounds(57, 17);
-                btnPlay.setPosition(cover.getRelativeX() + cover.getWidth() + 12, cover.getRelativeY() + cover.getHeight() - btnPlay.getHeight());
-                btnPlay.setRadius(3);
-                btnPlay.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-                btnPlay.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                btnPlay.setBounds(HEADER_BUTTON_W, HEADER_BUTTON_H);
+                btnPlay.setPosition(cover.getRelativeX() + cover.getWidth() + SPlayerStyle.px(20), cover.getRelativeY() + cover.getHeight() - btnPlay.getHeight());
+                btnPlay.setRadius(HEADER_BUTTON_H * .5);
+                btnPlay.setColor(SPlayerStyle.primary());
+                btnPlay.setFillAlpha(.16f + (btnPlay.isHovering() ? .06f : 0f));
+                btnPlay.setTextColor(SPlayerStyle.primary());
                 // 窄内容区保护：按钮排 57 宽 + 8 间隙逐颗链下去，内容区不够时后续按钮
                 // 折到封面下方第二行（y 写进共享槽，渲染顺序按 addChild 先后，前一颗
                 // 写完下一颗才读）。行会占掉列表 17px —— 折行只在真的放不下时发生。
-                headerButtonWrapY[0] = btnPlay.getRelativeX() + btnPlay.getWidth() + 8 + 57 > getWidth() - 12
-                        ? cover.getRelativeY() + cover.getHeight() + 6
-                        : cover.getRelativeY() + cover.getHeight() - 17;
+                headerButtonWrapY[0] = btnPlay.getRelativeX() + btnPlay.getWidth() + 8 + HEADER_BUTTON_W > getWidth() - 12
+                        ? cover.getRelativeY() + cover.getHeight() + SPlayerStyle.px(8)
+                        : cover.getRelativeY() + cover.getHeight() - HEADER_BUTTON_H;
                 headerButtonNextX[0] = btnPlay.getRelativeX() + btnPlay.getWidth() + 8;
             });
 
@@ -276,8 +277,6 @@ public class PlaylistPanel extends NCMPanel {
             // 一概不动。
             RoundedButtonWidget btnParty = new RoundedButtonWidget("排进房间", FontManager.pf16bold);
             // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
-            btnParty.setGlassPlate(GlassLook.Surface.PLAYER)
-                    .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             this.addChild(btnParty);
             final double[] partyFade = new double[1];
             btnParty.setBeforeRenderCallback(() -> {
@@ -286,18 +285,19 @@ public class PlaylistPanel extends NCMPanel {
                 boolean visible = partyFade[0] > .04f;
                 btnParty.setClickable(visible);
                 btnParty.setAlpha((float) partyFade[0]);
-                btnParty.setBounds(57, 17);
+                btnParty.setBounds(HEADER_BUTTON_W, HEADER_BUTTON_H);
                 btnParty.setPosition(headerButtonNextX[0], headerButtonWrapY[0]);
-                btnParty.setRadius(3);
-                btnParty.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-                btnParty.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                btnParty.setRadius(HEADER_BUTTON_H * .5);
+                btnParty.setColor(SPlayerStyle.onSurface());
+                btnParty.setFillAlpha(.12f + (btnParty.isHovering() ? .06f : 0f));
+                btnParty.setTextColor(SPlayerStyle.onSurface());
                 // 无论显隐都续写链：这颗淡出时下一颗的锚点要顶到它原来的位置。
                 // 折行判据只看「下一颗的槽右缘」：越界就把后续按钮整体放到封面下方第二行，
                 // 行高 17 + 上下呼吸 6。
-                double nextX = headerButtonNextX[0] + 57 + 8;
+                double nextX = headerButtonNextX[0] + HEADER_BUTTON_W + 8;
                 headerButtonNextX[0] = nextX;
-                if (nextX + 57 > getWidth() - 12) {
-                    headerButtonWrapY[0] = cover.getRelativeY() + cover.getHeight() + 6;
+                if (nextX + HEADER_BUTTON_W > getWidth() - 12) {
+                    headerButtonWrapY[0] = cover.getRelativeY() + cover.getHeight() + SPlayerStyle.px(8);
                 }
             });
 
@@ -313,12 +313,10 @@ public class PlaylistPanel extends NCMPanel {
 
             RoundedButtonWidget btnCoverflow = new RoundedButtonWidget("Coverflow", FontManager.pf16bold);
             // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
-            btnCoverflow.setGlassPlate(GlassLook.Surface.PLAYER)
-                    .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             this.addChild(btnCoverflow);
 
             btnCoverflow.setBeforeRenderCallback(() -> {
-                btnCoverflow.setBounds(57, 17);
+                btnCoverflow.setBounds(HEADER_BUTTON_W, HEADER_BUTTON_H);
                 // 这一排按钮是<b>链式</b>定位的，「排进房间」收起时 Coverflow 要顶回那个位置，
                 // 否则不在一起听的界面上会留一块谁都不属于的空位。锚点按淡出进度连续过渡
                 // 而不是按布尔跳变：按钮淡出的那几帧里 Coverflow 平滑跟上来，不会瞬移盖住它。
@@ -327,13 +325,14 @@ public class PlaylistPanel extends NCMPanel {
                 double collapsedAnchor = btnPlay.getRelativeX() + btnPlay.getWidth();
                 double anchor = collapsedAnchor + (partyAnchor - collapsedAnchor) * partyFade[0];
                 btnCoverflow.setPosition(anchor + 8, headerButtonWrapY[0]);
-                btnCoverflow.setRadius(3);
-                btnCoverflow.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-                btnCoverflow.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-                double nextX = anchor + 8 + 57 + 8;
+                btnCoverflow.setRadius(HEADER_BUTTON_H * .5);
+                btnCoverflow.setColor(SPlayerStyle.onSurface());
+                btnCoverflow.setFillAlpha(.12f + (btnCoverflow.isHovering() ? .06f : 0f));
+                btnCoverflow.setTextColor(SPlayerStyle.onSurface());
+                double nextX = anchor + 8 + HEADER_BUTTON_W + 8;
                 headerButtonNextX[0] = nextX;
-                if (nextX + 57 > getWidth() - 12) {
-                    headerButtonWrapY[0] = cover.getRelativeY() + cover.getHeight() + 6;
+                if (nextX + HEADER_BUTTON_W > getWidth() - 12) {
+                    headerButtonWrapY[0] = cover.getRelativeY() + cover.getHeight() + SPlayerStyle.px(8);
                 }
             });
 
@@ -349,21 +348,20 @@ public class PlaylistPanel extends NCMPanel {
             RoundedButtonWidget btnSubscribe = new RoundedButtonWidget(
                     () -> playList.isSubscribed() ? "取消收藏" : "收藏歌单", FontManager.pf16bold);
                     // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
-                    btnSubscribe.setGlassPlate(GlassLook.Surface.PLAYER)
-                            .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             this.addChild(btnSubscribe);
             btnSubscribe.setBeforeRenderCallback(() -> {
                 boolean canToggleSubscription = canToggleSubscription();
                 btnSubscribe.setHidden(!canToggleSubscription);
-                btnSubscribe.setBounds(57, 17);
+                btnSubscribe.setBounds(HEADER_BUTTON_W, HEADER_BUTTON_H);
                 btnSubscribe.setPosition(headerButtonNextX[0], headerButtonWrapY[0]);
-                btnSubscribe.setRadius(3);
-                btnSubscribe.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-                btnSubscribe.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-                double nextX = headerButtonNextX[0] + 57 + 8;
+                btnSubscribe.setRadius(HEADER_BUTTON_H * .5);
+                btnSubscribe.setColor(SPlayerStyle.onSurface());
+                btnSubscribe.setFillAlpha(.12f + (btnSubscribe.isHovering() ? .06f : 0f));
+                btnSubscribe.setTextColor(SPlayerStyle.onSurface());
+                double nextX = headerButtonNextX[0] + HEADER_BUTTON_W + 8;
                 headerButtonNextX[0] = nextX;
-                if (nextX + 57 > getWidth() - 12) {
-                    headerButtonWrapY[0] = cover.getRelativeY() + cover.getHeight() + 6;
+                if (nextX + HEADER_BUTTON_W > getWidth() - 12) {
+                    headerButtonWrapY[0] = cover.getRelativeY() + cover.getHeight() + SPlayerStyle.px(8);
                 }
             });
             btnSubscribe.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
@@ -391,20 +389,19 @@ public class PlaylistPanel extends NCMPanel {
             // 汽水自建云歌单同一格给「重命名」：写回 /luna/pc/me/playlist/update，提交走云表单。
             RoundedButtonWidget btnRename = new RoundedButtonWidget("重命名", FontManager.pf16bold);
             // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
-            btnRename.setGlassPlate(GlassLook.Surface.PLAYER)
-                    .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             this.addChild(btnRename);
             btnRename.setBeforeRenderCallback(() -> {
                 boolean renamable = playList != null
                         && (playList.isLocalPlaylist() || ownQishuiCloudPlaylist()
                         || ownQQPlaylist() || ownBodianCloudPlaylist());
-                btnRename.setBounds(57, 17);
+                btnRename.setBounds(HEADER_BUTTON_W, HEADER_BUTTON_H);
                 // 与「收藏歌单」同槽互斥（两者都挂在本格），锚点读共享槽而不是上一颗的实际位置：
                 // 收藏格这帧 hidden 时它的坐标仍在续写链，读槽保证本格位置稳定。
                 btnRename.setPosition(headerButtonNextX[0], headerButtonWrapY[0]);
-                btnRename.setRadius(3);
-                btnRename.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-                btnRename.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                btnRename.setRadius(HEADER_BUTTON_H * .5);
+                btnRename.setColor(SPlayerStyle.onSurface());
+                btnRename.setFillAlpha(.12f + (btnRename.isHovering() ? .06f : 0f));
+                btnRename.setTextColor(SPlayerStyle.onSurface());
                 btnRename.setHidden(!renamable);
             });
             btnRename.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
@@ -419,16 +416,15 @@ public class PlaylistPanel extends NCMPanel {
 
             // 云端自建歌单才有删除：虚拟单、收藏单与别家歌单不配。
             RoundedButtonWidget btnDeleteCloud = new RoundedButtonWidget("删除歌单", FontManager.pf16bold);
-            btnDeleteCloud.setGlassPlate(GlassLook.Surface.PLAYER)
-                    .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             this.addChild(btnDeleteCloud);
             btnDeleteCloud.setBeforeRenderCallback(() -> {
-                btnDeleteCloud.setBounds(57, 17);
+                btnDeleteCloud.setBounds(HEADER_BUTTON_W, HEADER_BUTTON_H);
                 btnDeleteCloud.setPosition(headerButtonNextX[0], headerButtonWrapY[0]);
-                btnDeleteCloud.setRadius(3);
+                btnDeleteCloud.setRadius(HEADER_BUTTON_H * .5);
                 // 危险动作的红色与表单层的 BAD_COLOR(NcmSheet) 同值：全界面的「删除红」就一种。
                 btnDeleteCloud.setColor(0xF1767D);
-                btnDeleteCloud.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                btnDeleteCloud.setFillAlpha(.16f + (btnDeleteCloud.isHovering() ? .06f : 0f));
+                btnDeleteCloud.setTextColor(0xF1767D);
                 btnDeleteCloud.setHidden(!(ownQishuiCloudPlaylist() || ownQQPlaylist() || ownBodianCloudPlaylist()));
             });
             btnDeleteCloud.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
@@ -494,10 +490,11 @@ public class PlaylistPanel extends NCMPanel {
                         }
                         searchBar
                                 .setAlpha(1f)
-                                .setColor(NCMScreen.getColor(NCMScreen.ColorType.BORDER))
+                                .setColor(SPlayerStyle.mix(SPlayerStyle.surface(), SPlayerStyle.onSurface(),
+                                        this.tfSearch.isFocused() ? 1.0 : .15))
                                 .setWidth(tfOpenAnimation)
                                 .setHeight(btnCoverflow.getHeight())
-                                .setRadius(7)
+                                .setRadius(btnCoverflow.getHeight() * .5)
                                 .setPosition(searchAnchorX + 8, btnCoverflow.getRelativeY());
                     });
 
@@ -507,21 +504,18 @@ public class PlaylistPanel extends NCMPanel {
                     .setClickable(false)
                     .setBeforeRenderCallback(() -> {
                         searchBarBg
-                                .setMargin(.5)
-                                // 只压这块底：搜索框里的文字与图标是 searchBar 的子控件，不归它管。
-                                .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, .6f))
-                                // 这一格本身是一块小玻璃（贴背景 + 薄折射 + 边缘高光）。
-                                .setGlassPlate(GlassLook.Surface.PLAYER)
-                                .setRadius(searchBar.getRadius() - .5);
-                        searchBarBg.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+                                .setMargin(SPlayerStyle.px(1))
+                                .setRadius(searchBar.getRadius() - SPlayerStyle.px(1));
+                        searchBarBg.setColor(SPlayerStyle.mix(SPlayerStyle.surface(), SPlayerStyle.onSurface(),
+                                this.tfSearch.isFocused() ? .08 : .03));
                     });
 
             LabelWidget lblSearchIcon = new LabelWidget("K", FontManager.music18);
             searchBar.addChild(lblSearchIcon);
             lblSearchIcon
                     .setClickable(false)
-                    .setColor(hexColor(100, 100, 100))
                     .setBeforeRenderCallback(() -> lblSearchIcon
+                            .setColor(SPlayerStyle.a(SPlayerStyle.onSurfaceVariant(), .5))
                             .centerVertically()
                             .setPosition(lblSearchIcon.getRelativeY(), lblSearchIcon.getRelativeY()));
 
@@ -560,8 +554,6 @@ public class PlaylistPanel extends NCMPanel {
             // lucide 路径由 FoliaLucideIcons.draw 在回调里按中心点手画。
             if (!playList.isSearchMode()) {
                 btnLocate = new RoundedButtonWidget("", FontManager.pf12);
-                btnLocate.setGlassPlate(GlassLook.Surface.PLAYER)
-                        .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
                 this.addChild(btnLocate);
                 final RoundedButtonWidget btnLocateRef = btnLocate;
                 btnLocate.setBeforeRenderCallback(() -> {
@@ -573,13 +565,12 @@ public class PlaylistPanel extends NCMPanel {
                     float alpha = Interpolations.interpolate(btnLocate.getWidgetAlpha(), targetAlpha, .3f);
                     btnLocate.setAlpha(alpha);
                     btnLocate.setClickable(alpha > .5f);
-                    btnLocate.setBounds(28, 22);
-                    btnLocate.setPosition(Math.max(8, getWidth() - btnLocate.getWidth() - 48),
-                            btnCoverflow.getRelativeY() + (btnCoverflow.getHeight() - 22) * .5);
-                    btnLocate.setRadius(6);
-                    btnLocate.setColor(btnLocate.isHovering()
-                            ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                            : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+                    btnLocate.setBounds(HEADER_BUTTON_H, HEADER_BUTTON_H);
+                    btnLocate.setPosition(Math.max(8, getWidth() - btnLocate.getWidth() - SPlayerStyle.px(20)),
+                            btnCoverflow.getRelativeY() + (btnCoverflow.getHeight() - HEADER_BUTTON_H) * .5);
+                    btnLocate.setRadius(HEADER_BUTTON_H * .5);
+                    btnLocate.setColor(SPlayerStyle.onSurface());
+                    btnLocate.setFillAlpha(btnLocate.isHovering() ? .18f : .12f);
                     // 字形不在这里画：beforeRender 阶段只改属性，画留在面板 onRender 尾部。
                 });
                 btnLocate.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
@@ -613,7 +604,7 @@ public class PlaylistPanel extends NCMPanel {
                 this.loadAvatar();
                 creatorAvatar.setBeforeRenderCallback(() -> {
                     creatorAvatar.setBounds(16, 16);
-                    creatorAvatar.setPosition(cover.getRelativeX() + cover.getWidth() + 12,
+                    creatorAvatar.setPosition(cover.getRelativeX() + cover.getWidth() + SPlayerStyle.px(20),
                             btnPlay.getRelativeY() - 6 - creatorAvatar.getHeight());
                     creatorAvatar.setRadius(7.25);
                 });
@@ -629,7 +620,7 @@ public class PlaylistPanel extends NCMPanel {
                         ? playList.getPlatform().getDisplayName()
                         : creator.getName();
             }
-            LabelWidget lblCreator = new LabelWidget(creatorName, FontManager.pf16bold);
+            LabelWidget lblCreator = new LabelWidget(creatorName, SPlayerStyle.textSm(false));
             this.addChild(lblCreator);
 
             lblCreator.setBeforeRenderCallback(() -> {
@@ -637,27 +628,27 @@ public class PlaylistPanel extends NCMPanel {
                     lblCreator.setPosition(creatorAvatar.getRelativeX() + creatorAvatar.getWidth() + 4,
                             creatorAvatar.getRelativeY() + creatorAvatar.getHeight() * .5 - lblCreator.getHeight() * .5);
                 } else {
-                    lblCreator.setPosition(cover.getRelativeX() + cover.getWidth() + 12,
+                    lblCreator.setPosition(cover.getRelativeX() + cover.getWidth() + SPlayerStyle.px(20),
                             btnPlay.getRelativeY() - 6 - lblCreator.getHeight());
                 }
                 // 创建者名与统计行同一条右让位（返回键左缘）：长作者名窄窗下不再顶出去。
-                lblCreator.setMaxWidth(Math.max(40, getWidth() - (cover.getRelativeX() + cover.getWidth() + 12) - 44));
+                lblCreator.setMaxWidth(Math.max(40, getWidth() - (cover.getRelativeX() + cover.getWidth() + SPlayerStyle.px(20)) - 44));
                 lblCreator.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-                lblCreator.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                lblCreator.setColor(SPlayerStyle.a(SPlayerStyle.onSurfaceVariant(), .50));
             });
 
-            LabelWidget lblPlaylistInfo = new LabelWidget(this::getPlayListInfo, FontManager.pf12);
+            LabelWidget lblPlaylistInfo = new LabelWidget(this::getPlayListInfo, SPlayerStyle.textSm(false));
             this.addChild(lblPlaylistInfo);
 
             lblPlaylistInfo.setBeforeRenderCallback(() -> {
                 double creatorTop = creatorAvatar == null
                         ? lblCreator.getRelativeY()
                         : creatorAvatar.getRelativeY();
-                lblPlaylistInfo.setMaxWidth(Math.max(40, getWidth() - (cover.getRelativeX() + cover.getWidth() + 12) - 12));
+                lblPlaylistInfo.setMaxWidth(Math.max(40, getWidth() - (cover.getRelativeX() + cover.getWidth() + SPlayerStyle.px(20)) - 12));
                 lblPlaylistInfo.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-                lblPlaylistInfo.setPosition(cover.getRelativeX() + cover.getWidth() + 12,
+                lblPlaylistInfo.setPosition(cover.getRelativeX() + cover.getWidth() + SPlayerStyle.px(20),
                         creatorTop - 8 - lblPlaylistInfo.getHeight());
-                lblPlaylistInfo.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+                lblPlaylistInfo.setColor(SPlayerStyle.a(SPlayerStyle.onSurfaceVariant(), .70));
             });
             LabelWidget lblPlaylistName = new LabelWidget(playList.getName(), FontManager.pf32);
             this.addChild(lblPlaylistName);
@@ -665,11 +656,11 @@ public class PlaylistPanel extends NCMPanel {
             lblPlaylistName.setBeforeRenderCallback(() -> {
                 // 宽窗口保持 pf32 大字；窄内容区降一档到 pf24bold。判据与封面同一条、
                 // 每帧现读。截断保护两档都要：原来这个名字没有任何让位，长歌名直接画出右缘。
-                lblPlaylistName.setFont(getWidth() < 400.0 ? FontManager.pf24bold : FontManager.pf32);
-                lblPlaylistName.setMaxWidth(Math.max(40, getWidth() - (cover.getRelativeX() + cover.getWidth() + 12) - 44));
+                lblPlaylistName.setFont(getWidth() < 400.0 ? SPlayerStyle.textXl() : SPlayerStyle.text3xl());
+                lblPlaylistName.setMaxWidth(Math.max(40, getWidth() - (cover.getRelativeX() + cover.getWidth() + SPlayerStyle.px(20)) - 44));
                 lblPlaylistName.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-                lblPlaylistName.setPosition(cover.getRelativeX() + cover.getWidth() + 12, lblPlaylistInfo.getRelativeY() - 4 - lblPlaylistName.getHeight());
-                lblPlaylistName.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                lblPlaylistName.setPosition(cover.getRelativeX() + cover.getWidth() + SPlayerStyle.px(20), lblPlaylistInfo.getRelativeY() - 4 - lblPlaylistName.getHeight());
+                lblPlaylistName.setColor(SPlayerStyle.onSurface());
             });
 
             // 非搜索模式的让位由 headerHeight 槽逐帧承载（封面回调写入），这里不再定格。

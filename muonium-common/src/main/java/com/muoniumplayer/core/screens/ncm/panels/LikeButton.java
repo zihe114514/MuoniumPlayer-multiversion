@@ -174,6 +174,8 @@ public final class LikeButton {
         try {
             if (onLiked != null) onLiked.run();
             noteLiked(music, liked);
+            // 主页「本周新增收藏」只数用户发起收藏的这一下；失败回滚走 finishLiked，不在这里。
+            if (liked) com.muoniumplayer.core.ncm.music.ListeningStats.noteLiked();
             MultiThreadingUtil.runAsync(() -> {
                 boolean completed = false;
                 try {

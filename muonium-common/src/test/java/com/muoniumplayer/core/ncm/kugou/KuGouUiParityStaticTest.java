@@ -285,7 +285,7 @@ class KuGouUiParityStaticTest {
         String bar = read(PANELS, "ControlsBar.java");
         assertTrue(bar.contains("boolean kugou = currentPlatform == MusicPlatform.KUGOU;"),
                 "酷狗要有自己的入口判定");
-        assertTrue(bar.contains("boolean usable = (netease || kugou || MpPartyClient.serverPresent()) && fits;"),
+        assertTrue(bar.contains("return netease || kugou || MpPartyClient.serverPresent();"),
                 "入口条件是「音源对得上」，不含登录态：没登录也要点得进去看到「去登录」");
         assertTrue(bar.contains("ListenTogetherService.isActive() || MpPartyClient.inRoom()"),
                 "点亮判定走门面，两个源的房间都算");

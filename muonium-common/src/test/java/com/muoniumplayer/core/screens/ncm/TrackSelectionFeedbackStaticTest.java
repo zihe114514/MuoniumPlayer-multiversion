@@ -21,12 +21,13 @@ class TrackSelectionFeedbackStaticTest {
         int loading = bar.lastIndexOf("if (presentation.preparing)", seek);
         assertTrue(loading > 0 && bar.substring(loading, seek).contains("return;"));
         assertTrue(bar.contains("if (presentation.preparing) return"));
-        int fillStart = bar.indexOf("RoundedRectWidget progressBar =");
-        int fillEnd = bar.indexOf("LabelWidget lblCurTime", fillStart);
+        int fillStart = bar.indexOf("private final class ProgressStrip");
+        int fillEnd = bar.indexOf("private final class VolumePopover", fillStart);
         assertTrue(fillStart >= 0 && fillEnd > fillStart);
         String fill = bar.substring(fillStart, fillEnd);
-        assertTrue(fill.contains("if (presentation.preparing)"));
-        assertTrue(fill.contains("progressBar.setWidth(0).setRadius(0)"));
+        int preparing = fill.indexOf("if (presentation.preparing)");
+        assertTrue(preparing >= 0 && fill.indexOf("return;", preparing) < fill.indexOf("double fraction"),
+                "准备中只画等待轨并提前返回，不画旧歌的进度");
         assertFalse(fill.contains("!CloudMusic.hasPlaybackClock()"), "恢复态要展示冻结进度，不要求音频时钟");
         assertTrue(bar.contains("selectionMotion.offset()"));
         assertTrue(bar.contains("selectionMotion.contentAlpha()"));

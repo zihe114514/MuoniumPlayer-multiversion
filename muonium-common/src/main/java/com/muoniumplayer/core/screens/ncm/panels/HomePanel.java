@@ -21,12 +21,16 @@ import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.texture.Textures;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
+import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
 import com.muoniumplayer.core.screens.ncm.NCMPanel;
 import com.muoniumplayer.core.screens.ncm.PlaylistCoverHero;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.screens.ncm.SPlayerStyle;
+import com.muoniumplayer.core.rendering.SPlayerIcons;
+import com.muoniumplayer.core.ncm.music.DailyRecommendService;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.json.JsonUtils;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
@@ -115,22 +119,18 @@ public class HomePanel extends NCMPanel {
     private static volatile boolean bilibiliHomeLoading;
 
     // ─────────────────────────── W2 主页网格几何 ───────────────────────────
-    /** 页面左右内边距：页头与网格共用，网格视口宽度固定是「面板宽 - 24」。 */
-    private static final double PAGE_MARGIN = 12.0;
-    /** 欢迎语位置（pf25bold）。 */
-    private static final double HEADER_TITLE_Y = 12.0;
-    /** 「推荐歌单 · N」位置（pf14bold）。 */
-    private static final double HEADER_SUBTITLE_Y = 39.0;
-    /** 内容起始 y：占位布局与正式网格共用，数据到达时页面不跳。 */
-    private static final double CONTENT_TOP = 60.0;
-    /** 内容底部留白。 */
-    private static final double CONTENT_BOTTOM_PADDING = 12.0;
-    /** 卡片栅格间距（ScrollPanel 的横竖间距共用这一个值）。 */
-    private static final double GRID_GAP = 12.0;
-    /** hover 时封面四周各外扩多少：卡片宽里先给它留 5L，封面静态边长才是 cardW - 5。 */
-    private static final double COVER_HOVER_EXPANSION = 5.0;
-    /** 旧的密度公式：一列的基准宽 = 105 卡片 + 12 间距 = 117。 */
-    private static final double GRID_COLUMN_PITCH = 105.0 + GRID_GAP;
+    /** 页面左右内边距（SPlayer 主页 {@code px-6}）：页头与网格共用。 */
+    private static final double PAGE_MARGIN = SPlayerStyle.px(24);
+    /** 占位页（加载中/失败）里转子的起始 y：在页头标题之下。 */
+    private static final double CONTENT_TOP = SPlayerStyle.px(24) + SPlayerStyle.px(36) + SPlayerStyle.px(24);
+    /** 内容底部留白（{@code pb-10}）。 */
+    private static final double CONTENT_BOTTOM_PADDING = SPlayerStyle.px(16);
+    /** 卡片栅格间距（SPlayer CoverList {@code gap 16}；ScrollPanel 的横竖间距共用这一个值）。 */
+    private static final double GRID_GAP = SPlayerStyle.px(16);
+    /** 封面铺满卡片宽（SPlayer 的悬停是遮罩 + 播放键，不再外扩封面），所以不预留外扩量。 */
+    private static final double COVER_HOVER_EXPANSION = 0.0;
+    /** 一列的基准宽 = CoverList 的 {@code minSize 140} + 间距。 */
+    private static final double GRID_COLUMN_PITCH = SPlayerStyle.px(140) + GRID_GAP;
     /**
      * 网格量化单位：1/64 L。
      *
@@ -402,18 +402,25 @@ public class HomePanel extends NCMPanel {
         this.pendingHomeTrackPlaylist = null;
         this.pendingHomeTrackIndex = 0;
         this.pendingCardActions = Collections.emptyMap();
-        this.recommendationsLabel = null;
+        this.recommendationsText = null;
+        this.directFeedHeader = null;
         this.displayedCardIds.clear();
         this.layoutGeneration++;
-        final String welcomeText = welcomeTextFor(platform);
+        final String welcomeText = this.fixedPlaylists == null ? HomeSections.greeting(platform)
+                : welcomeTextFor(platform);
 
-        LabelWidget lblWelcome = new LabelWidget(welcomeText, FontManager.pf25bold);
+        // 加载中的占位页也是 SPlayer 页头：text-3xl 粗体标题，位置与正式页头一致，数据到达时不跳。
+        Panel lblWelcome = new Panel() {
+            @Override
+            public void onRender(double mouseX, double mouseY) {
+                this.setBounds(PAGE_MARGIN, 0, Math.max(1.0, HomePanel.this.getWidth() - PAGE_MARGIN * 2.0),
+                        CONTENT_TOP);
+                SPlayerStyle.text(SPlayerStyle.text3xl(), welcomeText, this.getX(),
+                        this.getY() + SPlayerStyle.px(24) + SPlayerStyle.px(18), this.getWidth(),
+                        SPlayerStyle.a(SPlayerStyle.onSurface(), 1.0, this.getAlpha()));
+            }
+        };
         lblWelcome.setClickable(false);
-        lblWelcome.setBeforeRenderCallback(() -> lblWelcome
-                .setPosition(PAGE_MARGIN, HEADER_TITLE_Y)
-                .setMaxWidth(Math.max(1.0, this.getWidth() - PAGE_MARGIN * 2.0))
-                .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
-                .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)));
         this.addChild(lblWelcome);
 
         // 占位内容与正式网格从同一个 y 起排：数据回来换成网格时页面不会跳一下。
@@ -1274,9 +1281,7 @@ public class HomePanel extends NCMPanel {
             if (this.displayedCardIds.add(playlist.getId())) fresh.add(playlist);
         }
         if (fresh.isEmpty()) return;
-        if (this.recommendationsLabel != null) {
-            this.recommendationsLabel.setLabel(qishuiRecommendationTitle(this.displayedCardIds.size()));
-        }
+        this.recommendationsText = qishuiRecommendationTitle(this.displayedCardIds.size());
         this.pendingCardActions = this.fixedPlaylistActions;
         if (this.pendingCards != null) {
             this.pendingCards.addAll(fresh);
@@ -1372,25 +1377,36 @@ public class HomePanel extends NCMPanel {
         // 那里跑在子控件之前，本帧新补的卡片在构造时就能拿到当帧列宽。
         // 账号身份已经挪到侧栏的账号行（那里本来就有头像和昵称），主页下方不再需要给它留位置。
 
-        LabelWidget lblWelcome = new LabelWidget(welcomeText, FontManager.pf25bold);
-        lblWelcome.setBeforeRenderCallback(() -> lblWelcome
-                .setPosition(PAGE_MARGIN, HEADER_TITLE_Y)
-                .setMaxWidth(Math.max(1.0, this.getWidth() - PAGE_MARGIN * 2.0))
-                .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
-                .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)));
-        this.addChild(lblWelcome);
+        // SPlayer 主页整页滚动：页头与各板块是网格里占满一整行的子项，和歌单卡片一起滚。
+        // 直接曲目流（YouTube/Spotify/Apple 的个人推荐）是等高行的快速列表，塞不进不等高的板块，
+        // 那时页头钉在列表上方（directFeedHeader），列表从它下面开始。
+        this.recommendationsText = recommendationsText;
+        final boolean defaultHome = this.fixedPlaylists == null;
+        HomeSections.Greeting greeting = new HomeSections.Greeting(scrollPanel,
+                () -> defaultHome ? HomeSections.greeting(platform) : this.recommendationsText,
+                defaultHome ? () -> "音乐已就绪，挑一首开始吧" : null, defaultHome);
+        if (directTrackFeed) {
+            this.directFeedHeader = greeting;
+            this.addChild(greeting);
+            greeting.primeSize();
+        } else {
+            this.directFeedHeader = null;
+            List<AbstractWidget<?>> sections = new ArrayList<>();
+            sections.add(greeting.primeSize());
+            if (defaultHome) {
+                DailyRecommendService.ensureLoaded(platform, () -> NCMScreen.getInstance().invalidateTransitionContent());
+                this.dailyHero = new HomeSections.DailyHero(scrollPanel, platform);
+                sections.add(this.dailyHero.primeSize());
+                sections.add(new HomeSections.QuickActions(scrollPanel, platform).primeSize());
+                sections.add(new HomeSections.RepeatListening(scrollPanel).primeSize());
+                sections.add(new HomeSections.GridTitle(scrollPanel, () -> this.recommendationsText,
+                        () -> "为你量身定制的歌单精选").primeSize());
+            } else {
+                this.dailyHero = null;
+            }
+            scrollPanel.addChild(sections);
+        }
 
-        LabelWidget lblRecommendations = new LabelWidget(recommendationsText, FontManager.pf14bold);
-        lblRecommendations.setBeforeRenderCallback(() -> lblRecommendations
-                .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                .setMaxWidth(Math.max(1.0, this.getWidth() - PAGE_MARGIN * 2.0))
-                .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
-                .setPosition(PAGE_MARGIN, HEADER_SUBTITLE_Y));
-        this.addChild(lblRecommendations);
-        // 渐进发布的追加批要改这一行的计数（60 → 150），而不是重建整页。
-        this.recommendationsLabel = lblRecommendations;
-
-        // 标题刻意加在被裁剪网格之后，因此它们始终在最上。
         //
         // 卡片按网格顺序错峰落进来，和歌单页的曲目行用的是同一套动作（PanelItemEntrance）：
         // 主页以前完全没有进场，切回主页就是整屏内容凭空出现，和旁边那些有动画的页面比很突兀。
@@ -1465,11 +1481,25 @@ public class HomePanel extends NCMPanel {
             this.reshape.settleSoon();
         }
         if (this.scrollPanel != null) {
+            double top = 0.0;
+            if (this.directFeedHeader != null) {
+                this.directFeedHeader.setPosition(PAGE_MARGIN, 0);
+                top = this.directFeedHeader.getHeight();
+            }
             this.scrollPanel.setBounds(
                     PAGE_MARGIN,
-                    CONTENT_TOP,
+                    top,
                     Math.max(1.0, this.getWidth() - PAGE_MARGIN * 2.0),
-                    Math.max(1.0, this.getHeight() - CONTENT_TOP - CONTENT_BOTTOM_PADDING));
+                    Math.max(1.0, this.getHeight() - top - CONTENT_BOTTOM_PADDING));
+            // 每日推荐没到（或这个音源没有）时整块隐藏：隐藏的子项不进网格排版，也就不留一行空白。
+            // 显隐由这里驱动 —— 被隐藏的控件自己的回调不再执行，没法把自己显示回来。
+            if (this.dailyHero != null) {
+                boolean hidden = DailyRecommendService.peek(platform) == null;
+                if (this.dailyHero.isHidden() != hidden) {
+                    this.dailyHero.setHidden(hidden);
+                    this.scrollPanel.invalidateLayout();
+                }
+            }
         }
     }
 
@@ -1489,8 +1519,12 @@ public class HomePanel extends NCMPanel {
     private volatile long layoutGeneration;
     /** 网格上现有卡片的歌单 id。追加时据此判重：渐进发布是累积快照，前后必然重叠。 */
     private final java.util.Set<Long> displayedCardIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    /** 「推荐歌单 · N」那一行。追加后要就地改数字，而不是重建整页。 */
-    private LabelWidget recommendationsLabel;
+    /** 「推荐歌单 · N」那一行的文字。渐进追加后就地改数字，而不是重建整页。 */
+    private volatile String recommendationsText;
+    /** 直接曲目流时钉在列表上方的页头（网格模式下页头在网格里，这里是 null）。 */
+    private HomeSections.Greeting directFeedHeader;
+    /** 每日推荐大卡：没有数据时从网格里隐藏，不留一行空白。 */
+    private HomeSections.DailyHero dailyHero;
 
     /**
      * 每帧只构建一小批卡片。
@@ -1804,13 +1838,15 @@ public class HomePanel extends NCMPanel {
 
     private static class PlaylistWidget extends AbstractWidget<PlaylistWidget> {
 
-        /** 网易云首页网格中两条标题行之间的额外空隙。 */
-        private static final double NETEASE_TITLE_LINE_GAP = 6.0;
-        private static final double DEFAULT_TITLE_LINE_GAP = 4.0;
-        /** 封面静态内缩：四周各 2.5L，正好是 hover 外扩量（5L）的一半。 */
-        private static final double COVER_INSET = COVER_HOVER_EXPANSION * .5;
-        private static final double COVER_TITLE_SPACING = 4.0;
-        private static final double COVER_RADIUS = 4.0;
+        /** 标题两行之间的空隙（{@code leading-snug}）。 */
+        private static final double NETEASE_TITLE_LINE_GAP = SPlayerStyle.px(2);
+        private static final double DEFAULT_TITLE_LINE_GAP = SPlayerStyle.px(2);
+        /** 封面铺满卡片宽：SPlayer 的封面贴着卡片边，没有内缩。 */
+        private static final double COVER_INSET = 0.0;
+        /** 信息区内边距（{@code px-2.5 py-2.5}）。 */
+        private static final double INFO_PADDING = SPlayerStyle.px(10);
+        private static final double COVER_TITLE_SPACING = INFO_PADDING;
+        private static final double COVER_RADIUS = SPlayerStyle.RADIUS_XL;
         /** 标题超过两行时第二行的收尾省略号。 */
         private static final String TITLE_ELLIPSIS = "\u2026";
 
@@ -1893,14 +1929,14 @@ public class HomePanel extends NCMPanel {
             this.reshape = reshape;
             this.container = container;
             this.titleText = safePlaylistTitle(playList.getName());
-            this.titleFont = FontManager.pf14bold;
+            this.titleFont = SPlayerStyle.textSm(false);
             this.titleLineGap = playList.getPlatform() == MusicPlatform.NETEASE
                     ? NETEASE_TITLE_LINE_GAP : DEFAULT_TITLE_LINE_GAP;
 
             // 先用占位的一行文本把标题控件建出来：真正的两行折行在构建末尾的
             // applyGridGeometry 里按当帧封面宽度做一次，之后由缓存键守住，滚动时一帧都不重量。
             this.titleWidget = new PlaylistTitleWidget(new String[]{this.titleText},
-                    this.titleFont, this.titleLineGap, this.grid.coverSize);
+                    this.titleFont, this.titleLineGap, Math.max(1.0, this.grid.cardWidth - INFO_PADDING * 2.0));
 
             // 封面先用 1×1 建出来；真实几何在构建末尾落一次，之后只在网格列宽变化时重挂。
             RoundedImageWidget cover = new RoundedImageWidget(this::getCoverLocation, 0, 0, 1.0, 1.0);
@@ -1930,19 +1966,17 @@ public class HomePanel extends NCMPanel {
                             coverLoaded = this.loadCover();
                         }
 
-                        // 悬停外扩的逼近：用比例逼近（跟手），但收敛后必须精确归位。
-                        // 原来永远差一点点、每帧都在动，封面 bounds 于是每帧重设 ——
-                        // 缩放窗口时这层微动会和重排叠在一起，看起来就是抖。
-                        final double emphasizeTarget = cover.isHovering() ? COVER_HOVER_EXPANSION : 0.0;
+                        // SPlayer CoverCard 的悬停：整卡 bg-primary/10、封面压暗、右下角浮出播放键。
+                        // 封面本身不再外扩（emphasizeAnim 只做悬停进度，见 afterRenderChildren）。
                         this.emphasizeAnim = Interpolations.interpolate(this.emphasizeAnim,
-                                emphasizeTarget, .2f);
-                        if (Math.abs(this.emphasizeAnim - emphasizeTarget) < .01) {
-                            this.emphasizeAnim = emphasizeTarget;
+                                this.isHovering() || cover.isHovering() ? 1.0 : 0.0, .28f);
+                        if (Math.abs(this.emphasizeAnim - Math.round(this.emphasizeAnim)) < .004) {
+                            this.emphasizeAnim = Math.round(this.emphasizeAnim);
                         }
 
                         // 悬停只让封面在卡片里胀满：x/y 与尺寸都由「卡片宽 - 当前封面边」推出来。
                         // 标题位置是网格几何算好的常量，不会跟着这张封面的动画斜移。
-                        final double size = this.coverSize + this.emphasizeAnim;
+                        final double size = this.coverSize;
                         final double inset = (this.cardWidth - size) * .5;
                         // 尺寸真的变了才重设 bounds：静止的封面不该每帧重录一次圆角裁剪。
                         if (cover.getWidth() != size || cover.getX() != inset) {
@@ -2015,7 +2049,7 @@ public class HomePanel extends NCMPanel {
             // 字形就绪状态，滚动、悬停期间这里只是一次 long 比较加两次 double 比较。
             // 容器传给 applyGridGeometry 供卡高变化时失效布局签名（正常路径是一帧一次 null 判断）。
             this.applyGridGeometry(this.container);
-            this.updateTitleLines(this.coverSize);
+            this.updateTitleLines(this.titleWidth());
 
             // 进场与重排共用同一个矩阵通道：任一条还在动就挂上合成变换，两条都停了才摘掉。
             // 摘掉之后停住的卡片每帧只付一次 null 判断，不再有 pushMatrix。
@@ -2024,9 +2058,13 @@ public class HomePanel extends NCMPanel {
             // 封面底板：图还没到时先给一块 ELEMENT_BACKGROUND 圆角占位，避免那个位置是个黑洞；
             // 图到了自然被封面完全盖住。直接画在子控件之前（=封面下面），不新增控件树，
             // 也不参与命中测试。
+            if (this.emphasizeAnim > .004) {
+                SPlayerStyle.fill(this.getX(), this.getY(), this.getWidth(), this.getHeight(), COVER_RADIUS,
+                        SPlayerStyle.a(SPlayerStyle.primary(), .10 * this.emphasizeAnim, this.getAlpha()));
+            }
             this.roundedRect(this.getX() + COVER_INSET, this.getY() + COVER_INSET,
                     this.coverSize, this.coverSize, COVER_RADIUS,
-                    reAlpha(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND), this.getAlpha()));
+                    SPlayerStyle.a(SPlayerStyle.onSurface(), .08, this.getAlpha()));
 
             // 记下本帧的真实排版位置，供下一帧判「有没有被重排」。
             // 重排补间进行中<b>不更新</b>：补间的基准必须固定成「换代那一刻的位置」，
@@ -2035,6 +2073,28 @@ public class HomePanel extends NCMPanel {
                 this.lastLayoutX = this.getX();
                 this.lastLayoutY = this.getY();
             }
+        }
+
+        /**
+         * 悬停遮罩画在封面之上：{@code brightness-80} 的压暗与右下角 {@code size-9 bg-white/50} 的播放键，
+         * 播放键从下方 6px 滑上来。点卡片本身仍是打开歌单（播放键只是视觉提示，与 SPlayer 一致）。
+         */
+        @Override
+        protected void afterRenderChildren(double mouseX, double mouseY) {
+            final double hover = this.emphasizeAnim;
+            if (hover <= .004) return;
+            final float alpha = this.getAlpha();
+            final double x = this.getX() + COVER_INSET;
+            final double y = this.getY() + COVER_INSET;
+            SPlayerStyle.fill(x, y, this.coverSize, this.coverSize, COVER_RADIUS,
+                    SPlayerStyle.a(0x000000, .20 * hover, alpha));
+            final double button = SPlayerStyle.px(36);
+            final double margin = SPlayerStyle.px(8);
+            final double centerX = x + this.coverSize - margin - button * .5;
+            final double centerY = y + this.coverSize - margin - button * .5 + SPlayerStyle.px(6) * (1.0 - hover);
+            SPlayerStyle.circle(centerX, centerY, button * .5, SPlayerStyle.a(0xFFFFFF, .50 * hover, alpha));
+            SPlayerIcons.draw(SPlayerIcons.PLAY, centerX + SPlayerStyle.px(1), centerY, SPlayerStyle.px(18),
+                    SPlayerStyle.a(0xFFFFFF, hover, alpha), true);
         }
 
         /**
@@ -2165,12 +2225,12 @@ public class HomePanel extends NCMPanel {
             // 真实列宽（100~123 视视口而定）差的那十几像素恰好是一个行进 —— 先算后刷的话，
             // 标题被 setPosition 到旧快照的位置、压进封面下缘，且此后不再重挂，错误永久冻结。
             final double titleY = COVER_INSET + this.coverSize + COVER_TITLE_SPACING;
-            final double newHeight = titleY + this.titleWidget.getBlockHeight();
+            final double newHeight = titleY + this.titleWidget.getBlockHeight() + INFO_PADDING;
             final boolean heightChanged = Math.abs(this.getHeight() - newHeight) > .01;
 
             if (gridChanged || metricsChanged) {
-                this.titleWidget.setPosition(COVER_INSET, titleY);
-                this.updateTitleLines(this.coverSize);
+                this.titleWidget.setPosition(INFO_PADDING, titleY);
+                this.updateTitleLines(this.titleWidth());
             }
 
             this.setBounds(this.cardWidth, newHeight);
@@ -2180,6 +2240,11 @@ public class HomePanel extends NCMPanel {
             if (metricsChanged) {
                 this.appliedMetrics = this.titleFont.metricsRevision();
             }
+        }
+
+        /** 标题可用宽度：卡片宽减去信息区左右内边距。 */
+        private double titleWidth() {
+            return Math.max(1.0, this.cardWidth - INFO_PADDING * 2.0);
         }
 
         /** HomePanel 在列宽变化的那几帧统一调用（时序在容器摆位之前，见 refreshGridLayout）。 */

@@ -32,22 +32,16 @@ class ControlsBarThemeFollowStaticTest {
             "com", "muoniumplayer", "core", "screens", "ncm", "VolumeControl.java"));
 
     @Test
-    @DisplayName("进度条底色与填充的取色，都排在各自的每帧回调之后")
+    @DisplayName("进度条底色与填充的取色，都在每帧的绘制里")
     void barColorsAreReadInsideRenderCallbacks() throws IOException {
         String src = flat(CONTROLS_BAR);
-
-        int bgCallback = src.indexOf(".setShouldOverrideMouseCursor(true).setBeforeRenderCallback(()->{");
-        assertTrue(bgCallback >= 0,
-                "找不到进度条底色的每帧回调本体；结构被动过就要同步这个判据：" + CONTROLS_BAR);
-        int bgColor = src.indexOf("progressBarBg.setColor(NCMScreen.getColor(NCMScreen.ColorType.BORDER))");
-        assertTrue(bgColor > bgCallback,
-                "底色取色没有落在每帧回调里面 —— 它就会停在开屏那一刻的主题色上");
-
-        int fillCallback = src.indexOf(".setClickable(false).setBeforeRenderCallback(()->{");
-        assertTrue(fillCallback >= 0, "找不到进度条填充的每帧回调本体");
-        int fillColor = src.indexOf("progressBar.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT))");
-        assertTrue(fillColor > fillCallback,
-                "强调色取色没有落在每帧回调里面 —— 这就是「进度条不跟随主题」的成因");
+        int render = src.indexOf("privatefinalclassProgressStrip");
+        assertTrue(render >= 0, "找不到进度条控件；结构被动过就要同步这个判据：" + CONTROLS_BAR);
+        int onRender = src.indexOf("publicvoidonRender(doublemouseX,doublemouseY){", render);
+        int track = src.indexOf("intonSurface=SPlayerStyle.onSurface();", render);
+        int fill = src.indexOf("intprimary=SPlayerStyle.primary();", render);
+        assertTrue(onRender > render && track > onRender && fill > onRender,
+                "底色/填充的取色没有落在每帧绘制里面 —— 它就会停在开屏那一刻的主题色上");
     }
 
     @Test
@@ -61,18 +55,15 @@ class ControlsBarThemeFollowStaticTest {
     }
 
     @Test
-    @DisplayName("填充取色排在准备中与未知时长的 return 之前：没进度也得有颜色")
+    @DisplayName("填充取色排在准备中的 return 之前：没进度也得有颜色")
     void fillColorIsReadBeforeTheEarlyReturns() throws IOException {
         String src = flat(CONTROLS_BAR);
-        int fillColor = src.indexOf("progressBar.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT))");
-        int preparingReturn = src.indexOf("if(presentation.preparing){progressBar.setWidth(0).setRadius(0);return;}");
-        int noDuration = src.indexOf("if(total<=0.0f){progressBar.setWidth(0).setRadius(0);return;}");
-
-        assertTrue(fillColor >= 0 && preparingReturn >= 0 && noDuration >= 0, "各个取色/短路锚点必须存在");
+        int render = src.indexOf("privatefinalclassProgressStrip");
+        int fillColor = src.indexOf("intprimary=SPlayerStyle.primary();", render);
+        int preparingReturn = src.indexOf("if(presentation.preparing){", render);
+        assertTrue(render >= 0 && fillColor >= 0 && preparingReturn >= 0, "各个取色/短路锚点必须存在");
         assertTrue(fillColor < preparingReturn,
                 "准备新歌时可以清进度，但不能跳过当前主题的取色");
-        assertTrue(fillColor < noDuration,
-                "总时长还没落地的那次 return 同样会跳过取色（起播头几帧就是这个状态）");
     }
 
     @Test

@@ -26,7 +26,7 @@ class SidebarSourceSwitchStaticTest {
     void rebuildingSidebarReusesSearchWidgetAndKeepsSourceContext() throws Exception {
         String nav = read(NAV);
         assertTrue(nav.contains("this.searchField = previous == null ? new TextFieldWidget"
-                + "(FontManager.pf14bold) : previous.searchField"));
+                + "(FontManager.pf16) : previous.searchField"));
         assertTrue(nav.contains("this.playlistSearchMode = previous != null && previous.playlistSearchMode"));
         assertTrue(nav.contains("this.sourceChanged = previous != null"));
         assertTrue(nav.contains("this.indicatorTop = previous.indicatorTop"));

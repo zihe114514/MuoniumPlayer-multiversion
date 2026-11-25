@@ -28,6 +28,7 @@ import com.muoniumplayer.core.rendering.ui.widgets.LucideIconWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.screens.ncm.SPlayerStyle;
 import com.muoniumplayer.core.screens.ncm.SheetHeroRelay;
 import com.muoniumplayer.core.screens.ncm.SheetClock;
 import com.muoniumplayer.core.screens.ncm.TrackSelectionMotion;
@@ -74,24 +75,22 @@ public class MusicWidget extends RoundedRectWidget {
         rrHoverIndicator
                 .setAlpha(0f)
                 .setClickable(false);
+        // SPlayer 歌单行的悬停：hover:bg-on-surface/6。
         rrHoverIndicator.setBeforeRenderCallback(() -> rrHoverIndicator
                 .setMargin(0)
-                .setRadius(this.getRadius())
-                .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)));
+                .setRadius(SPlayerStyle.RADIUS_LG)
+                .setColor(SPlayerStyle.onSurface())
+                .setFillAlpha(.06f));
 
         RoundedRectWidget rrPlayingIndicator = new RoundedRectWidget() {
             @Override public void onRender(double mouseX, double mouseY) {
                 float opacity = getAlpha();
                 if (opacity < .01f) return;
                 int accent = NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
-                double glow = selectionMotion.burst() * .10 + selectionMotion.settledGlow() * .12;
-                roundedRect(getX(), getY(), getWidth(), getHeight(), 3,
-                        reAlpha(accent, (float) (opacity * (.17 + glow))));
-                roundedOutline(getX() + .5, getY() + .5, getWidth() - 1, getHeight() - 1, 3, .6,
-                        new Color(reAlpha(accent, opacity * .35f), true));
-                // 左侧光轨是持续的选中标记，不再用一整块高饱和蓝色遮住玻璃与文本。
-                roundedRect(getX() + 1, getY() + 6, 2, getHeight() - 12, 1,
-                        reAlpha(accent, opacity * .95f));
+                double glow = selectionMotion.burst() * .10 + selectionMotion.settledGlow() * .06;
+                // SPlayer 歌单行的「正在播放」：整行 bg-primary/14，歌名变主色（见歌名的回调）。
+                roundedRect(getX(), getY(), getWidth(), getHeight(), SPlayerStyle.RADIUS_LG,
+                        reAlpha(accent, (float) (opacity * (.14 + glow))));
                 // 只在点击后扫过一次；所有光片夹在本行内部，不溢出滚动区。
                 double sweep = selectionMotion.sweep();
                 if (sweep < 1.0) {
@@ -118,7 +117,7 @@ public class MusicWidget extends RoundedRectWidget {
         this.addChild(rrPlayingIndicator);
         rrPlayingIndicator.setClickable(false);
         rrPlayingIndicator.setBeforeRenderCallback(() -> rrPlayingIndicator
-                .setMargin(0).setRadius(3));
+                .setMargin(0).setRadius(SPlayerStyle.RADIUS_LG));
 
         this.setBeforeRenderCallback(() -> {
 
@@ -128,14 +127,11 @@ public class MusicWidget extends RoundedRectWidget {
             }
 
             this.setBounds(this.getParentWidth(), 30);
-            this.setColor(NCMScreen.getColor(index % 2 == 0 ? NCMScreen.ColorType.ELEMENT_BACKGROUND : NCMScreen.ColorType.GENERIC_BACKGROUND));
-            // 行底是压在内容区底之上的第三张底，而且是这一页面积最大的一块——它原本是全不透明，
-            // 于是整片列表在玻璃主题下仍然是一块实心的深色。走 setFillAlpha：歌名、歌手、
-            // 徽标与右侧图标都是子控件，setAlpha 会把它们连同进场动画一起淡掉。
-            this.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            // 每一行都是<em>一块自己的玻璃</em>：贴预糊背景、压本行底色、绕一圈薄折射与边缘高光。
-            // 这一页面积最大的就是这些行，它们不成玻璃，整页就还是一张贴图。
-            this.setGlassPlate(GlassLook.Surface.PLAYER);
+            // SPlayer 的歌单行没有自己的底（也没有斑马纹）：静止时透出内容区底色，玻璃主题下
+            // 透出的就是内容区那层玻璃。只有悬停与正在播放两层高亮（见上面两个指示控件）。
+            // 走 setFillAlpha 而不是 setAlpha：歌名、歌手、徽标与右侧图标都是子控件。
+            this.setColor(SPlayerStyle.onSurface());
+            this.setFillAlpha(0f);
             this.updateEntranceAnimation();
 
             presentation = CloudMusic.playbackPresentation();
@@ -158,7 +154,7 @@ public class MusicWidget extends RoundedRectWidget {
             rrHoverIndicator.setAlpha(Interpolations.interpolate(rrHoverIndicator.getWidgetAlpha(), hoverTarget, .3f));
             rrHoverIndicator.setHidden(false);
 
-            this.setRadius(2);
+            this.setRadius(SPlayerStyle.RADIUS_LG);
         });
 
         this.setOnClickCallback((x, y, i) -> {
@@ -192,7 +188,7 @@ public class MusicWidget extends RoundedRectWidget {
         cover.fadeIn();
         cover.setLinearFilter(true);
         cover.setBeforeRenderCallback(() -> {
-            cover.setRadius(2);
+            cover.setRadius(SPlayerStyle.RADIUS_MD);
             cover.setBounds(24, 24);
             cover.centerVertically();
             cover.setPosition(30, cover.getRelativeY());
@@ -248,7 +244,7 @@ public class MusicWidget extends RoundedRectWidget {
         lblMusicName
                 .setWidthLimitType(LabelWidget.WidthLimitType.SCROLL)
                 .setBeforeRenderCallback(() -> {
-                    lblMusicName.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                    lblMusicName.setColor(displaySelected ? SPlayerStyle.primary() : SPlayerStyle.onSurface());
                     lblMusicName.centerVertically();
                     lblMusicName.setPosition(cover.getRelativeX() + cover.getWidth() + 4, lblMusicName.getRelativeY() - lblMusicName.getHeight() * .5 - 2);
                     // 为时长/操作按钮和版权徽章预留空间，确保没有徽章会与被截断的标题重叠。

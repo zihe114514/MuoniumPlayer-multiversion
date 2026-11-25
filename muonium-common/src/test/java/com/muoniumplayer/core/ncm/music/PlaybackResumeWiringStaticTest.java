@@ -88,13 +88,21 @@ class PlaybackResumeWiringStaticTest {
     @Test
     void restoredProgressIsDisplayableWithoutMakingTheAudioClockSeekable() throws Exception {
         String controls = shared("com.muoniumplayer.core.screens.ncm.panels", "ControlsBar.java");
-        int start = controls.indexOf("RoundedRectWidget progressBar =");
-        int end = controls.indexOf("LabelWidget lblMusicName", start);
+        // 进度条只有「能不能拖」问音频时钟；画出来的比例与时间标签都直接读进度/时长快照。
+        int start = controls.indexOf("double fraction = this.dragging");
+        int end = controls.indexOf("SPlayerStyle.fill(x, lineY - track * .5, width, track, 0,", start);
         assertTrue(start >= 0 && end > start);
         String display = controls.substring(start, end);
-        assertFalse(display.contains("hasPlaybackClock()"), "恢复态的进度和时间标不能被音频时钟闸清零");
+        assertFalse(display.contains("hasPlaybackClock()") || display.contains("seekable"),
+                "恢复态的进度不能被音频时钟闸清零");
         assertTrue(display.contains("CloudMusic.positionMsNow()"));
-        assertTrue(display.contains("CloudMusic.durationMsNow()"));
+        int timeStart = controls.indexOf("private final class TimeChip");
+        int timeEnd = controls.indexOf("double preferredWidth()", timeStart);
+        assertTrue(timeStart >= 0 && timeEnd > timeStart);
+        String time = controls.substring(timeStart, timeEnd);
+        assertFalse(time.contains("hasPlaybackClock()"), "恢复态的时间标不能被音频时钟闸清零");
+        assertTrue(time.contains("CloudMusic.positionMsNow()"));
+        assertTrue(time.contains("CloudMusic.durationMsNow()"));
         String lyrics = shared("com.muoniumplayer.core.screens.ncm", "MusicLyricsPanel.java");
         assertTrue(lyrics.contains("double perc = presentation.preparing || totalTimeMillis <= 0.0 ? 0"),
                 "歌词页恢复态也要显示冻结进度");

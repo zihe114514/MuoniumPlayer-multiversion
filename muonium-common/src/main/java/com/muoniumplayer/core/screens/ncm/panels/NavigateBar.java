@@ -34,7 +34,10 @@ import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.AppStoreBrandIcons;
+import com.muoniumplayer.core.rendering.SPlayerIcons;
 import com.muoniumplayer.core.rendering.ScissorClipManager;
+import com.muoniumplayer.core.rendering.TextureManager;
+import com.muoniumplayer.core.rendering.texture.Textures;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
@@ -48,6 +51,8 @@ import com.muoniumplayer.core.screens.ncm.NcmSheet;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.screens.ncm.SPlayerButton;
+import com.muoniumplayer.core.screens.ncm.SPlayerStyle;
 import com.muoniumplayer.core.screens.ncm.SegmentControl;
 import com.muoniumplayer.core.screens.ncm.SheetClock;
 import com.muoniumplayer.core.screens.ncm.SheetHeroRelay;
@@ -57,6 +62,8 @@ import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.json.JsonUtils;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.party.ui.PartyIcons;
+import com.muoniumplayer.render.skija.SkijaGfx;
+import io.github.humbleui.skija.Canvas;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -132,7 +139,19 @@ public class NavigateBar extends NCMPanel {
      * 侧栏选中项的高亮条。它是共享的一条，而不是每个条目自己画一块：只有共享的一条才能在切换栏目时
      * 从旧位置滑到新位置。放在 {@link #playlistPanel} 之前加入，因此绘制在条目文字之下。
      */
-    private final RoundedRectWidget selectionIndicator = new RoundedRectWidget();
+    private final RoundedRectWidget selectionIndicator = new RoundedRectWidget() {
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            float alpha = this.getAlpha();
+            int primary = SPlayerStyle.primary();
+            SPlayerStyle.fill(this.getX(), this.getY(), this.getWidth(), this.getHeight(), SPlayerStyle.RADIUS_LG,
+                    SPlayerStyle.a(primary, .10, alpha));
+            double inset = Math.min(SPlayerStyle.px(8), this.getHeight() * .3);
+            double bar = SPlayerStyle.px(3);
+            SPlayerStyle.fill(this.getX(), this.getY() + inset, bar, Math.max(0, this.getHeight() - inset * 2),
+                    bar * .5, SPlayerStyle.a(primary, 1.0, alpha));
+        }
+    };
     /** 高亮条此刻摆在哪（相对侧栏）。每帧由「目标 + 残差 × (1 - 缓动)」算出来。 */
     private double indicatorTop, indicatorBottom, indicatorLeft, indicatorWidth;
     /**
@@ -162,9 +181,8 @@ public class NavigateBar extends NCMPanel {
      */
     private PlaylistItem cachedSelectedItem;
     private boolean selectionCacheDirty = true;
-    /** 快捷操作条上那颗公告按钮。让位判断挂在父组件的渲染里，见 {@link #onRender}。 */
-    private SidebarActionButton announcementButton;
-    private SidebarActionButton downloadButton;
+    /** SPlayer 顶栏：搜索、音源、账号与设置都挂在这里，见 {@link HeaderLayer}。 */
+    private final HeaderLayer headerLayer;
     private final List<PlaylistItem> playlistItems = new CopyOnWriteArrayList<>();
 
     /**
@@ -267,7 +285,7 @@ public class NavigateBar extends NCMPanel {
 
     // ── 搜索联想 ────────────────────────────────────────────────────────────
     /** 一条联想行的行高。 */
-    private static final double SUGGEST_ROW_HEIGHT = 17.0;
+    private static final double SUGGEST_ROW_HEIGHT = 19.0;
     /** 面板上下的内边距。 */
     private static final double SUGGEST_PADDING = 3.0;
     /**
@@ -306,8 +324,19 @@ public class NavigateBar extends NCMPanel {
     /** 0 → 1 的展开进度，只用于淡入与轻微下滑。 */
     private float suggestReveal;
     private boolean suggestionsVisible;
-    /** 搜索框底边（相对侧栏），联想面板挂在它下面。由搜索框自己的回调写入。 */
+    /** 搜索框底边（相对顶栏图层），联想面板挂在它下面。由搜索框自己的回调写入。 */
     private double searchBarBottom = 24.0;
+    /** 搜索框左缘与宽度（相对顶栏图层），联想面板与它左对齐。 */
+    private double searchBoxLeftValue;
+    private double searchBoxWidthValue = 160.0;
+
+    private double searchBoxLeft() {
+        return this.searchBoxLeftValue;
+    }
+
+    private double searchBoxWidth() {
+        return this.searchBoxWidthValue;
+    }
 
     public NavigateBar() {
         this(null);
@@ -318,7 +347,8 @@ public class NavigateBar extends NCMPanel {
         this.silentBuild = silentNextBuild;
         silentNextBuild = false;
         this.sourceChanged = previous != null && !this.sourceIdentity.equals(previous.sourceIdentity);
-        this.searchField = previous == null ? new TextFieldWidget(FontManager.pf14bold) : previous.searchField;
+        this.searchField = previous == null ? new TextFieldWidget(FontManager.pf16) : previous.searchField;
+        this.headerLayer = new HeaderLayer(previous == null ? null : previous.headerLayer);
         this.playlistSearchMode = previous != null && previous.playlistSearchMode;
         this.previousGeometry = previous == null ? Collections.emptyMap() : previous.captureGeometry();
         this.previousSections = previous == null ? new LinkedHashMap<>()
@@ -702,13 +732,24 @@ public class NavigateBar extends NCMPanel {
     }
 
     private void layout() {
-        RectWidget bg = new RectWidget();
+        // 侧栏底（surfacePanel）+ 右缘一条 border-primary/10，与 SPlayer 默认布局一致。
+        RectWidget bg = new RectWidget() {
+            @Override
+            public void onRender(double mouseX, double mouseY) {
+                super.onRender(mouseX, mouseY);
+                double edge = this.getX() + this.getWidth() - SPlayerStyle.px(.5);
+                SPlayerStyle.line(edge, this.getY(), edge, this.getY() + this.getHeight(), SPlayerStyle.px(1),
+                        SPlayerStyle.a(SPlayerStyle.primary(), .10, NavigateBar.this.getAlpha()));
+            }
+        };
         this.addChild(bg);
 
         this.setBeforeRenderCallback(() -> {
-            double panelWidth = NCMScreen.getInstance().getPanelWidth();
-            double responsiveMinimum = Math.min(92.0, panelWidth * .30);
-            this.setBounds(Math.max(panelWidth * .15, responsiveMinimum), NCMScreen.getInstance().getPanelHeight());
+            NCMScreen screen = NCMScreen.getInstance();
+            double panelWidth = screen.getPanelWidth();
+            // SPlayer w-60；面板很窄时按比例收，但不窄过能放下图标 + 两个字的宽度。
+            double width = Math.max(Math.min(SPlayerStyle.SIDEBAR_WIDTH, panelWidth * .2), Math.min(92.0, panelWidth * .30));
+            this.setBounds(width, Math.max(1.0, screen.getPanelHeight() - screen.getControlsHeight()));
             this.setPosition(0, 0);
 
             bg.setMargin(0);
@@ -725,9 +766,6 @@ public class NavigateBar extends NCMPanel {
             // 就在那个回调里。于是首帧一旦因为列表还没完成布局而被判定为不可见，就会永久卡在隐藏
             // 状态——选中项的强调色高亮框再也不会出现。
             this.layoutSelectionIndicator();
-            // 联想面板同理必须由侧栏驱动：它在没有建议时要把自己隐藏起来，而隐藏之后自己的回调就不会
-            // 再被调用，只有父组件的回调能把它显示回来。
-            this.layoutSuggestions();
             // 退场中的旧行同理：它们已经不属于任何列表，没人推进就会永远停在半透明上。
             // 退场由裁剪层自己的布局回调推进，确保这一帧的视口坐标已经就位。
             // 整块幽灵列（音源切换）同一条道理：层坐标就位后才重钉幽灵的位置。
@@ -745,192 +783,9 @@ public class NavigateBar extends NCMPanel {
             return false;
         });
 
-        RoundedRectWidget searchBar = new RoundedRectWidget();
-        RoundedRectWidget searchBarFocusAnimation = new RoundedRectWidget();
-
-        this.addChild(searchBarFocusAnimation);
-        this.addChild(searchBar);
-
-        searchBarFocusAnimation.setBeforeRenderCallback(() -> {
-            if (!searchField.isFocused()) {
-                searchBarFocusAnimation.setAlpha(0);
-            } else {
-                searchBarFocusAnimation.setAlpha(Interpolations.interpolate(searchBarFocusAnimation.getAlpha(), 1f, .3f));
-                searchBarFocusAnimation.setRadius(4);
-                searchBarFocusAnimation.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-                searchBarFocusAnimation.setBounds(searchBar.getRelativeX(), searchBar.getRelativeY(), searchBar.getWidth(), searchBar.getHeight());
-                searchBarFocusAnimation.expand(1 + 5 * (1 - searchBarFocusAnimation.getAlpha()));
-            }
-        });
-
-        searchBar
-//            .setShouldSetMouseCursor(true)
-                .setBeforeRenderCallback(() -> {
-                    searchBar.setAlpha(1f);
-                    searchBar.setColor(NCMScreen.getColor(NCMScreen.ColorType.BORDER));
-                    searchBar.setMargin(8);
-                    searchBar.setHeight(16);
-                    this.searchBarBottom = searchBar.getRelativeY() + searchBar.getHeight();
-                    searchBar.setRadius(3.5);
-                });
-
-        RoundedRectWidget searchBarBg = new RoundedRectWidget();
-        searchBar.addChild(searchBarBg);
-
-        searchBarBg.setBeforeRenderCallback(() -> {
-            searchBarBg.setMargin(.5);
-            // 压的是这一层自己的底（setFillAlpha 不传给子控件），搜索图标与输入文字保持原样。
-            searchBarBg.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, .6f));
-            // 再往前一步：这一格本身就是一块小玻璃（贴背景 + 薄折射 + 一道边缘高光）。
-            searchBarBg.setGlassPlate(GlassLook.Surface.PLAYER);
-            searchBarBg.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-            searchBarBg.setRadius(searchBar.getRadius() - .5);
-        });
-
-        LabelWidget lblSearchIcon = new LabelWidget("K", FontManager.music14);
-        searchBar.addChild(lblSearchIcon);
-
-        lblSearchIcon.setBeforeRenderCallback(() -> {
-            lblSearchIcon.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            lblSearchIcon.centerVertically();
-            lblSearchIcon.setPosition(lblSearchIcon.getRelativeY(), lblSearchIcon.getRelativeY());
-        });
-
-        // 「歌曲 / 歌单」两半常驻可读，滑块从一侧滑到另一侧。原来那颗 pill 只写着当前这一头，
-        // 要点下去才知道另一头是什么，而且文字、底色、占位提示三处各跳各的。
-        final SegmentControl.Spec modeSpec = new SegmentControl.Spec();
-        modeSpec.y = 1.0;
-        modeSpec.height = 14;
-        modeSpec.radius = 3.5;
-        modeSpec.inset = 2.0;
-        modeSpec.durationMs = 240.0;
-        modeSpec.font = FontManager.pf10bold;
-        // 两半等宽是滑块能滑的前提，所以宽度按两个词里较宽的那个算；只按「歌单」算的话，
-        // 哪天「歌曲」比它宽就会溢出自己那一半。
-        final double modeLabel = Math.max(FontManager.pf10bold.getStringWidthD("歌曲"),
-                FontManager.pf10bold.getStringWidthD("歌单"));
-        final double modeWidth = 2 * (modeLabel + 7.0) + modeSpec.inset * 2;
-        final SegmentControl searchMode = SegmentControl.attach(searchBar, () -> {
-            modeSpec.width = modeWidth;
-            modeSpec.x = Math.max(0, searchBar.getWidth() - modeWidth - 1);
-            return modeSpec;
-        }, () -> playlistSearchMode ? 1 : 0,
-                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
-                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
-                new String[]{"", ""}, new String[]{"歌曲", "歌单"},
-                index -> {
-                    playlistSearchMode = index == 1;
-                    return true;
-                });
-
-        searchBar.addChild(searchField);
-
-        this.searchField.setPlaceholder("搜索歌曲...");
-
-        this.searchField.setOnKeyTypedCallback((character, keyCode) -> {
-            if (this.searchField.isFocused()) {
-                if (keyCode == Keyboard.KEY_ESCAPE) {
-                    // 联想面板开着时，第一次 Esc 只收起面板，第二次才真正退出搜索框。
-                    if (this.suggestionsVisible) {
-                        this.dismissSuggestions();
-                    } else {
-                        this.searchField.setFocused(false);
-                    }
-                    return true;
-                }
-
-                if (keyCode == Keyboard.KEY_DOWN || keyCode == Keyboard.KEY_UP) {
-                    if (this.moveSuggestionHighlight(keyCode == Keyboard.KEY_DOWN ? 1 : -1)) {
-                        return true;
-                    }
-                }
-
-                if (keyCode == Keyboard.KEY_TAB) {
-                    // Tab 只把高亮的联想词填进输入框，不直接搜 —— 方便在联想词基础上继续改。
-                    String completion = this.highlightedSuggestionText();
-                    if (!completion.isEmpty()) {
-                        this.searchField.setText(completion);
-                        this.searchField.getTextField().setCursorPositionEnd();
-                        this.suggestHighlight = -1;
-                        return true;
-                    }
-                }
-
-                if (keyCode == Keyboard.KEY_RETURN || keyCode == Keyboard.KEY_NUMPADENTER) {
-                    // 有高亮的联想词就用它，否则用输入框里的原文。
-                    String highlighted = this.highlightedSuggestionText();
-                    if (!highlighted.isEmpty()) {
-                        this.searchField.setText(highlighted);
-                    }
-                    final String keyword = this.searchField.getText() == null ? "" : this.searchField.getText().trim();
-                    this.submitSearch(keyword);
-                }
-
-                return true;
-            }
-
-            return false;
-        });
-
-        searchField.setBeforeRenderCallback(() -> {
-            searchField.drawUnderline(false);
-            searchField.setMargin(2);
-            double xSpacing = lblSearchIcon.getRelativeX() + lblSearchIcon.getWidth() + 4;
-            searchMode.setEnabled(supportsPlaylistSearch(NeteaseMusicService.getCurrentPlatform()));
-            // 让宽跟着淡出程度走：这一格淡出去的同时输入框就长回来，不会留下「控件没了、框还是窄的」。
-            // 只让出轨道自己那一格（内缩是轨道内部的留白，本来就画在输入框那 8 像素边距里），
-            // 再多让 2 像素就够：这一列只有 74 逻辑像素宽，多让 3 像素占位提示就要被切成「搜索歌」。
-            double typeToggleReserve = modeWidth * searchMode.presence() + 2.0;
-            searchField.setBounds(xSpacing, searchField.getRelativeY(),
-                    Math.max(1.0, searchBar.getWidth() - xSpacing - typeToggleReserve), searchField.getHeight());
-            // 占位提示里的词跟着滑块走、过半才换：在点击那一刻就改会出现「词换了、滑块还在半路」。
-            searchField.setPlaceholder(supportsPlaylistSearch(NeteaseMusicService.getCurrentPlatform())
-                    && searchMode.progress() > .5 ? "搜索歌单..." : "搜索歌曲...");
-            searchField.setColor(this.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            searchField.setDisabledTextColor(RenderSystem.reAlpha(this.getColor(NCMScreen.ColorType.PRIMARY_TEXT), .4f));
-//            Rect.draw(searchField.getX(), searchField.getY(), searchField.getWidth(), searchField.getHeight(), 0x800090ff);
-        });
-        // 单个二级入口取代了旧的“网易云/QQ 双按钮切换器”，同时还
-        // 在不挤占这条导航栏空间的情况下接入了 GD Studio 聚合平台。
-        Panel sourceSwitcher = new Panel();
-        this.addChild(sourceSwitcher);
-        sourceSwitcher.setBeforeRenderCallback(() -> {
-            sourceSwitcher.setBounds(Math.max(1, this.getWidth() - 16), 24);
-            sourceSwitcher.setPosition(8, searchBar.getRelativeY() + searchBar.getHeight() + 5);
-        });
-
-        RoundedButtonWidget sourceMenu = new RoundedButtonWidget(() -> {
-            String provider = NeteaseMusicService.getCurrentPlatform().getDisplayName();
-            return "音乐来源 · " + provider;
-        }, FontManager.pf12bold);
-        sourceSwitcher.addChild(sourceMenu);
-        sourceMenu.setRadius(7);
-        sourceMenu.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            // 起点必须在这一刻量：浮层里那一行的排版要到下一帧才有，而这颗按钮下一帧就会被
-            // 悬停态改颜色、甚至被侧栏重建掉。
-            NCMScreen.getInstance().openMusicSourceManager(SheetHeroRelay.from(sourceMenu.getX(),
-                    sourceMenu.getY(), sourceMenu.getWidth(), sourceMenu.getHeight(), 7.0,
-                    () -> NeteaseMusicService.getCurrentPlatform().getBrandColor()));
-            return true;
-        });
-        sourceMenu.setBeforeRenderCallback(() -> {
-            // 菜单位于一个普通 Panel 内部，因此要给它一个明确的点击区域。
-            // 否则在导航栏重建后，它可能渲染出一个零尺寸的交互区域，
-            // 导致无法从某个 GD 源切回
-            // 官方源。
-            sourceMenu.setBounds(Math.max(1, sourceSwitcher.getWidth()), sourceSwitcher.getHeight());
-            sourceMenu.setPosition(0, 0);
-            sourceMenu.setMargin(0);
-            sourceMenu.setColor(sourceMenu.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            // 只压那颗按钮的底：它是 RoundedButtonWidget，文字是子控件，
-            // 用 setAlpha 会把「音乐来源 · 网易云」这行字一起淡掉。
-            sourceMenu.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            sourceMenu.setGlassPlate(GlassLook.Surface.PLAYER);
-            sourceMenu.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-        });
+        // SPlayer 侧栏顶端是 Logo；搜索、音源、账号与设置都在右侧顶栏（HeaderLayer）。
+        this.addChild(new LogoRow());
+        this.headerLayer.build();
 
         // 先加入高亮条，再加入列表：渲染顺序即层次，高亮条要在条目文字下面。
         this.addChild(selectionIndicator);
@@ -939,33 +794,22 @@ public class NavigateBar extends NCMPanel {
         this.addChild(this.retirementLayer);
         this.retirementLayer.setClickable(false);
         this.retirementLayer.setBeforeRenderCallback(() -> {
-            double top = sourceSwitcher.getRelativeY() + sourceSwitcher.getHeight() + 7;
-            this.retirementLayer.setBounds(0, top, this.getWidth(), Math.max(0, this.getHeight() - top - 61));
+            double top = sidebarListTop();
+            this.retirementLayer.setBounds(0, top, this.getWidth(),
+                    Math.max(0, this.getHeight() - top - sidebarListBottomInset()));
             this.advanceRetiringRows();
         });
-        if (this.sourceChanged) {
-            SidebarLayoutMotion sourceMotion = new SidebarLayoutMotion(null);
-            sourceMenu.setAlpha(0f);
-            sourceMenu.setTransformations(() -> {
-                sourceMotion.tick(System.currentTimeMillis(), 0.0, 600.0 / SheetClock.speed());
-                sourceMenu.setAlpha(sourceMotion.alpha());
-                SharedConstants.api.getGLStateManager().translate(0.0, sourceMotion.offset() * .5, 0.0);
-                if (sourceMotion.isFinished()) sourceMenu.setTransformations(null);
-            });
-        }
-
         this.addChild(playlistPanel);
         this.playlistPanel.setBeforeRenderCallback(() -> {
             this.playlistPanel.setMargin(0);
-            double top = sourceSwitcher.getRelativeY() + sourceSwitcher.getHeight() + 7;
+            double top = sidebarListTop();
             this.playlistPanel.setPosition(this.playlistPanel.getRelativeX(), top);
-            // 为快捷操作栏和账号入口预留底部空间：壳下缘 H-31 + 与账号行的 4 像素缝
-            // ＝ 账号行底 H-27，再留 3 像素缓冲就是 61。壳收小后这里是 61，不是过去的 70——
-            // 多出的 9 像素曾经是列表和按钮条之间一条没人用的空带。
-            this.playlistPanel.setBounds(this.playlistPanel.getWidth(), Math.max(0, this.getHeight() - top - 61));
+            // 账号与快捷按钮都去了顶栏，列表一直铺到侧栏底，只留 SPlayer 的 pb-3。
+            this.playlistPanel.setBounds(this.playlistPanel.getWidth(),
+                    Math.max(0, this.getHeight() - top - sidebarListBottomInset()));
         });
 
-        this.playlistPanel.setSpacing(4);
+        this.playlistPanel.setSpacing(SPlayerStyle.NAV_GAP);
 
 
         {
@@ -1000,16 +844,11 @@ public class NavigateBar extends NCMPanel {
         boolean neteaseMode = !qqMode && !kugouMode && !youtubeMode && !bilibiliMode && !qishuiMode && !bodianMode
                 && !spotifyMode && !appleMode;
         {
-            LabelWidget lblDiscovery = new LabelWidget(
+            SectionHeader lblDiscovery = new SectionHeader(
                     qishuiMode ? "汽水音乐" : bodianMode ? "波点音乐" : bilibiliMode ? "哔哩哔哩" : youtubeMode ? "YouTube Music"
                             : kugouMode ? "酷狗音乐发现" : spotifyMode ? "Spotify"
                             : appleMode ? "Apple Music"
-                            : qqMode ? "QQ 音乐发现" : "网易云发现", FontManager.pf14bold);
-            lblDiscovery.setClickable(false);
-            lblDiscovery.setBeforeRenderCallback(() -> {
-                lblDiscovery.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-                lblDiscovery.setPosition(6, lblDiscovery.getRelativeY());
-            });
+                            : qqMode ? "QQ 音乐发现" : "网易云发现", true);
             this.addSidebarSection("section:discovery", lblDiscovery);
 
             // 排行榜：网易云的榜单页最终展示的是 HomePanel 卡片墙，先取数据再一次切页（navigateAsync），
@@ -1067,7 +906,7 @@ public class NavigateBar extends NCMPanel {
                         new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.HOT_SEARCH, MusicPlatform.KUGOU))));
                 this.addSidebarRow("nav:recent", new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "最近播放", () -> NCMScreen.getInstance()
-                        .navigateAsync("最近播放", NeteaseDiscoveryPanel::loadKuGouRecentSongsPanel)));
+                        .navigateAsync("最近播放", NeteaseDiscoveryPanel::loadKuGouRecentSongsPanel)).withSPlayerIcon(SPlayerIcons.HISTORY));
                 this.addSidebarRow("nav:daily", new PlaylistItem("每", FontManager.pf12bold,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "每日推荐", () -> NCMScreen.getInstance()
@@ -1083,7 +922,7 @@ public class NavigateBar extends NCMPanel {
                         new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.HOT_SEARCH))));
                 this.addSidebarRow("nav:recent", new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "最近播放", () -> NCMScreen.getInstance()
-                        .navigateAsync("最近播放", NeteaseDiscoveryPanel::loadRecentSongsPanel)));
+                        .navigateAsync("最近播放", NeteaseDiscoveryPanel::loadRecentSongsPanel)).withSPlayerIcon(SPlayerIcons.HISTORY));
                 this.addSidebarRow("nav:radio", new PlaylistItem("台", FontManager.pf12bold,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "电台 · 播客", () -> NCMScreen.getInstance().navigateAsync(
@@ -1103,7 +942,7 @@ public class NavigateBar extends NCMPanel {
             if (qishuiMode) {
                 this.addSidebarRow("nav:qishui-recent", new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "最近播放", () -> NCMScreen.getInstance()
-                        .navigateAsync("最近播放", NeteaseDiscoveryPanel::loadQishuiRecentSongsPanel)));
+                        .navigateAsync("最近播放", NeteaseDiscoveryPanel::loadQishuiRecentSongsPanel)).withSPlayerIcon(SPlayerIcons.HISTORY));
                 // 汽水发现流与私人 FM 同构（上报已听 → 无限续个性化流），复用同一面板。
                 // 面板里的模式选择器在汽水下不生效——发现流没有模式参数，状态文案会说明。
                 this.addSidebarRow("nav:qishui-fm", new PlaylistItem(MusicBrandIcons.PERSONAL_FM,
@@ -1122,56 +961,9 @@ public class NavigateBar extends NCMPanel {
         // 「Mu本地歌单」独立成栏，排在账号歌单之上：这一栏里的单子只活在本机 —— 上面几张是用户
         // 自己新建的（连曲目一起存），下面几张是粘贴链接带进来的引用。标题行右侧那颗「＋」开建单页，
         // 建单页里另有一颗「从链接导入」：建单和导入回答的是同一个问题，不必各占一个入口。
-        Panel importHeader = new Panel();
-        importHeader.setBeforeRenderCallback(() -> {
-            importHeader.setBounds(Math.max(1, importHeader.getParentWidth() - 8), 16);
-            importHeader.setPosition(4, importHeader.getRelativeY());
-        });
-        LabelWidget lblImported = new LabelWidget("Mu本地歌单", FontManager.pf14bold);
-        lblImported.setBeforeRenderCallback(() -> {
-            lblImported.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            lblImported.setPosition(2, NcmSheet.inkTop(lblImported, importHeader.getHeight() * .5));
-        });
-        importHeader.addChild(lblImported);
-
-        final Panel importHit = new Panel();
-        // 「＋」是画出来的一枚记号（两条圆头短条交叉），既不是文字也不是图标字体：文字「+」看着
-        // 就是个字、不成图标；party 图标字体最小一档是 15 逻辑像素的实心圆盘，压在一行墨迹高仅
-        // 6.5 的栏名上必然显重。臂长按栏名自己的墨迹高来，换字体换字号都跟着走；两条短条的中心
-        // 就是记号的中心，摆到行高的中点上，天然和 inkTop 那条基准重合。
-        final RoundedRectWidget plusH = new RoundedRectWidget();
-        final RoundedRectWidget plusV = new RoundedRectWidget();
-        plusH.setClickable(false);
-        plusV.setClickable(false);
-        importHit.addChild(plusH);
-        importHit.addChild(plusV);
-        importHit.setShouldOverrideMouseCursor(true);
-        importHit.setBeforeRenderCallback(() -> {
-            // 命中区比记号大一圈：一颗「+」原样点起来太考验瞄准。
-            importHit.setBounds(22, importHeader.getHeight());
-            importHit.setPosition(importHeader.getWidth() - 26, 0);
-            int color = NCMScreen.getColor(importHit.isHovering()
-                    ? NCMScreen.ColorType.PRIMARY_TEXT : NCMScreen.ColorType.ACCENT);
-            double arm = NcmSheet.labelInkHeight(lblImported) * 1.15;
-            // 粗细不跟着臂长线性缩：Material 的 add 是 2/18 ≈ .11，照搬到 8 高的记号上只剩
-            // 不到一个像素，画出来是虚的。给一个下限，宁可略粗也不要看不见。
-            double thick = Math.max(1.35, arm * .18);
-            double cx = importHit.getWidth() * .5;
-            double cy = importHit.getHeight() * .5;
-            plusH.setColor(color);
-            plusV.setColor(color);
-            plusH.setRadius(thick * .5);
-            plusV.setRadius(thick * .5);
-            plusH.setBounds(cx - arm * .5, cy - thick * .5, arm, thick);
-            plusV.setBounds(cx - thick * .5, cy - arm * .5, thick, arm);
-        });
-        importHit.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-            if (mouseButton != 0) return false;
-            NCMScreen.getInstance().openPlaylistCreate();
-            return true;
-        });
-        importHeader.addChild(importHit);
-        importHeader.setHeight(16);
+        // 标题行右侧那颗「＋」开建单页（SPlayer「我的歌单」分组头的同款 26px 圆按钮）。
+        SectionHeader importHeader = new SectionHeader("Mu本地歌单", true)
+                .withAction(SPlayerIcons.PLUS, () -> NCMScreen.getInstance().openPlaylistCreate());
         this.addSidebarSection("section:local", importHeader);
 
         // 自建单排在前、导入引用排在后：前者是「我造的容器」，后者是「别人家的单子借个座」。
@@ -1211,19 +1003,7 @@ public class NavigateBar extends NCMPanel {
             this.addSidebarRow(playlistRowKey("imported", ready), item);
         }
 
-        Panel playlistsHeader = new Panel();
-        playlistsHeader.setBeforeRenderCallback(() -> {
-            playlistsHeader.setBounds(Math.max(1, playlistsHeader.getParentWidth() - 8), 16);
-            playlistsHeader.setPosition(4, playlistsHeader.getRelativeY());
-        });
-        LabelWidget lblPlaylists = new LabelWidget("我的账号歌单", FontManager.pf14bold);
-        lblPlaylists.setBeforeRenderCallback(() -> {
-            lblPlaylists.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            // 两栏标题同一套基准，否则「Mu本地歌单」和「我的账号歌单」会互相错开半像素到几像素。
-            lblPlaylists.setPosition(2, NcmSheet.inkTop(lblPlaylists, playlistsHeader.getHeight() * .5));
-        });
-        playlistsHeader.addChild(lblPlaylists);
-        playlistsHeader.setHeight(16);
+        SectionHeader playlistsHeader = new SectionHeader("我的账号歌单", true);
         this.addSidebarSection("section:account", playlistsHeader);
 
         if (qishuiMode) {
@@ -1318,8 +1098,6 @@ public class NavigateBar extends NCMPanel {
                     MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().markDirty()));
         }
 
-        // QQ 的创建/收藏歌单统一显示在“我的账号歌单”下，不再因为平台切换而隐藏整个入口。
-        lblPlaylists.setHidden(false);
         if (pl != null && !pl.isEmpty()) {
             if (qqMode || kugouMode || bilibiliMode || qishuiMode || bodianMode || spotifyMode || appleMode) {
                 for (PlayList playList : pl) {
@@ -1394,11 +1172,7 @@ public class NavigateBar extends NCMPanel {
             this.addSidebarRow("status:" + status, statusItem);
         }
 
-        LabelWidget lblSubscribed = new LabelWidget("收藏歌单", FontManager.pf14bold);
-        lblSubscribed.setBeforeRenderCallback(() -> {
-            lblSubscribed.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            lblSubscribed.setPosition(6, lblSubscribed.getRelativeY());
-        });
+        SectionHeader lblSubscribed = new SectionHeader("收藏歌单", true);
 
         // 收藏歌单是网易云独有的分组：QQ 与酷狗的收藏歌单都已经并入上面的"我的账号歌单"。
         lblSubscribed.setHidden(qqMode || kugouMode || youtubeMode || bilibiliMode || qishuiMode || bodianMode
@@ -1418,254 +1192,6 @@ public class NavigateBar extends NCMPanel {
                 this.addSidebarRow(playlistRowKey("subscribed", playList), item);
             });
         }
-        RoundedRectWidget accountButton = new RoundedRectWidget();
-        this.addChild(accountButton);
-        accountButton.setRadius(6);
-        accountButton.setShouldOverrideMouseCursor(true);
-        accountButton.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            NCMScreen.getInstance().openAccountManager(SheetHeroRelay.from(accountButton.getX(),
-                    accountButton.getY(), accountButton.getWidth(), accountButton.getHeight(), 6.0,
-                    () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT)));
-            return true;
-        });
-        accountButton.setBeforeRenderCallback(() -> {
-            accountButton.setBounds(Math.max(1, this.getWidth() - 16), 22);
-            accountButton.setPosition(8, this.getHeight() - 27);
-            accountButton.setColor(accountButton.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            accountButton.setAlpha(accountButton.isHovering() ? .85f : .38f);
-            // 这一层压在侧栏那块底之上，属于内层：不接玻璃的话，账号行就是截图里
-            // 侧栏最下面那条读不出边界的深色横带。
-            accountButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            accountButton.setGlassPlate(GlassLook.Surface.PLAYER);
-        });
-
-        RoundedImageWidget creatorAvatar = new RoundedImageWidget(this::getUserAvatarLocation, 0, 0, 0, 0);
-        this.addChild(creatorAvatar);
-        creatorAvatar.fadeIn();
-        creatorAvatar.setClickable(false);
-        creatorAvatar.setLinearFilter(true);
-        this.loadAvatar();
-
-        RoundedRectWidget quickActionsSurface = new RoundedRectWidget();
-        this.addChild(quickActionsSurface);
-        quickActionsSurface.setClickable(false);
-        quickActionsSurface.setBeforeRenderCallback(() -> {
-            // 壳按内容收窄：宽度 = 按钮簇 + 左右内边距，高度 = 按钮 24 + 上下内边距。
-            // 过去壳占满侧栏内宽（按钮跟着摊成长条），整块底板比内容大出一圈，
-            // 就是「整个按钮部分太大」的来源——现在它只是五颗按钮正好包住的一层底。
-            // 下缘钉在 H-59（28 高 → 底边 H-31），与账号行（顶在 H-27）之间保持
-            // 原来那 4 像素的呼吸缝：壳变矮之后 y 不收回来的话，缝会涨到 10 像素。
-            double railWidth = Math.max(1, this.getWidth() - 16);
-            double surfaceWidth = railClusterWidth(railWidth) + 2 * RAIL_SURFACE_INSET;
-            quickActionsSurface.setBounds(Math.max(1, surfaceWidth), 28);
-            quickActionsSurface.setPosition(8 + Math.max(0, (railWidth - surfaceWidth) * .5),
-                    this.getHeight() - 59);
-            quickActionsSurface.setRadius(9);
-            quickActionsSurface.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-            quickActionsSurface.setAlpha(.90f);
-            // 这条按钮栏压的是侧栏那块底，属于内层。走 setFillAlpha 而不是再动 setAlpha：
-            // 五颗按钮是它的子控件，setAlpha 会连着图标一起淡掉（那是所有主题共用的历史强度）。
-            quickActionsSurface.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            quickActionsSurface.setGlassPlate(GlassLook.Surface.PLAYER);
-        });
-
-        SidebarActionButton btnTheme = new SidebarActionButton(SidebarActionIcon.THEME);
-        SidebarActionButton btnFont = new SidebarActionButton(SidebarActionIcon.FONT);
-        SidebarActionButton btnPlayerSize = new SidebarActionButton(SidebarActionIcon.SCALE);
-        SidebarActionButton btnRefresh = new SidebarActionButton(SidebarActionIcon.REFRESH);
-        // 公告排在最后：这四颗的位置用户已经用熟了，新来的那颗排到末尾比插进中间好。
-        SidebarActionButton btnAnnouncement = new SidebarActionButton(SidebarActionIcon.ANNOUNCEMENT);
-        btnAnnouncement.setUnreadBadge(() -> AnnouncementChecker.hasUnread());
-        this.announcementButton = btnAnnouncement;
-        SidebarActionButton btnDownloads = new SidebarActionButton(SidebarActionIcon.DOWNLOADS);
-        btnDownloads.setUnreadBadge(() -> DownloadCatalog.activeTasks() > 0 || DownloadCatalog.waitingTasks() > 0);
-        this.downloadButton = btnDownloads;
-        quickActionsSurface.addChild(btnTheme, btnFont, btnPlayerSize, btnRefresh, btnAnnouncement, btnDownloads);
-
-        btnFont.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-            if (mouseButton != 0) {
-                // 右键不做别的事，但也不放过去：这颗按钮下面就是账号行，穿透过去会打开账号管理。
-                return mouseButton == 1;
-            }
-            NCMScreen.getInstance().openFontPicker();
-            return true;
-        });
-
-        btnTheme.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-            if (mouseButton != 0 && mouseButton != 1) return false;
-            if (mouseButton == 1) {
-                // 右键进入调色板：改的是当前主题的颜色配置项，不轮换主题。
-                NCMScreen.getInstance().openThemePalette();
-                return true;
-            }
-            NCMScreen.getInstance().cycleThemeFrom(
-                    btnTheme.getX() + btnTheme.getWidth() * .5,
-                    btnTheme.getY() + btnTheme.getHeight() * .5);
-            DownloadDynamicIsland.showTheme(NCMTheme.getCurrentName());
-            return true;
-        });
-
-        btnPlayerSize.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-            if (mouseButton == 0) {
-                NCMPlayerConfig.cycleScale();
-            } else if (mouseButton == 1) {
-                NCMPlayerConfig.resetScale();
-            } else {
-                return false;
-            }
-            DownloadDynamicIsland.showPlayerScale(NCMPlayerConfig.getPlayerScalePercent());
-            return true;
-        });
-
-        btnRefresh.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-            if (mouseButton != 0) return mouseButton == 1;
-            triggerSidebarRefresh(btnRefresh);
-            return true;
-        });
-
-        btnTheme.setBeforeRenderCallback(() -> {
-            double actionWidth = railSlotWidth(Math.max(1, this.getWidth() - 16));
-            btnTheme.setBounds(actionWidth, 24);
-            btnTheme.setPosition(railSlotX(0, actionWidth), 2);
-            btnTheme.setRadius(6);
-            btnTheme.setColor(btnTheme.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-        });
-
-        btnFont.setBeforeRenderCallback(() -> {
-            double actionWidth = railSlotWidth(Math.max(1, this.getWidth() - 16));
-            btnFont.setBounds(actionWidth, 24);
-            btnFont.setPosition(railSlotX(1, actionWidth), 2);
-            btnFont.setRadius(6);
-            btnFont.setColor(btnFont.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-        });
-
-        btnPlayerSize.setBeforeRenderCallback(() -> {
-            double actionWidth = railSlotWidth(Math.max(1, this.getWidth() - 16));
-            btnPlayerSize.setBounds(actionWidth, 24);
-            btnPlayerSize.setPosition(railSlotX(2, actionWidth), 2);
-            btnPlayerSize.setRadius(6);
-            btnPlayerSize.setColor(btnPlayerSize.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-        });
-
-        btnRefresh.setBeforeRenderCallback(() -> {
-            double actionWidth = railSlotWidth(Math.max(1, this.getWidth() - 16));
-            btnRefresh.setBounds(actionWidth, 24);
-            btnRefresh.setPosition(railSlotX(3, actionWidth), 2);
-            btnRefresh.setRadius(6);
-            // 这颗按钮按当前平台刷新「我的账号歌单」，分发逻辑见 triggerSidebarRefresh。
-            btnRefresh.setAlpha(1f);
-            btnRefresh.setColor(btnRefresh.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-        });
-        btnAnnouncement.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-            if (mouseButton != 0) {
-                // 右键什么都不做，但也不放过去：这颗按钮下面就是账号行，穿透过去会打开账号管理。
-                return mouseButton == 1;
-            }
-            NCMScreen.getInstance().openAnnouncements();
-            return true;
-        });
-        btnAnnouncement.setBeforeRenderCallback(() -> {
-            double actionWidth = railSlotWidth(Math.max(1, this.getWidth() - 16));
-            btnAnnouncement.setBounds(actionWidth, 24);
-            btnAnnouncement.setPosition(railSlotX(4, actionWidth), 2);
-            btnAnnouncement.setRadius(6);
-            btnAnnouncement.setColor(btnAnnouncement.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-        });
-        btnDownloads.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-            if (mouseButton != 0) return mouseButton == 1;
-            NCMScreen.getInstance().openDownloadManager();
-            return true;
-        });
-        btnDownloads.setBeforeRenderCallback(() -> {
-            double actionWidth = railSlotWidth(Math.max(1, this.getWidth() - 16));
-            btnDownloads.setBounds(actionWidth, 24);
-            btnDownloads.setPosition(railSlotX(DownloadCatalog.shouldShowEntry()
-                    && railFitsDownloads(Math.max(1, this.getWidth() - 16)) ? 5 : 4, actionWidth), 2);
-            btnDownloads.setRadius(6);
-            btnDownloads.setColor(btnDownloads.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-        });
-        creatorAvatar.setBeforeRenderCallback(() -> {
-            creatorAvatar.setBounds(16, 16);
-            creatorAvatar.setPosition(12, this.getHeight() - 24);
-            creatorAvatar.setRadius(7.25);
-        });
-
-        // 会员徽标：已登录且是会员时出现在账号行右端。原来这条信息是主页左下角一行灰字，
-        // 那个位置既压着内容网格、又和"我的账号"离得最远，看着像界面上多出来的一块。
-        // 徽标先建：昵称的可用宽度要按它当帧的实际宽度让位，否则长昵称会压到徽标底下。
-        // 网易云与汽水共用这枚底板：文案随平台与权益取（SVIP/VIP），普通用户不亮。
-        final RoundedRectWidget vipPlate = new RoundedRectWidget();
-        this.addChild(vipPlate);
-        vipPlate.setClickable(false);
-        final LabelWidget vipMark = new LabelWidget(PartyIcons.VIP, FontManager.partyIcon24);
-        this.addChild(vipMark);
-        vipMark.setClickable(false);
-        final LabelWidget vipText = new LabelWidget("VIP", FontManager.pf10bold);
-        this.addChild(vipText);
-        vipText.setClickable(false);
-
-        // 只写昵称，不再带「平台 · 」前缀：当前来源已经写在上面那颗「音乐来源 · XXX」按钮上，
-        // 在这里再重复一遍只会把昵称挤成跑马灯 —— 侧栏就那么宽，右边还要给会员徽标让位。
-        LabelWidget lblCreator = new LabelWidget(
-                () -> NeteaseMusicService.getAccountName(NeteaseMusicService.getCurrentPlatform()),
-                FontManager.pf14bold);
-        this.addChild(lblCreator);
-        lblCreator.setClickable(false);
-        lblCreator.setBeforeRenderCallback(() -> {
-            lblCreator.setPosition(creatorAvatar.getRelativeX() + creatorAvatar.getWidth() + 4,
-                    creatorAvatar.getRelativeY() + creatorAvatar.getHeight() * .5 - lblCreator.getHeight() * .5);
-            lblCreator.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            lblCreator.setMaxWidth(Math.max(1, this.getWidth() - lblCreator.getRelativeX() - 12
-                    - (membershipBadgeText() != null ? vipPlate.getWidth() + 6 : 0)));
-        });
-
-        vipPlate.setBeforeRenderCallback(() -> {
-            String text = membershipBadgeText();
-            // null = 普通用户/未登录，徽标收成零宽隐形：量宽用空串（字体渲染器不收 null，
-            // 真机 2026-10-13 渲染线程 NPE 就是这里漏的），显隐交给 alpha。
-            double width = 8.0 + VIP_ICON_BOX + 3.0
-                    + FontManager.pf10bold.getStringWidthD(text == null ? "" : text) + 8.0;
-            vipPlate.setRadius(VIP_PLATE_H * .5);
-            vipPlate.setBounds(width, VIP_PLATE_H);
-            vipPlate.setPosition(Math.max(0, this.getWidth() - 12 - width),
-                    creatorAvatar.getRelativeY() + creatorAvatar.getHeight() * .5 - VIP_PLATE_H * .5);
-            // 底色由金色朝导航底色混出来。铺纯金会比旁边的昵称还抢眼 —— 身份标记不该压过账号本身。
-            vipPlate.setColor(NcmSheet.mix(NCMScreen.getColor(NCMScreen.ColorType.NAVIGATION_BACKGROUND),
-                    NcmSheet.VIP_COLOR, .3));
-            vipPlate.setAlpha(text != null ? 1f : 0f);
-        });
-        vipMark.setBeforeRenderCallback(() -> {
-            String text = membershipBadgeText();
-            vipMark.setColor(NcmSheet.VIP_COLOR);
-            vipMark.setAlpha(text != null ? 1f : 0f);
-            NcmSheet.placeIcon(vipMark, FontManager.partyIcon24,
-                    vipPlate.getRelativeX() + 8.0 + VIP_ICON_BOX * .5,
-                    vipPlate.getRelativeY() + VIP_PLATE_H * .5);
-        });
-        vipText.setBeforeRenderCallback(() -> {
-            String text = membershipBadgeText();
-            vipText.setLabel(text == null ? "" : text);
-            vipText.setColor(NcmSheet.VIP_COLOR);
-            vipText.setAlpha(text != null ? 1f : 0f);
-            vipText.setPosition(vipPlate.getRelativeX() + 8.0 + VIP_ICON_BOX + 3.0,
-                    NcmSheet.inkTop(vipText, vipPlate.getRelativeY() + VIP_PLATE_H * .5));
-        });
-
         // 上一次有、这一次没有的那些行交给退场。签名要在装配<b>全部</b>做完之后才交还：只记到一半
         // 会让没记上的那批无辜重亮一次，或者反过来把该退的那批漏掉。
         // 静默换代（音源切换）时这一整段跳过：旧行直接随旧树一起丢掉，不再演退场。
@@ -1694,7 +1220,7 @@ public class NavigateBar extends NCMPanel {
      */
     private void buildSuggestionPanel() {
         // 收起层先加入、面板后加入：倒序遍历时面板（连同它的行）先拿到点击，落在别处的点击才交给收起层。
-        this.addChild(this.suggestionDismissLayer);
+        this.headerLayer.addChild(this.suggestionDismissLayer);
         this.suggestionDismissLayer.setHidden(true);
         this.suggestionDismissLayer.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             this.dismissSuggestions();
@@ -1702,7 +1228,7 @@ public class NavigateBar extends NCMPanel {
             return true;
         });
 
-        this.addChild(this.suggestionPanel);
+        this.headerLayer.addChild(this.suggestionPanel);
         this.suggestionPanel.setHidden(true);
 
         RoundedRectWidget surface = new RoundedRectWidget();
@@ -1710,8 +1236,8 @@ public class NavigateBar extends NCMPanel {
         surface.setClickable(false);
         surface.setBeforeRenderCallback(() -> {
             surface.setMargin(0);
-            surface.setRadius(4);
-            surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.BORDER));
+            surface.setRadius(SPlayerStyle.RADIUS_LG);
+            surface.setColor(SPlayerStyle.mix(SPlayerStyle.bright(), SPlayerStyle.onSurface(), .10));
             surface.setAlpha(this.suggestReveal);
         });
 
@@ -1719,9 +1245,9 @@ public class NavigateBar extends NCMPanel {
         surface.addChild(inner);
         inner.setClickable(false);
         inner.setBeforeRenderCallback(() -> {
-            inner.setMargin(.5);
-            inner.setRadius(3.5);
-            inner.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            inner.setMargin(SPlayerStyle.px(1));
+            inner.setRadius(SPlayerStyle.RADIUS_LG - SPlayerStyle.px(1));
+            inner.setColor(SPlayerStyle.bright());
             // 完全不透明：面板底下就是歌单列表，留一点透明度会让下面的条目与它的悬停高亮透上来。
             inner.setAlpha(this.suggestReveal);
         });
@@ -1747,15 +1273,6 @@ public class NavigateBar extends NCMPanel {
         // 错峰号每帧重发：这一帧里第一次被看见的那几行才是同一批。放在这里（父组件的 onRender
         // 跑在子组件之前）和曲目列表那一条规则完全一致。
         this.entranceReveal.beginFrame();
-        /** 窄侧栏公告不与下载入口共存：保留公告原来的第五格。 */
-        if (this.announcementButton != null) {
-            this.announcementButton.setHidden(!railFitsAnnouncement(this.getWidth() - 16)
-                    || DownloadCatalog.shouldShowEntry());
-        }
-        if (this.downloadButton != null) {
-            this.downloadButton.setHidden(!DownloadCatalog.shouldShowEntry()
-                    || !railFitsAnnouncement(this.getWidth() - 16));
-        }
         super.onRender(mouseX, mouseY);
     }
 
@@ -1767,12 +1284,14 @@ public class NavigateBar extends NCMPanel {
     /**
      * 侧栏刷新按钮：按当前平台重拉「我的账号歌单」正在显示的那一路数据。
      *
+     * <p>转圈状态挂在顶栏设置菜单的「刷新账号歌单」那一项上。
+     *
      * <p>网易云沿用 CloudMusic 的防重入槽与同步刷新；QQ / 酷狗 / B站 / 汽水走各自的
      * 强制重拉入口——它们平时是「一局只拉一次」的快照，没有这颗按钮就再也不会更新。
      * 酷我 / 咪咕 / GD / 系统播放器这些模式的账号歌单栏兜底显示网易云，刷新也刷网易云。
      * YouTube 模式没有账号歌单，直接说明情况而不是让按钮无声无息。</p>
      */
-    private void triggerSidebarRefresh(SidebarActionButton btnRefresh) {
+    private void triggerSidebarRefresh(HeaderLayer btnRefresh) {
         MusicPlatform platform = NeteaseMusicService.getCurrentPlatform();
         if (platform == MusicPlatform.QQ) {
             startSidebarRefresh(btnRefresh, NeteaseMusicService.areQQUserPlaylistsLoading(),
@@ -1806,7 +1325,7 @@ public class NavigateBar extends NCMPanel {
      * 启动这一次刷新。已在刷新中时不重起请求——双击只会让灵动岛回到「正在刷新」，
      * 与网易云防重入槽被占住时的表现一致。
      */
-    private void startSidebarRefresh(SidebarActionButton btnRefresh, boolean alreadyRefreshing, Runnable starter) {
+    private void startSidebarRefresh(HeaderLayer btnRefresh, boolean alreadyRefreshing, Runnable starter) {
         btnRefresh.setSpinning(true);
         DownloadDynamicIsland.showPlaylistRefreshInProgress();
         if (!alreadyRefreshing) {
@@ -1815,7 +1334,7 @@ public class NavigateBar extends NCMPanel {
     }
 
     /** 平台强刷入口的统一收尾。服务回调可能落在后台线程，先切回主线程再动 UI。 */
-    private void completeSidebarRefresh(SidebarActionButton btnRefresh, PlaylistRefreshResult result) {
+    private void completeSidebarRefresh(HeaderLayer btnRefresh, PlaylistRefreshResult result) {
         MultiThreadingUtil.runOnMainThread(() -> {
             btnRefresh.setSpinning(false);
             if (result.isSuccess()) {
@@ -1834,7 +1353,7 @@ public class NavigateBar extends NCMPanel {
      * 网易云那一路：防重入槽 + 同步刷新跑在工作线程上，全部请求成功才换快照。
      * 这是刷新按钮最早支持的平台，行为原样保留。
      */
-    private void refreshNeteaseFromSidebar(SidebarActionButton btnRefresh) {
+    private void refreshNeteaseFromSidebar(HeaderLayer btnRefresh) {
         if (!CloudMusic.beginNeteaseRefresh()) {
             btnRefresh.setSpinning(true);
             DownloadDynamicIsland.showPlaylistRefreshInProgress();
@@ -1880,50 +1399,6 @@ public class NavigateBar extends NCMPanel {
     private Location getUserAvatarLocation() {
         return NeteaseMusicService.getAccountAvatarLocation();
     }
-
-    /** 一颗按钮的槽位宽度上限：26×24 的近方格。壳按内容收窄，宽侧栏多出来的宽度留白，不摊给按钮。 */
-    private static final double RAIL_SLOT_MAX_WIDTH = 26.0;
-
-    /** 壳的内边距：左右各 2、上下各 2（按钮 24 高 + 上下各 2 = 壳 28 高）。 */
-    private static final double RAIL_SURFACE_INSET = 2.0;
-
-    /**
-     * 快捷操作条上一颗按钮的宽度。参数是侧栏内宽（侧栏宽 − 左右各 8 的边距）。
-     *
-     * <p>先算 n 颗的理论槽宽（扣掉壳的左右内边距与 n-1 条 3 像素的缝），再钳到
-     * {@link #RAIL_SLOT_MAX_WIDTH}——窄侧栏槽宽自然收，宽侧栏保持近方格。</p>
-     */
-    private static double railSlotWidth(double railWidth) {
-        int slots = railSlotCount(railWidth);
-        double natural = (railWidth - 2 * RAIL_SURFACE_INSET - 3.0 * (slots - 1)) / slots;
-        return Math.max(1, Math.min(RAIL_SLOT_MAX_WIDTH, natural));
-    }
-
-    private static double railClusterWidth(double railWidth) {
-        double actionWidth = railSlotWidth(railWidth);
-        return actionWidth * railSlotCount(railWidth) + 3.0 * (railSlotCount(railWidth) - 1);
-    }
-
-    private static double railSlotX(int index, double actionWidth) {
-        return RAIL_SURFACE_INSET + index * (actionWidth + 3);
-    }
-
-    private static int railSlotCount(double railWidth) {
-        if (DownloadCatalog.shouldShowEntry() && railFitsDownloads(railWidth)) return 6;
-        return railFitsAnnouncement(railWidth) ? 5 : 4;
-    }
-
-    private static boolean railFitsDownloads(double railWidth) {
-        return (railWidth - 2 * RAIL_SURFACE_INSET - 3.0 * 5) / 6.0 >= 18.5;
-    }
-
-    private static boolean railFitsAnnouncement(double railWidth) {
-        return (railWidth - 2 * RAIL_SURFACE_INSET - 3.0 * 4) / 5.0 >= 18.5;
-    }
-
-    /** 会员徽标的胶囊高度与图标方格。方格必须是 partyIcon24 实际画出来的 12，填大了图标和字之间会空一块。 */
-    private static final double VIP_PLATE_H = 15.0;
-    private static final double VIP_ICON_BOX = 12.0;
 
     /**
      * 来源按钮上那枚矢量字标的方格。
@@ -2057,350 +1532,6 @@ public class NavigateBar extends NCMPanel {
                 this.label.setPosition(this.platformIcon.getRelativeX() + this.platformIcon.getWidth() + 4,
                         this.getHeight() * .5 - this.label.getHeight() * .5 + 1);
             });
-        }
-    }
-
-    private enum SidebarActionIcon {
-        THEME,
-        FONT,
-        SCALE,
-        REFRESH,
-        ANNOUNCEMENT,
-        DOWNLOADS
-    }
-
-    /** 快捷操作条上那枚未读小圆点的颜色。 */
-    private static final int UNREAD_DOT_COLOR = 0xFFE05B66;
-
-    /**
-     * 紧凑的矢量图标按钮，在任意播放器缩放比例下都保持清晰可读。
-     */
-    private static final class SidebarActionButton extends RoundedRectWidget {
-        private final SidebarActionIcon icon;
-        private BooleanSupplier badge;
-        private float hoverAnimation;
-        private float pressAnimation;
-        private volatile boolean spinning;
-        private long lastClickAt;
-
-        /**
-         * lucide 的 24 网格在这颗按钮里占的边长。
-         *
-         * <p>15 = 槽高 24 的 62.5%：lucide 的字形在网格里自带约 2 个单位的内边距，实际墨迹
-         * 约 12.4，占按钮高度的 52%——与上一版（17 格 / 28 高）同一档光学占比，只是整颗
-         * 壳收小一圈；再大的话五连排在侧栏里就喧宾夺主了。</p>
-         */
-        private static final double LUCIDE_BOX = 15.0;
-
-        private SidebarActionButton(SidebarActionIcon icon) {
-            this.icon = icon;
-            this.setShouldOverrideMouseCursor(true);
-            // 五颗按钮共用这一处：底板本身是一块小玻璃（onRender 里 setColor 之后
-            // super 那一笔会把背景、折射与边缘光一次画完）。
-            this.setGlassPlate(GlassLook.Surface.PLAYER);
-            // 悬浮说明走 AbstractWidget 那套通用机制：文案在这里定，画法（延迟、淡入、底板）
-            // 全在框架里，与播放条上的四颗按钮共用同一条实现。
-            this.setTooltip(this::tooltipText);
-        }
-
-        private void setSpinning(boolean spinning) {
-            this.spinning = spinning;
-        }
-
-        /** 给这颗按钮挂一枚未读小圆点。判断每帧问一次，读完的那一刻就消失。 */
-        private void setUnreadBadge(BooleanSupplier badge) {
-            this.badge = badge;
-        }
-
-        @Override
-        public void onRender(double mouseX, double mouseY) {
-            hoverAnimation = Interpolations.interpolate(hoverAnimation, isHovering() ? 1f : 0f, .22f);
-            boolean recentlyPressed = System.currentTimeMillis() - lastClickAt < 170L;
-            pressAnimation = Interpolations.interpolate(pressAnimation, recentlyPressed ? 1f : 0f, .30f);
-
-            int base = NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND);
-            int hover = NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER);
-            setColor(mixColor(base, hover, .18f + hoverAnimation * .58f));
-            // 只有外面这块底板走玻璃的内层档。字形用的是下面自己算的 alpha（getAlpha() 那条），
-            // 不经过 getHexColor()，所以不受影响：玻璃下按钮会变薄，但图标该多清楚还多清楚。
-            setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            super.onRender(mouseX, mouseY);
-
-            double centerX = getX() + getWidth() * .5;
-            double centerY = getY() + getHeight() * .5;
-            double iconScale = 1.13 + hoverAnimation * .08 - pressAnimation * .055;
-            float alpha = getAlpha() * (.92f + hoverAnimation * .08f);
-            // 此处保持源颜色不透明。旧实现预先应用了 alpha
-            // 然后又在每个图元内部应用了一次，导致字形在
-            // 若干主题下明显淡出、融入深色操作栏。
-            int accent = getIconAccentColor();
-            int foreground = NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT);
-
-            // 彩色识别收进墨迹本身：图标永远染各自的强调色，不再垫那两层圆角底板、
-            // 也不再画底部横杠——那三层装饰叠在一条五连按钮上就是「芯片套芯片」的闷感，
-            // 而图标底板还把 lucide 的细线墨迹整个泡进一层浅纱里。悬停时图标回正文色、
-            // 并放大一档，识别与反馈都还在，只是安静下来。
-            int ink = blendInk(accent, foreground, hoverAnimation);
-
-            api.getGLStateManager().pushMatrix();
-            scaleAtPos(centerX, centerY, iconScale);
-            if (!drawLucideIcon(centerX, centerY, alpha, ink)) {
-                renderHandDrawnIcon(centerX, centerY, alpha, ink, foreground);
-            }
-            api.getGLStateManager().popMatrix();
-
-            if (badge != null && badge.getAsBoolean()) {
-                // 未读小圆点压在操作条底上，所以先垫一圈底色把它从邻居图形里分离出来。
-                double size = 5.4;
-                double dotX = getX() + getWidth() - size - .5;
-                double dotY = getY() - .5;
-                roundedRect(dotX - .9, dotY - .9, size + 1.8, size + 1.8, (size + 1.8) * .5,
-                        RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND),
-                                Math.min(1f, alpha + .4f)));
-                roundedRect(dotX, dotY, size, size, size * .5, RenderSystem.reAlpha(UNREAD_DOT_COLOR, alpha));
-            }
-        }
-
-        /**
-         * 图标墨迹的颜色：静止时是这颗按钮的强调色（彩色识别），悬停时往正文色收。
-         *
-         * <p>只动墨迹这一个通道，悬停放大（iconScale）与按钮底色变化负责其余反馈；
-         * 三者叠加后悬停回应依然明显，但平时那条五连按钮不再背七种颜色。</p>
-         */
-        private int blendInk(int accent, int foreground, float hover) {
-            if (hover <= 0f) return accent;
-            return mixColor(accent, foreground, Math.min(1f, hover * .55f));
-        }
-
-        /** 悬浮说明的文案。右键那些入口不写出来，用户永远不会发现它们存在。 */
-        private String tooltipText() {
-            if (icon == SidebarActionIcon.THEME) return "切换主题（右键调色板）";
-            if (icon == SidebarActionIcon.FONT) return "更换界面字体";
-            if (icon == SidebarActionIcon.SCALE) return "切换窗口大小（右键还原）";
-            if (icon == SidebarActionIcon.REFRESH) return refreshTooltipText();
-            if (icon == SidebarActionIcon.ANNOUNCEMENT) return "查看公告";
-            if (icon == SidebarActionIcon.DOWNLOADS) return "下载管理 · 组件状态与安装";
-            return "";
-        }
-
-        /**
-         * 刷新那颗的说明跟着当前平台走：它刷的正是侧栏「我的账号歌单」正在显示的那一路。
-         * 每帧重取，切平台后无需重建按钮文案就会跟上。
-         */
-        private static String refreshTooltipText() {
-            MusicPlatform platform = NeteaseMusicService.getCurrentPlatform();
-            if (platform == MusicPlatform.QQ || platform == MusicPlatform.KUGOU
-                    || platform == MusicPlatform.BILIBILI || platform == MusicPlatform.QISHUI) {
-                return "刷新" + platform.getDisplayName() + "歌单";
-            }
-            if (platform == MusicPlatform.YOUTUBE) {
-                return "刷新账号歌单（YouTube 无账号歌单）";
-            }
-            // 酷我 / 咪咕 / GD / 系统播放器这些模式，侧栏账号歌单栏兜底显示网易云。
-            return "刷新网易云歌单";
-        }
-
-        /**
-         * 走 {@link FoliaLucideIcons} 那套矢量管线：图标几何是 lucide 的原始路径数据，
-         * 不再是这里手写的圆角矩形拼出来的。
-         *
-         * <p>五颗全部走同一族线性字形：墨迹颜色由调用方给（静止时各自的强调色、悬停时收向
-         * 正文色），家族一致与彩色识别互不挤占。全部同染强调色的话按钮之间只剩颜色可辨，
-         * 那条方案在五连排上读不出层级，所以这里不做「全强调色」。</p>
-         *
-         * @return 真的画了才返回 true。不在 Skija 帧内、路径解析失败、或这颗按钮没有对应的
-         *         lucide 字形都返回 false，由调用方退回 {@link #renderHandDrawnIcon}：
-         *         界面不能因为一枚图标画不出来而空一块。
-         */
-        private boolean drawLucideIcon(double centerX, double centerY, float alpha, int ink) {
-            String name;
-            if (icon == SidebarActionIcon.THEME) {
-                name = FoliaLucideIcons.PALETTE;
-            } else if (icon == SidebarActionIcon.FONT) {
-                name = FoliaLucideIcons.TYPOGRAPHY;
-            } else if (icon == SidebarActionIcon.SCALE) {
-                name = FoliaLucideIcons.SCALING;
-            } else if (icon == SidebarActionIcon.REFRESH) {
-                name = FoliaLucideIcons.REFRESH;
-                if (spinning) {
-                    // 只有转起来才转：绕图标中心自转，转速沿用原来那版环形图标的每 6 毫秒一度。
-                    rotateAtPos(centerX, centerY,
-                            (float) ((System.currentTimeMillis() / 6.0) % 360.0));
-                }
-            } else if (icon == SidebarActionIcon.ANNOUNCEMENT) {
-                name = FoliaLucideIcons.MEGAPHONE;
-            } else if (icon == SidebarActionIcon.DOWNLOADS) {
-                return false;
-            } else {
-                return false;
-            }
-            return FoliaLucideIcons.draw(name, centerX, centerY, LUCIDE_BOX,
-                    RenderSystem.reAlpha(ink, alpha));
-        }
-
-        /**
-         * 手绘兜底：矢量管线画不出来时退回换掉之前的那套几何。
-         *
-         * <p>传入的 {@code accent} 在主路径里是「悬停混色后的墨迹」，兜底几何沿用同一参数名，
-         * 语义一致：五颗都用它当主墨色，正文色只画点缀。</p>
-         */
-        private void renderHandDrawnIcon(double centerX, double centerY, float alpha,
-                                         int accent, int foreground) {
-            if (icon == SidebarActionIcon.THEME) {
-                renderThemeIcon(centerX, centerY, alpha, accent, foreground);
-            } else if (icon == SidebarActionIcon.FONT) {
-                renderFontIcon(centerX, centerY, alpha, accent, foreground);
-            } else if (icon == SidebarActionIcon.SCALE) {
-                renderScaleIcon(centerX, centerY, alpha, accent, foreground);
-            } else if (icon == SidebarActionIcon.ANNOUNCEMENT) {
-                renderAnnouncementIcon(centerX, centerY, alpha, accent, foreground);
-            } else if (icon == SidebarActionIcon.DOWNLOADS) {
-                renderDownloadIcon(centerX, centerY, alpha, accent);
-            } else {
-                renderRefreshIcon(centerX, centerY, alpha, accent, foreground);
-            }
-        }
-
-        @Override
-        public boolean onMouseClicked(double relativeX, double relativeY, int mouseButton) {
-            lastClickAt = System.currentTimeMillis();
-            return super.onMouseClicked(relativeX, relativeY, mouseButton);
-        }
-
-        private void renderThemeIcon(double x, double y, float alpha, int accent, int foreground) {
-            // 四色调色板标记：更大的圆点和明亮的中心依然可读
-            // 在深色与液态玻璃两种主题下均不依赖字体字形即可辨认。
-            roundedRect(x - 2.15, y - 6.25, 4.3, 4.3, 2.15,
-                    RenderSystem.reAlpha(accent, alpha));
-            roundedRect(x - 6.25, y - 2.15, 4.3, 4.3, 2.15,
-                    RenderSystem.reAlpha(0xFF73B9FF, alpha));
-            roundedRect(x + 1.95, y - 2.15, 4.3, 4.3, 2.15,
-                    RenderSystem.reAlpha(0xFFFF86B8, alpha));
-            roundedRect(x - 2.15, y + 1.95, 4.3, 4.3, 2.15,
-                    RenderSystem.reAlpha(0xFF75E0B1, alpha));
-            roundedRect(x - 1.05, y - 1.05, 2.1, 2.1, 1.05,
-                    RenderSystem.reAlpha(foreground, alpha * .92f));
-        }
-
-        /**
-         * 一枚带下划线的「A」，和字体选择浮层里的 {@code PartyIcons.TEXT_FORMAT} 是同一个符号。
-         *
-         * <p>画出来而不是用图标字体：同一条快捷操作条上另外三颗都是矢量图形，混一枚字形进来，
-         * 描边粗细与光学重心都对不上邻居；而这条按钮会跟着播放器缩放走，矢量在任何倍率下都锐。</p>
-         */
-        private void renderFontIcon(double x, double y, float alpha, int accent, int foreground) {
-            int ink = RenderSystem.reAlpha(accent, alpha);
-            // 两笔斜杠在字顶交汇：pill 两端是圆头，交汇处自然圆滑，不用另画一个尖。
-            drawRotatedPill(x - 2.35, y - 0.55, 10.9, 1.75, -64.5f, ink);
-            drawRotatedPill(x + 2.35, y - 0.55, 10.9, 1.75, 64.5f, ink);
-            // 横画略窄于两笔的间距，免得端点戳出斜杠外侧。
-            roundedRect(x - 2.45, y + 1.05, 4.9, 1.6, .8, ink);
-            // 下划线用强调色：这条线是「文字」这个概念的落点，也让这颗按钮在条上认得出来。
-            roundedRect(x - 6.3, y + 5.15, 12.6, 1.7, .85,
-                    RenderSystem.reAlpha(accent, alpha * .95f));
-        }
-
-        private void renderRefreshIcon(double x, double y, float alpha, int accent, int foreground) {
-            long now = System.currentTimeMillis();
-            double rotation = spinning ? (now / 6.0) % 360.0 : -28.0;
-            final int segments = 8;
-            for (int segment = 0; segment < segments; segment++) {
-                // 在圆环上留出两个缺口，使刷新轮廓清晰可辨。
-                if (segment == 2 || segment == 6) continue;
-                float segmentAlpha = alpha * (spinning
-                        ? (.32f + .68f * (1f - segment / 8f))
-                        : .86f);
-                api.getGLStateManager().pushMatrix();
-                api.getGLStateManager().translate(x, y, 0);
-                api.getGLStateManager().rotate((float) (rotation + segment * 45.0), 0, 0, 1);
-                roundedRect(-.85, -6.55, 1.7, 3.25, .85,
-                        RenderSystem.reAlpha(accent, segmentAlpha));
-                api.getGLStateManager().popMatrix();
-            }
-            // 小箭头尖闭合这两个缺口，将圆环变成清晰的
-            // 刷新符号，而非普通的加载转圈。
-            drawRotatedPill(x - 4.25, y - 4.05, 4.45, 1.65, -42f,
-                    RenderSystem.reAlpha(accent, alpha));
-            drawRotatedPill(x + 4.25, y + 4.05, 4.45, 1.65, 138f,
-                    RenderSystem.reAlpha(accent, alpha));
-        }
-
-        private void renderScaleIcon(double x, double y, float alpha, int accent, int foreground) {
-            double left = x - 6.15;
-            double top = y - 6.15;
-            double right = x + 6.15;
-            double bottom = y + 6.15;
-            double thickness = 1.65;
-            double arm = 4.7;
-            int corner = RenderSystem.reAlpha(accent, alpha);
-            int highlight = RenderSystem.reAlpha(accent, alpha * .94f);
-
-            roundedRect(left, top, arm, thickness, thickness * .5, highlight);
-            roundedRect(left, top, thickness, arm, thickness * .5, highlight);
-            roundedRect(right - arm, top, arm, thickness, thickness * .5, corner);
-            roundedRect(right - thickness, top, thickness, arm, thickness * .5, corner);
-            roundedRect(left, bottom - thickness, arm, thickness, thickness * .5, corner);
-            roundedRect(left, bottom - arm, thickness, arm, thickness * .5, corner);
-            roundedRect(right - arm, bottom - thickness, arm, thickness, thickness * .5, highlight);
-            roundedRect(right - thickness, bottom - arm, thickness, arm, thickness * .5, highlight);
-            roundedRect(x - 1.15, y - 1.15, 2.3, 2.3, 1.15,
-                    RenderSystem.reAlpha(accent, alpha * .92f));
-        }
-
-        /**
-         * 一张贴着三条文字的公告纸。
-         *
-         * <p>画矢量而不是用 {@code PartyIcons.MAIL_UNREAD}：这条快捷操作条上另外四颗全是矢量图形，
-         * 混一枚字形进来，描边粗细与光学重心都对不上邻居；而这条按钮会跟着播放器缩放走，
-         * 矢量在任何倍率下都锐。</p>
-         */
-        private void renderAnnouncementIcon(double x, double y, float alpha, int accent, int foreground) {
-            double left = x - 6.1;
-            double top = y - 6.7;
-            double width = 11.2;
-            double height = 13.4;
-            roundedRect(left, top, width, height, 2.3, RenderSystem.reAlpha(accent, alpha * .30f));
-            // 三条文字线，最后一条短一截：读起来是「这里写着一段话」，而不是一块表格。
-            int ink = RenderSystem.reAlpha(accent, alpha * .92f);
-            roundedRect(left + 2.0, top + 2.7, width - 4.0, 1.5, .75, ink);
-            roundedRect(left + 2.0, top + 5.6, width - 4.0, 1.5, .75, ink);
-            roundedRect(left + 2.0, top + 8.5, width - 6.6, 1.5, .75,
-                    RenderSystem.reAlpha(accent, alpha * .74f));
-        }
-
-        private void renderDownloadIcon(double x, double y, float alpha, int accent) {
-            int ink = RenderSystem.reAlpha(accent, alpha);
-            roundedRect(x - 6.1, y + 4.5, 12.2, 1.7, .85, ink);
-            drawRotatedPill(x - 2.3, y + .8, 7.0, 1.7, 45f, ink);
-            drawRotatedPill(x + 2.3, y + .8, 7.0, 1.7, -45f, ink);
-            roundedRect(x - .9, y - 6.0, 1.8, 8.5, .9, ink);
-        }
-
-        private int getIconAccentColor() {
-            if (icon == SidebarActionIcon.DOWNLOADS) return 0xFF63D4C5;
-            if (icon == SidebarActionIcon.FONT) return 0xFFB79BFF;
-            if (icon == SidebarActionIcon.ANNOUNCEMENT) return 0xFFFFC061;
-            if (icon == SidebarActionIcon.SCALE) return 0xFF67D8FF;
-            if (icon == SidebarActionIcon.REFRESH) return 0xFF59E3A5;
-            return NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
-        }
-
-        private void drawRotatedPill(double centerX, double centerY, double width, double height,
-                                     float rotation, int color) {
-            api.getGLStateManager().pushMatrix();
-            api.getGLStateManager().translate(centerX, centerY, 0);
-            api.getGLStateManager().rotate(rotation, 0, 0, 1);
-            roundedRect(-width * .5, -height * .5, width, height, height * .5, color);
-            api.getGLStateManager().popMatrix();
-        }
-
-        private int mixColor(int first, int second, float amount) {
-            float t = Math.max(0f, Math.min(1f, amount));
-            int a = (int) (((first >>> 24) & 255) * (1f - t) + ((second >>> 24) & 255) * t);
-            int r = (int) (((first >>> 16) & 255) * (1f - t) + ((second >>> 16) & 255) * t);
-            int g = (int) (((first >>> 8) & 255) * (1f - t) + ((second >>> 8) & 255) * t);
-            int b = (int) ((first & 255) * (1f - t) + (second & 255) * t);
-            return (a << 24) | (r << 16) | (g << 8) | b;
         }
     }
 
@@ -2578,21 +1709,25 @@ public class NavigateBar extends NCMPanel {
         this.suggestReveal = Interpolations.interpolate(this.suggestReveal, 1f, .4f);
         // 收起层铺满搜索栏以下的整条侧栏。它没有任何绘制（Panel 是隐形容器），只负责接一次点击。
         this.suggestionDismissLayer.setHidden(false);
-        this.suggestionDismissLayer.setBounds(Math.max(1.0, this.getWidth()),
-                Math.max(1.0, this.getHeight() - this.searchBarBottom));
-        this.suggestionDismissLayer.setPosition(0, this.searchBarBottom);
+        // 收起层铺满顶栏以下的整个播放器（侧栏、内容区、播放栏）：坐标相对顶栏图层。
+        NCMScreen screen = NCMScreen.getInstance();
+        HeaderLayer header = this.headerLayer;
+        this.suggestionDismissLayer.setBounds(Math.max(1.0, screen.getPanelWidth()),
+                Math.max(1.0, screen.getPanelHeight() - header.getHeight()));
+        this.suggestionDismissLayer.setPosition(this.getX() - header.getX(), header.getHeight());
 
         // 面板要比它盖住的歌单条目宽：条目自己占 x=4 到 width-4（见 PlaylistItem 的布局），
         // 而 hovering 是各组件按自己的矩形独立算的、兄弟之间不互相压制。面板要是只有 x=8 到 width-8，
         // 鼠标停在面板上时下面那一行照样算自己被悬停，强调色高亮就会从面板两侧各露出 4px。
         // 取 x=3 / width-6 刚好把条目整个盖住，还多出 1px 余量。
-        double width = Math.max(1.0, this.getWidth() - SUGGEST_INSET * 2.0);
+        double searchLeft = this.searchBoxLeft();
+        double width = Math.max(SPlayerStyle.px(240), this.searchBoxWidth());
         double height = count * SUGGEST_ROW_HEIGHT + SUGGEST_PADDING * 2.0;
         this.suggestionPanel.setHidden(false);
         this.suggestionPanel.setBounds(width, height);
         // 轻微下滑入场：只动位置不动高度，因为 Panel 不裁剪子组件，压高度会让行画到面板外面。
-        this.suggestionPanel.setPosition(SUGGEST_INSET,
-                this.searchBarBottom + 3.0 - 4.0 * (1f - this.suggestReveal));
+        this.suggestionPanel.setPosition(searchLeft,
+                this.searchBarBottom + SPlayerStyle.px(6) - 4.0 * (1f - this.suggestReveal));
 
         for (int index = 0; index < this.suggestionRows.size(); index++) {
             SuggestionRow row = this.suggestionRows.get(index);
@@ -2986,12 +2121,12 @@ public class NavigateBar extends NCMPanel {
             highlight.setClickable(false);
             highlight.setBeforeRenderCallback(() -> {
                 highlight.setMargin(0);
-                highlight.setRadius(2.5);
-                highlight.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-                highlight.setAlpha(this.isActive() ? .30f : 0f);
+                highlight.setRadius(SPlayerStyle.RADIUS_MD);
+                highlight.setColor(SPlayerStyle.onSurface());
+                highlight.setAlpha(this.isActive() ? .10f : 0f);
             });
 
-            LabelWidget kind = new LabelWidget(this::kindText, FontManager.pf12);
+            LabelWidget kind = new LabelWidget(this::kindText, FontManager.pf14);
             this.addChild(kind);
             kind.setClickable(false);
             kind.setBeforeRenderCallback(() -> {
@@ -3000,13 +2135,12 @@ public class NavigateBar extends NCMPanel {
                 kind.setPosition(Math.max(0, this.getWidth() - kind.getWidth() - 5), kind.getRelativeY());
             });
 
-            LabelWidget name = new LabelWidget(this::nameText, FontManager.pf12bold);
+            LabelWidget name = new LabelWidget(this::nameText, FontManager.pf16);
             this.addChild(name);
             name.setClickable(false);
             name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             name.setBeforeRenderCallback(() -> {
-                name.setColor(NCMScreen.getColor(this.isActive()
-                        ? NCMScreen.ColorType.PRIMARY_TEXT : NCMScreen.ColorType.SECONDARY_TEXT));
+                name.setColor(SPlayerStyle.onSurface());
                 name.centerVertically();
                 name.setPosition(6, name.getRelativeY());
                 name.setMaxWidth(Math.max(1, this.getWidth() - 6 - kind.getWidth() - 10));
@@ -3045,6 +2179,760 @@ public class NavigateBar extends NCMPanel {
         }
     }
 
+    // ── SPlayer 外观：侧栏 Logo、分组标题、顶栏 ───────────────────────────────
+
+    /** 侧栏列表的上沿：Logo 行（{@code h-16}）之下。 */
+    private double sidebarListTop() {
+        return Math.min(SPlayerStyle.LOGO_HEIGHT, this.getHeight() * .2);
+    }
+
+    /** 侧栏列表的下沿留白（{@code pb-3}）。 */
+    private static double sidebarListBottomInset() {
+        return SPlayerStyle.px(12);
+    }
+
+    /** 顶栏图层。由 {@link NCMScreen} 摆位、渲染并分发输入，见 {@link HeaderLayer}。 */
+    public HeaderLayer getHeaderLayer() {
+        return this.headerLayer;
+    }
+
+    /** 回到默认主页；已经在默认主页时不重建（与「主页」那一行同一口径）。 */
+    private static void goHome() {
+        NCMScreen screen = NCMScreen.getInstance();
+        NCMPanel current = screen.getCurrentPanel();
+        if (current instanceof HomePanel && ((HomePanel) current).isDefaultHomePage()) return;
+        screen.setCurrentPanel(new HomePanel());
+    }
+
+    /**
+     * 侧栏顶端的 Logo 行（SPlayer {@code SideBarLogo}）：圆形标记 + 主色字标，悬停微放大，点击回主页。
+     * 标记是自己画的矢量（主色 30% 圆盘 + lucide music），不借用 SPlayer 的品牌标志。
+     */
+    private final class LogoRow extends Panel {
+        private float hover;
+
+        private LogoRow() {
+            this.setShouldOverrideMouseCursor(true);
+            this.setBeforeRenderCallback(() -> {
+                this.setBounds(NavigateBar.this.getWidth(), sidebarListTop());
+                this.setPosition(0, 0);
+            });
+            this.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                goHome();
+                return true;
+            });
+        }
+
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            this.hover = SPlayerStyle.approach(this.hover, this.isHovering() ? 1f : 0f);
+            float alpha = this.getAlpha();
+            CFontRenderer font = FontManager.pf24bold;
+            String word = "MuoniumPlayer";
+            double mark = SPlayerStyle.px(30);
+            double gap = SPlayerStyle.px(8);
+            double scale = 1.0 + .05 * this.hover;
+            double groupWidth = (mark + gap + font.getStringWidthD(word)) * scale;
+            double maxWidth = this.getWidth() - SPlayerStyle.px(16) * 2;
+            boolean wordVisible = groupWidth <= maxWidth + 1;
+            double centerY = this.getY() + this.getHeight() * .5;
+            double startX = this.getX() + (this.getWidth() - (wordVisible ? groupWidth : mark * scale)) * .5;
+            int primary = SPlayerStyle.primary();
+            double markCenterX = startX + mark * scale * .5;
+            SPlayerStyle.circle(markCenterX, centerY, mark * scale * .5, SPlayerStyle.a(primary, .30, alpha));
+            SPlayerIcons.draw(SPlayerIcons.MUSIC, markCenterX, centerY, mark * scale * .55,
+                    SPlayerStyle.a(primary, 1.0, alpha));
+            if (wordVisible) {
+                SkijaGfx.pushMatrix();
+                try {
+                    double textX = startX + (mark + gap) * scale;
+                    SkijaGfx.translate(textX, centerY);
+                    SkijaGfx.scale(scale, scale);
+                    font.drawString(word, 0, SPlayerStyle.centeredTextY(font, 0), SPlayerStyle.a(primary, 1.0, alpha));
+                } finally {
+                    SkijaGfx.popMatrix();
+                }
+            }
+        }
+    }
+
+    /**
+     * 侧栏分组标题（SPlayer 侧栏分组头：{@code min-h-10 px-3 text-sm text-on-surface-variant/70}），
+     * 组与组之间一条 {@code bg-on-surface/10} 的分隔线；可带一颗行尾圆形小按钮（「＋」新建）。
+     */
+    private static final class SectionHeader extends Panel {
+        private final String title;
+        private final boolean divider;
+        private SPlayerButton action;
+
+        private SectionHeader(String title, boolean divider) {
+            this.title = title;
+            this.divider = divider;
+            this.setClickable(false);
+            this.setBeforeRenderCallback(() -> {
+                double inset = SPlayerStyle.px(12);
+                this.setBounds(Math.max(1, this.getParentWidth() - inset * 2), this.headerHeight());
+                this.setPosition(inset, this.getRelativeY());
+            });
+        }
+
+        private double headerHeight() {
+            return SPlayerStyle.px(40) + (this.divider ? SPlayerStyle.px(9) : 0);
+        }
+
+        private SectionHeader withAction(String icon, Runnable run) {
+            this.setClickable(true);
+            this.action = SPlayerButton.icon(icon, SPlayerButton.Variant.TERTIARY).iconSize(SPlayerStyle.px(14));
+            this.action.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                run.run();
+                return true;
+            });
+            this.action.setBeforeRenderCallback(() -> {
+                double size = SPlayerStyle.px(26);
+                double rowTop = this.divider ? SPlayerStyle.px(9) : 0;
+                this.action.setBounds(this.getWidth() - size - SPlayerStyle.px(4),
+                        rowTop + (SPlayerStyle.px(40) - size) * .5, size, size);
+            });
+            this.addChild(this.action);
+            return this;
+        }
+
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            float alpha = this.getAlpha();
+            double rowTop = this.getY();
+            if (this.divider) {
+                double lineY = this.getY() + SPlayerStyle.px(4);
+                SPlayerStyle.line(this.getX() + SPlayerStyle.px(4), lineY,
+                        this.getX() + this.getWidth() - SPlayerStyle.px(4), lineY,
+                        SPlayerStyle.px(1), SPlayerStyle.a(SPlayerStyle.onSurface(), .10, alpha));
+                rowTop += SPlayerStyle.px(9);
+            }
+            SPlayerStyle.text(SPlayerStyle.textSm(false), this.title, this.getX() + SPlayerStyle.px(12),
+                    rowTop + SPlayerStyle.px(20), this.getWidth() - SPlayerStyle.px(48),
+                    SPlayerStyle.a(SPlayerStyle.onSurfaceVariant(), .70, alpha));
+        }
+    }
+
+    /** 刷新账号歌单是否在进行：全局只有一份，侧栏重建后新顶栏照样知道。 */
+    private static volatile boolean refreshSpinning;
+
+    /**
+     * SPlayer 顶栏（{@code NavHeader}）：左侧后退/前进、搜索框、音源胶囊、（有未读时）公告；
+     * 右侧（有任务时）下载、账号胶囊、设置。设置是一枚下拉菜单，收着原来侧栏底部那排快捷按钮
+     * （主题、调色、字体、播放器大小、刷新歌单、公告、下载）。
+     *
+     * <p>它<b>不是</b>侧栏的子控件：{@link NCMScreen} 把它摆在内容区正上方、画在内容页之后
+     * （搜索联想要压住内容区），并在侧栏之前给它分发点击与按键。搜索框与联想面板的状态仍然
+     * 归侧栏所有 —— 搜索逻辑只有一份，这里只是换了它们的挂载点。</p>
+     */
+    public final class HeaderLayer extends Panel {
+        private boolean menuOpen;
+        private float menuReveal;
+        private double lastMouseX = -1e6;
+        private double lastMouseY = -1e6;
+        private SPlayerButton settingsButton;
+        private final List<MenuEntry> menuEntries = new ArrayList<>();
+
+        private HeaderLayer(HeaderLayer previous) {
+            if (previous != null) {
+                this.menuOpen = previous.menuOpen;
+                this.menuReveal = previous.menuReveal;
+            }
+        }
+
+        /** 当前按钮边长（SPlayer 40px；顶栏被压矮时跟着收）。 */
+        private double buttonSize() {
+            return Math.max(SPlayerStyle.px(24), Math.min(SPlayerStyle.px(40), this.getHeight() - SPlayerStyle.px(16)));
+        }
+
+        private double rowTop() {
+            return (this.getHeight() - this.buttonSize()) * .5;
+        }
+
+        void setSpinning(boolean spinning) {
+            refreshSpinning = spinning;
+        }
+
+        private void build() {
+            final double pad = SPlayerStyle.px(12);
+            final double gap = SPlayerStyle.px(12);
+
+            SPlayerButton back = SPlayerButton.icon(SPlayerIcons.CHEVRON_LEFT, SPlayerButton.Variant.TERTIARY);
+            back.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                NCMScreen.getInstance().navigateBack();
+                return true;
+            });
+            back.setBeforeRenderCallback(() -> back.setBounds(pad, this.rowTop(), this.buttonSize(), this.buttonSize()));
+            this.addChild(back);
+
+            SPlayerButton forward = SPlayerButton.icon(SPlayerIcons.CHEVRON_RIGHT, SPlayerButton.Variant.TERTIARY);
+            forward.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                NCMScreen.getInstance().navigateForward();
+                return true;
+            });
+            forward.setBeforeRenderCallback(() -> forward.setBounds(
+                    back.getRelativeX() + back.getWidth() + SPlayerStyle.px(8), this.rowTop(),
+                    this.buttonSize(), this.buttonSize()));
+            this.addChild(forward);
+
+            final SearchBox searchBox = new SearchBox();
+            searchBox.setBeforeRenderCallback(() -> {
+                double left = forward.getRelativeX() + forward.getWidth() + gap;
+                double available = this.getWidth() - left - this.rightClusterWidth() - this.sourcePillWidth()
+                        - gap * 3 - pad;
+                double width = Math.max(SPlayerStyle.px(140), Math.min(SPlayerStyle.px(280), available));
+                searchBox.setBounds(left, this.rowTop(), width, this.buttonSize());
+                NavigateBar.this.searchBarBottom = searchBox.getRelativeY() + searchBox.getHeight();
+                NavigateBar.this.searchBoxLeftValue = searchBox.getRelativeX();
+                NavigateBar.this.searchBoxWidthValue = searchBox.getWidth();
+            });
+            this.addChild(searchBox);
+            searchBox.build();
+
+            SourcePill source = new SourcePill();
+            source.setBeforeRenderCallback(() -> source.setBounds(
+                    searchBox.getRelativeX() + searchBox.getWidth() + gap, this.rowTop(),
+                    this.sourcePillWidth(), this.buttonSize()));
+            this.addChild(source);
+            if (NavigateBar.this.sourceChanged) {
+                SidebarLayoutMotion sourceMotion = new SidebarLayoutMotion(null);
+                source.setAlpha(0f);
+                source.setTransformations(() -> {
+                    sourceMotion.tick(System.currentTimeMillis(), 0.0, 600.0 / SheetClock.speed());
+                    source.setAlpha(sourceMotion.alpha());
+                    SharedConstants.api.getGLStateManager().translate(0.0, sourceMotion.offset() * .5, 0.0);
+                    if (sourceMotion.isFinished()) source.setTransformations(null);
+                });
+            }
+
+            // 有未读公告时才出现，位置同 SPlayer 顶栏里那颗「有更新」按钮：紧跟在搜索区后面。
+            SPlayerButton announcement = SPlayerButton.icon(SPlayerIcons.MEGAPHONE, SPlayerButton.Variant.TERTIARY)
+                    .badge(AnnouncementChecker::hasUnread);
+            announcement.setTooltip("公告");
+            announcement.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                NCMScreen.getInstance().openAnnouncements();
+                return true;
+            });
+            announcement.setBeforeRenderCallback(() -> announcement.setBounds(
+                    source.getRelativeX() + source.getWidth() + gap, this.rowTop(),
+                    this.buttonSize(), this.buttonSize()));
+            this.addChild(announcement);
+
+            this.settingsButton = SPlayerButton.icon(SPlayerIcons.SETTINGS, SPlayerButton.Variant.TERTIARY)
+                    .active(() -> this.menuOpen)
+                    .badge(() -> AnnouncementChecker.hasUnread() || refreshSpinning);
+            this.settingsButton.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                this.menuOpen = !this.menuOpen;
+                return true;
+            });
+            this.settingsButton.setBeforeRenderCallback(() -> this.settingsButton.setBounds(
+                    this.getWidth() - pad - this.buttonSize(), this.rowTop(), this.buttonSize(), this.buttonSize()));
+            this.addChild(this.settingsButton);
+
+            AccountPill account = new AccountPill();
+            account.setBeforeRenderCallback(() -> account.setBounds(
+                    this.settingsButton.getRelativeX() - gap - account.preferredWidth(), this.rowTop(),
+                    account.preferredWidth(), this.buttonSize()));
+            this.addChild(account);
+
+            SPlayerButton downloads = SPlayerButton.icon(SPlayerIcons.DOWNLOAD, SPlayerButton.Variant.TERTIARY)
+                    .badge(() -> DownloadCatalog.activeTasks() > 0 || DownloadCatalog.waitingTasks() > 0);
+            downloads.setTooltip("下载管理");
+            downloads.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                NCMScreen.getInstance().openDownloadManager();
+                return true;
+            });
+            downloads.setBeforeRenderCallback(() -> downloads.setBounds(
+                    account.getRelativeX() - gap - this.buttonSize(), this.rowTop(),
+                    this.buttonSize(), this.buttonSize()));
+            this.addChild(downloads);
+
+            // 显隐由父组件驱动：被 setHidden 的控件整帧跳过自己的回调，没法把自己再显示回来。
+            this.setBeforeRenderCallback(() -> {
+                announcement.setHidden(!AnnouncementChecker.hasUnread());
+                downloads.setHidden(!DownloadCatalog.shouldShowEntry());
+                NavigateBar.this.layoutSuggestions();
+            });
+
+            this.buildMenu();
+        }
+
+        /** 右侧那一簇（下载、账号、设置）占多宽，搜索框按剩下的宽度收。 */
+        private double rightClusterWidth() {
+            double gap = SPlayerStyle.px(12);
+            double width = this.buttonSize() + gap + AccountPill.preferredWidthFor(this.buttonSize());
+            if (DownloadCatalog.shouldShowEntry()) width += gap + this.buttonSize();
+            if (AnnouncementChecker.hasUnread()) width += gap + this.buttonSize();
+            return width;
+        }
+
+        private double sourcePillWidth() {
+            CFontRenderer font = SPlayerStyle.textSm(false);
+            return SPlayerStyle.px(12) + SPlayerStyle.px(16) + SPlayerStyle.px(6)
+                    + font.getStringWidthD(NeteaseMusicService.getCurrentPlatform().getDisplayName())
+                    + SPlayerStyle.px(6) + SPlayerStyle.px(12) + SPlayerStyle.px(12);
+        }
+
+        private void buildMenu() {
+            this.menuEntries.clear();
+            this.menuEntries.add(new MenuEntry(SPlayerIcons.PALETTE, () -> "切换主题 · " + NCMTheme.getCurrentName(),
+                    () -> {
+                        NCMScreen.getInstance().cycleThemeFrom(
+                                this.settingsButton.getX() + this.settingsButton.getWidth() * .5,
+                                this.settingsButton.getY() + this.settingsButton.getHeight() * .5);
+                        DownloadDynamicIsland.showTheme(NCMTheme.getCurrentName());
+                    }, false));
+            this.menuEntries.add(new MenuEntry(SPlayerIcons.PIPETTE, () -> "主题调色板",
+                    () -> NCMScreen.getInstance().openThemePalette(), false));
+            this.menuEntries.add(new MenuEntry(SPlayerIcons.TYPOGRAPHY, () -> "界面字体",
+                    () -> NCMScreen.getInstance().openFontPicker(), false));
+            this.menuEntries.add(new MenuEntry("scaling",
+                    () -> "播放器大小 · " + NCMPlayerConfig.getPlayerScalePercent() + "%",
+                    () -> {
+                        NCMPlayerConfig.cycleScale();
+                        DownloadDynamicIsland.showPlayerScale(NCMPlayerConfig.getPlayerScalePercent());
+                    }, false));
+            this.menuEntries.add(new MenuEntry(SPlayerIcons.REFRESH,
+                    () -> refreshSpinning ? "正在刷新歌单…" : "刷新账号歌单",
+                    () -> triggerSidebarRefresh(this), false));
+            this.menuEntries.add(new MenuEntry(SPlayerIcons.MEGAPHONE, () -> "公告",
+                    () -> NCMScreen.getInstance().openAnnouncements(), true));
+            this.menuEntries.add(new MenuEntry(SPlayerIcons.DOWNLOAD, () -> "下载管理",
+                    () -> NCMScreen.getInstance().openDownloadManager(), false));
+        }
+
+        private double menuItemHeight() {
+            return SPlayerStyle.px(32);
+        }
+
+        private double menuWidth() {
+            CFontRenderer font = SPlayerStyle.textSm(false);
+            double widest = 0;
+            for (MenuEntry entry : this.menuEntries) {
+                widest = Math.max(widest, font.getStringWidthD(entry.label.get()));
+            }
+            return Math.max(SPlayerStyle.px(176), widest + SPlayerStyle.px(14) + SPlayerStyle.px(8) * 2
+                    + SPlayerStyle.px(8) + SPlayerStyle.px(4) * 2 + SPlayerStyle.px(10));
+        }
+
+        private double menuHeight() {
+            int separators = 0;
+            for (MenuEntry entry : this.menuEntries) if (entry.separatorBefore) separators++;
+            return SPlayerStyle.px(4) * 2 + this.menuEntries.size() * this.menuItemHeight()
+                    + separators * SPlayerStyle.px(5);
+        }
+
+        /** 菜单左上角（绝对坐标）：右缘对齐设置按钮右缘，挂在按钮下方 6px。 */
+        private double menuX() {
+            return this.settingsButton.getX() + this.settingsButton.getWidth() - this.menuWidth();
+        }
+
+        private double menuY() {
+            return this.settingsButton.getY() + this.settingsButton.getHeight() + SPlayerStyle.px(6);
+        }
+
+        /** 命中的菜单项下标；没命中返回 -1。 */
+        private int menuEntryAt(double mouseX, double mouseY) {
+            double x = this.menuX();
+            double y = this.menuY() + SPlayerStyle.px(4);
+            double width = this.menuWidth();
+            for (int index = 0; index < this.menuEntries.size(); index++) {
+                MenuEntry entry = this.menuEntries.get(index);
+                if (entry.separatorBefore) y += SPlayerStyle.px(5);
+                if (mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY < y + this.menuItemHeight()) {
+                    return index;
+                }
+                y += this.menuItemHeight();
+            }
+            return -1;
+        }
+
+        /**
+         * 设置菜单打开时，整块界面上的点击都先归它：点中菜单项就执行并收起，点在别处只收起菜单
+         * （SPlayer 的下拉菜单是模态的，点外面不会顺带触发底下的控件）。
+         */
+        public boolean consumeOpenMenuClick(double mouseX, double mouseY, int mouseButton) {
+            if (!this.menuOpen) return false;
+            int index = this.menuEntryAt(mouseX, mouseY);
+            this.menuOpen = false;
+            if (index >= 0 && mouseButton == 0) {
+                this.menuEntries.get(index).action.run();
+            }
+            return true;
+        }
+
+        @Override
+        public boolean onKeyTyped(char character, int keyCode) {
+            if (this.menuOpen && keyCode == Keyboard.KEY_ESCAPE) {
+                this.menuOpen = false;
+                return true;
+            }
+            return super.onKeyTyped(character, keyCode);
+        }
+
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            this.lastMouseX = mouseX;
+            this.lastMouseY = mouseY;
+        }
+
+        @Override
+        protected void afterRenderChildren(double mouseX, double mouseY) {
+            this.menuReveal = SPlayerStyle.approach(this.menuReveal, this.menuOpen ? 1f : 0f);
+            if (this.menuReveal <= .01f || this.settingsButton == null) return;
+            float alpha = this.getAlpha() * this.menuReveal;
+            double x = this.menuX();
+            double y = this.menuY() + SPlayerStyle.px(6) * (1f - this.menuReveal);
+            double width = this.menuWidth();
+            double height = this.menuHeight();
+            // shadow-lg：GPU 上的高斯遮罩，不是预渲染位图。
+            Canvas canvas = SkijaGfx.canvas();
+            if (canvas != null) {
+                canvas.drawRRect(io.github.humbleui.types.RRect.makeXYWH((float) x, (float) (y + SPlayerStyle.px(4)),
+                        (float) width, (float) height, (float) SPlayerStyle.RADIUS_LG),
+                        SkijaGfx.fillBlurred(SPlayerStyle.a(0x000000, .35, alpha), (float) SPlayerStyle.px(10)));
+            }
+            SPlayerStyle.fill(x, y, width, height, SPlayerStyle.RADIUS_LG, SPlayerStyle.a(SPlayerStyle.bright(), 1.0, alpha));
+            SPlayerStyle.stroke(x, y, width, height, SPlayerStyle.RADIUS_LG, SPlayerStyle.px(1),
+                    SPlayerStyle.a(SPlayerStyle.onSurface(), .08, alpha));
+            int hovered = this.menuOpen ? this.menuEntryAt(this.lastMouseX, this.lastMouseY - SPlayerStyle.px(6) * (1f - this.menuReveal)) : -1;
+            CFontRenderer font = SPlayerStyle.textSm(false);
+            double rowY = y + SPlayerStyle.px(4);
+            double inner = SPlayerStyle.px(4);
+            for (int index = 0; index < this.menuEntries.size(); index++) {
+                MenuEntry entry = this.menuEntries.get(index);
+                if (entry.separatorBefore) {
+                    double lineY = rowY + SPlayerStyle.px(2.5);
+                    SPlayerStyle.line(x + SPlayerStyle.px(6), lineY, x + width - SPlayerStyle.px(6), lineY,
+                            SPlayerStyle.px(1), SPlayerStyle.a(SPlayerStyle.onSurface(), .10, alpha));
+                    rowY += SPlayerStyle.px(5);
+                }
+                double itemHeight = this.menuItemHeight();
+                if (index == hovered) {
+                    SPlayerStyle.fill(x + inner, rowY, width - inner * 2, itemHeight, SPlayerStyle.RADIUS_MD,
+                            SPlayerStyle.a(SPlayerStyle.onSurface(), .12, alpha));
+                }
+                double centerY = rowY + itemHeight * .5;
+                double iconX = x + inner + SPlayerStyle.px(8) + SPlayerStyle.px(7);
+                boolean spinning = SPlayerIcons.REFRESH.equals(entry.icon) && refreshSpinning;
+                if (spinning) {
+                    SkijaGfx.pushMatrix();
+                    try {
+                        SkijaGfx.translate(iconX, centerY);
+                        SkijaGfx.rotateZ((float) ((System.currentTimeMillis() % 900L) / 900.0 * 360.0));
+                        SPlayerIcons.draw(entry.icon, 0, 0, SPlayerStyle.px(14), SPlayerStyle.a(SPlayerStyle.onSurface(), .6, alpha));
+                    } finally {
+                        SkijaGfx.popMatrix();
+                    }
+                } else {
+                    SPlayerIcons.draw(entry.icon, iconX, centerY, SPlayerStyle.px(14),
+                            SPlayerStyle.a(SPlayerStyle.onSurface(), .6, alpha));
+                }
+                double textX = iconX + SPlayerStyle.px(7) + SPlayerStyle.px(8);
+                SPlayerStyle.text(font, entry.label.get(), textX, centerY, x + width - inner - textX - SPlayerStyle.px(14),
+                        SPlayerStyle.a(SPlayerStyle.onSurface(), 1.0, alpha));
+                if (SPlayerIcons.MEGAPHONE.equals(entry.icon) && AnnouncementChecker.hasUnread()) {
+                    SPlayerStyle.circle(x + width - inner - SPlayerStyle.px(12), centerY, SPlayerStyle.px(3.5),
+                            SPlayerStyle.a(0xE05B66, 1.0, alpha));
+                }
+                rowY += itemHeight;
+            }
+        }
+
+        /**
+         * 搜索框（SPlayer {@code NavSearch}）：{@code h-10 rounded-full}，静止 {@code bg-on-surface/3 +
+         * border-on-surface/15}，悬停底色 /10、边 /25；聚焦时边变主色并外扩一圈 {@code ring-primary/20}。
+         * 里面装的是侧栏那份跨重建复用的输入框和「歌曲/歌单」切换。
+         */
+        private final class SearchBox extends Panel {
+            private float hover;
+            private float focus;
+            private SegmentControl searchMode;
+            private double modeWidth;
+
+            private void build() {
+                final SegmentControl.Spec spec = new SegmentControl.Spec();
+                spec.inset = SPlayerStyle.px(3);
+                spec.durationMs = 240.0;
+                spec.font = FontManager.pf12bold;
+                final double label = Math.max(FontManager.pf12bold.getStringWidthD("歌曲"),
+                        FontManager.pf12bold.getStringWidthD("歌单"));
+                this.modeWidth = 2 * (label + SPlayerStyle.px(14)) + spec.inset * 2;
+                this.searchMode = SegmentControl.attach(this, () -> {
+                    spec.height = Math.max(1, this.getHeight() - SPlayerStyle.px(10));
+                    spec.radius = spec.height * .5;
+                    spec.width = this.modeWidth;
+                    spec.y = (this.getHeight() - spec.height) * .5;
+                    spec.x = Math.max(0, this.getWidth() - this.modeWidth - SPlayerStyle.px(5));
+                    return spec;
+                }, () -> playlistSearchMode ? 1 : 0,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                        new String[]{"", ""}, new String[]{"歌曲", "歌单"},
+                        index -> {
+                            playlistSearchMode = index == 1;
+                            return true;
+                        });
+
+                this.addChild(searchField);
+                searchField.setBeforeRenderCallback(() -> {
+                    searchField.drawUnderline(false);
+                    this.searchMode.setEnabled(supportsPlaylistSearch(NeteaseMusicService.getCurrentPlatform()));
+                    double left = SPlayerStyle.px(16) + SPlayerStyle.px(16) + SPlayerStyle.px(8);
+                    double reserve = this.modeWidth * this.searchMode.presence() + SPlayerStyle.px(8);
+                    searchField.setBounds(left, 0, Math.max(1.0, this.getWidth() - left - reserve), this.getHeight());
+                    searchField.setPlaceholder(supportsPlaylistSearch(NeteaseMusicService.getCurrentPlatform())
+                            && this.searchMode.progress() > .5 ? "搜索歌单…" : "搜索歌曲、歌手或专辑");
+                    searchField.setColor(SPlayerStyle.onSurface());
+                    searchField.setDisabledTextColor(SPlayerStyle.a(SPlayerStyle.onSurfaceVariant(), .40));
+                });
+                searchField.setOnKeyTypedCallback(NavigateBar.this::onSearchFieldKey);
+            }
+
+            @Override
+            public void onRender(double mouseX, double mouseY) {
+                boolean focused = searchField.isFocused();
+                boolean hovered = this.isHovered(mouseX, mouseY, this.getX(), this.getY(), this.getWidth(), this.getHeight());
+                this.hover = SPlayerStyle.approach(this.hover, hovered ? 1f : 0f);
+                this.focus = SPlayerStyle.approach(this.focus, focused ? 1f : 0f);
+                float alpha = this.getAlpha();
+                double x = this.getX();
+                double y = this.getY();
+                double width = this.getWidth();
+                double height = this.getHeight();
+                double radius = height * .5;
+                int onSurface = SPlayerStyle.onSurface();
+                int primary = SPlayerStyle.primary();
+                if (this.focus > 0f) {
+                    double ring = SPlayerStyle.px(2);
+                    SPlayerStyle.stroke(x - ring, y - ring, width + ring * 2, height + ring * 2, radius + ring,
+                            ring, SPlayerStyle.a(primary, .20 * this.focus, alpha));
+                }
+                double fillLevel = .03 + .07 * Math.max(this.hover * (1f - this.focus), 0f) + .05 * this.focus;
+                SPlayerStyle.fill(x, y, width, height, radius, SPlayerStyle.a(onSurface, fillLevel, alpha));
+                int border = SPlayerStyle.mix(onSurface, primary, this.focus);
+                double borderLevel = (.15 + .10 * this.hover) * (1f - this.focus) + this.focus;
+                SPlayerStyle.stroke(x, y, width, height, radius, SPlayerStyle.px(1), SPlayerStyle.a(border, borderLevel, alpha));
+                SPlayerIcons.draw(SPlayerIcons.SEARCH, x + SPlayerStyle.px(16) + SPlayerStyle.px(8), y + height * .5,
+                        SPlayerStyle.px(16), SPlayerStyle.a(SPlayerStyle.onSurfaceVariant(), .5, alpha));
+            }
+        }
+
+        /** 音源胶囊：品牌标识 + 平台名 + 下拉箭头，点开音乐来源管理（SPlayer 顶栏的同位按钮是听歌识曲）。 */
+        private final class SourcePill extends Panel {
+            private float hover;
+            private final AbstractWidget<?> brand;
+
+            private SourcePill() {
+                this.setShouldOverrideMouseCursor(true);
+                MusicPlatform platform = NeteaseMusicService.getCurrentPlatform();
+                ThemedTextureIconWidget appIcon = AppStoreBrandIcons.widget(platform,
+                        sourceGlyph(platform), sourceFont(platform), 0, 0, SOURCE_ICON_BOX);
+                this.brand = appIcon != null ? appIcon : BrandVectorIcons.has(platform)
+                        ? new BrandIconWidget(platform, SOURCE_ICON_BOX)
+                        : new LabelWidget(sourceGlyph(platform), sourceFont(platform));
+                this.brand.setClickable(false);
+                final boolean texture = appIcon != null;
+                this.brand.setBeforeRenderCallback(() -> {
+                    this.brand.setColor(texture ? 0xFFFFFFFF : platform.getBrandColor());
+                    this.brand.setPosition(SPlayerStyle.px(12) + SPlayerStyle.px(8) - this.brand.getWidth() * .5,
+                            this.getHeight() * .5 - this.brand.getHeight() * .5 + (texture ? 0 : .5));
+                });
+                this.addChild(this.brand);
+                this.setOnClickCallback((x, y, button) -> {
+                    if (button != 0) return false;
+                    NCMScreen.getInstance().openMusicSourceManager(SheetHeroRelay.from(this.getX(), this.getY(),
+                            this.getWidth(), this.getHeight(), this.getHeight() * .5,
+                            () -> NeteaseMusicService.getCurrentPlatform().getBrandColor()));
+                    return true;
+                });
+            }
+
+            @Override
+            public void onRender(double mouseX, double mouseY) {
+                this.hover = SPlayerStyle.approach(this.hover, this.isHovering() ? 1f : 0f);
+                float alpha = this.getAlpha();
+                double x = this.getX();
+                double y = this.getY();
+                double height = this.getHeight();
+                int onSurface = SPlayerStyle.onSurface();
+                SPlayerStyle.fill(x, y, this.getWidth(), height, height * .5,
+                        SPlayerStyle.a(onSurface, .05 + .05 * this.hover, alpha));
+                CFontRenderer font = SPlayerStyle.textSm(false);
+                double textX = x + SPlayerStyle.px(12) + SPlayerStyle.px(16) + SPlayerStyle.px(6);
+                String name = NeteaseMusicService.getCurrentPlatform().getDisplayName();
+                SPlayerStyle.text(font, name, textX, y + height * .5, 0, SPlayerStyle.a(onSurface, 1.0, alpha));
+                SPlayerIcons.draw(SPlayerIcons.CHEVRON_DOWN,
+                        textX + font.getStringWidthD(name) + SPlayerStyle.px(6) + SPlayerStyle.px(6), y + height * .5,
+                        SPlayerStyle.px(12), SPlayerStyle.a(SPlayerStyle.onSurfaceVariant(), 1.0, alpha));
+            }
+        }
+    }
+
+    /** 设置菜单的一项。 */
+    private static final class MenuEntry {
+        final String icon;
+        final Supplier<String> label;
+        final Runnable action;
+        final boolean separatorBefore;
+
+        MenuEntry(String icon, Supplier<String> label, Runnable action, boolean separatorBefore) {
+            this.icon = icon;
+            this.label = label;
+            this.action = action;
+            this.separatorBefore = separatorBefore;
+        }
+    }
+
+    /**
+     * 账号胶囊（SPlayer {@code NavUser}）：{@code h-10 pl-1 pr-3 rounded-full bg-on-surface/6}，
+     * 头像 {@code size-8} 圆形、昵称 {@code text-sm}（最多 7rem）、会员标、{@code size-3} 下拉箭头。
+     * 点开账号管理。
+     */
+    private static final class AccountPill extends Panel {
+        private float hover;
+        private final RoundedImageWidget avatar;
+
+        private AccountPill() {
+            this.setShouldOverrideMouseCursor(true);
+            this.avatar = new RoundedImageWidget(NeteaseMusicService::getAccountAvatarLocation, 0, 0, 0, 0);
+            this.avatar.fadeIn();
+            this.avatar.setClickable(false);
+            this.avatar.setLinearFilter(true);
+            this.avatar.setBeforeRenderCallback(() -> {
+                double size = this.getHeight() - SPlayerStyle.px(8);
+                this.avatar.setBounds(SPlayerStyle.px(4), SPlayerStyle.px(4), size, size);
+                this.avatar.setRadius(size * .5);
+            });
+            this.addChild(this.avatar);
+            AccountAvatar.textureOrNull();
+            this.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                NCMScreen.getInstance().openAccountManager(SheetHeroRelay.from(this.getX(), this.getY(),
+                        this.getWidth(), this.getHeight(), this.getHeight() * .5,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT)));
+                return true;
+            });
+        }
+
+        private static double nameMaxWidth() {
+            return SPlayerStyle.px(112);
+        }
+
+        static double preferredWidthFor(double height) {
+            CFontRenderer font = SPlayerStyle.textSm(false);
+            String name = accountName();
+            double width = SPlayerStyle.px(4) + (height - SPlayerStyle.px(8)) + SPlayerStyle.px(8)
+                    + Math.min(nameMaxWidth(), font.getStringWidthD(name));
+            String badge = membershipBadgeText();
+            if (badge != null) width += SPlayerStyle.px(8) + vipWidth(badge);
+            return width + SPlayerStyle.px(8) + SPlayerStyle.px(12) + SPlayerStyle.px(12);
+        }
+
+        double preferredWidth() {
+            return preferredWidthFor(this.getHeight() > 0 ? this.getHeight() : SPlayerStyle.px(40));
+        }
+
+        private static double vipWidth(String badge) {
+            return FontManager.pf12bold.getStringWidthD(badge) + SPlayerStyle.px(12);
+        }
+
+        private static String accountName() {
+            String name = NeteaseMusicService.getAccountName(NeteaseMusicService.getCurrentPlatform());
+            return name == null || name.trim().isEmpty() ? "未登录" : name;
+        }
+
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            this.hover = SPlayerStyle.approach(this.hover, this.isHovering() ? 1f : 0f);
+            float alpha = this.getAlpha();
+            double x = this.getX();
+            double y = this.getY();
+            double height = this.getHeight();
+            int onSurface = SPlayerStyle.onSurface();
+            SPlayerStyle.fill(x, y, this.getWidth(), height, height * .5,
+                    SPlayerStyle.a(onSurface, .06 + .04 * this.hover, alpha));
+            double avatarSize = height - SPlayerStyle.px(8);
+            double avatarCenterX = x + SPlayerStyle.px(4) + avatarSize * .5;
+            SPlayerStyle.circle(avatarCenterX, y + height * .5, avatarSize * .5, SPlayerStyle.a(onSurface, .10, alpha));
+            if (NeteaseMusicService.getAccountAvatarLocation() == null) {
+                SPlayerIcons.draw(SPlayerIcons.USER_ROUND, avatarCenterX, y + height * .5, SPlayerStyle.px(16),
+                        SPlayerStyle.a(SPlayerStyle.onSurfaceVariant(), 1.0, alpha));
+            }
+            CFontRenderer font = SPlayerStyle.textSm(false);
+            String name = accountName();
+            double cursor = x + SPlayerStyle.px(4) + avatarSize + SPlayerStyle.px(8);
+            double nameWidth = Math.min(nameMaxWidth(), font.getStringWidthD(name));
+            SPlayerStyle.text(font, name, cursor, y + height * .5, nameWidth + .5, SPlayerStyle.a(onSurface, 1.0, alpha));
+            cursor += nameWidth;
+            String badge = membershipBadgeText();
+            if (badge != null) {
+                cursor += SPlayerStyle.px(8);
+                double badgeWidth = vipWidth(badge);
+                double badgeHeight = SPlayerStyle.px(16);
+                SPlayerStyle.fill(cursor, y + (height - badgeHeight) * .5, badgeWidth, badgeHeight, badgeHeight * .5,
+                        SPlayerStyle.a(NcmSheet.VIP_COLOR, .18, alpha));
+                SPlayerStyle.text(FontManager.pf12bold, badge, cursor + SPlayerStyle.px(6), y + height * .5, 0,
+                        SPlayerStyle.a(NcmSheet.VIP_COLOR, 1.0, alpha));
+                cursor += badgeWidth;
+            }
+            SPlayerIcons.draw(SPlayerIcons.CHEVRON_DOWN, cursor + SPlayerStyle.px(8) + SPlayerStyle.px(6), y + height * .5,
+                    SPlayerStyle.px(12), SPlayerStyle.a(SPlayerStyle.onSurfaceVariant(), 1.0, alpha));
+        }
+    }
+
+    /** 搜索框按键：Esc 先收联想再退焦点；上下键挑联想；Tab 补全；回车提交。原侧栏搜索框的语义原样保留。 */
+    private boolean onSearchFieldKey(char character, int keyCode) {
+        if (!this.searchField.isFocused()) return false;
+        if (keyCode == Keyboard.KEY_ESCAPE) {
+            if (this.suggestionsVisible) {
+                this.dismissSuggestions();
+            } else {
+                this.searchField.setFocused(false);
+            }
+            return true;
+        }
+        if (keyCode == Keyboard.KEY_DOWN || keyCode == Keyboard.KEY_UP) {
+            if (this.moveSuggestionHighlight(keyCode == Keyboard.KEY_DOWN ? 1 : -1)) {
+                return true;
+            }
+        }
+        if (keyCode == Keyboard.KEY_TAB) {
+            String completion = this.highlightedSuggestionText();
+            if (!completion.isEmpty()) {
+                this.searchField.setText(completion);
+                this.searchField.getTextField().setCursorPositionEnd();
+                this.suggestHighlight = -1;
+                return true;
+            }
+        }
+        if (keyCode == Keyboard.KEY_RETURN || keyCode == Keyboard.KEY_NUMPADENTER) {
+            String highlighted = this.highlightedSuggestionText();
+            if (!highlighted.isEmpty()) {
+                this.searchField.setText(highlighted);
+            }
+            final String keyword = this.searchField.getText() == null ? "" : this.searchField.getText().trim();
+            this.submitSearch(keyword);
+        }
+        return true;
+    }
+
+    /**
+     * 侧栏的一行（SPlayer {@code SMenu} 菜单项）。
+     *
+     * <p>外观：{@code h-10.5 px-3 gap-3 rounded-lg text-sm}，静止 {@code text-on-surface/80}、
+     * 悬停 {@code bg-on-surface/5}；选中态文字与图标变主色，底色与左侧竖条由侧栏共享的那一条
+     * 高亮（{@link NavigateBar#selectionIndicator}）画，切换时才能滑过去。歌单行带封面时是
+     * {@code h-13}，图标位换成 {@code size-9 rounded-md} 的封面。</p>
+     */
     public static class PlaylistItem extends Panel {
 
         String icon;
@@ -3087,6 +2975,13 @@ public class NavigateBar extends NCMPanel {
         @Setter
         private Runnable onSecondaryClick;
 
+        /** 这一行用的 lucide 图标；null = 没有对应的矢量图标，退回原来的字形/贴图图标。 */
+        private String splayerIcon;
+        /** 「点＋新建」「登录后加载」这类提示行：没有图标，文字压暗一档。 */
+        private final boolean hint;
+        private float hover;
+        private boolean coverRequested;
+
         public PlaylistItem(String icon, Supplier<Integer> iconColorSupplier, Supplier<String> label, Runnable onClick) {
             this(icon, FontManager.music18, null, iconColorSupplier, label, onClick);
         }
@@ -3118,64 +3013,57 @@ public class NavigateBar extends NCMPanel {
             this.iconColorSupplier = iconColorSupplier;
             this.label = label;
             this.onClick = onClick;
+            this.hint = "·".equals(icon);
+            this.splayerIcon = splayerIconFor(icon, lucideIcon);
             this.setBeforeRenderCallback(() -> {
                 this.updateEntrance();
-                // 该项两侧各内缩四个像素。播放器缩放时，将内缩量从
-                // 其实时宽度中减去，使背景和文字都不会
-                // 延伸到导航视口之外。
-                this.setBounds(Math.max(1, this.getParentWidth() - 8), 16);
-                this.setPosition(4, this.getRelativeY());
+                // 列表容器左右各让 px-3：行与 SPlayer 一样不顶到侧栏边。播放器缩放时按实时宽度扣。
+                double inset = SPlayerStyle.px(12);
+                this.setBounds(Math.max(1, this.getParentWidth() - inset * 2), this.rowHeight());
+                this.setPosition(inset, this.getRelativeY());
             });
 
             // 选中背景由侧栏共享的那一条高亮条绘制（见 NavigateBar#layoutSelectionIndicator）。
             // 每个条目各画一块的话，切换栏目只能是一块消失、另一块出现，没有位移可动画。
 
-            AbstractWidget<?> iconWidget;
-            if (lucideIcon != null) {
-                LucideIconWidget vectorIcon = new LucideIconWidget(() -> lucideIcon, () -> "",
-                        FontManager.music18, 0, 0, 16, 16).setDrawScale(.675);
-                this.addChild(vectorIcon);
-                vectorIcon.setBeforeRenderCallback(() -> {
-                    vectorIcon.setColor(iconColorSupplier.get());
-                    vectorIcon.setPosition(4, vectorIcon.getRelativeY());
-                });
-                vectorIcon.setClickable(false);
-                iconWidget = vectorIcon;
-            } else if (iconLocation == null) {
-                LabelWidget glyphIcon = new LabelWidget(icon, iconFont == null ? FontManager.music18 : iconFont);
-                this.addChild(glyphIcon);
-                glyphIcon.setBeforeRenderCallback(() -> {
-                    glyphIcon.setColor(iconColorSupplier.get());
-                    glyphIcon.centerVertically();
-                    glyphIcon.setPosition(8, glyphIcon.getRelativeY()/* + .5*/);
-                });
-                glyphIcon.setClickable(false);
-                iconWidget = glyphIcon;
-            } else {
-                ThemedTextureIconWidget textureIcon = new ThemedTextureIconWidget(iconLocation, FontManager.music18,
-                        0, 0, 12, 12);
-                this.addChild(textureIcon);
-                textureIcon.setBeforeRenderCallback(() -> {
-                    textureIcon.setColor(iconColorSupplier.get());
-                    textureIcon.centerVertically();
-                    textureIcon.setPosition(8, textureIcon.getRelativeY());
-                });
-                textureIcon.setClickable(false);
-                iconWidget = textureIcon;
-            }
-
-            LabelWidget lbl = new LabelWidget(label, FontManager.pf14bold);
-            this.addChild(lbl);
-
-            lbl.setBeforeRenderCallback(() -> {
-                lbl.centerVertically();
-                lbl.setPosition(lucideIcon == null ? iconWidget.getRelativeX() + iconWidget.getWidth() + 4 : 20,
-                        lbl.getRelativeY());
-                lbl.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-                lbl.setMaxWidth(this.getWidth() - (lucideIcon == null ? 8 + iconWidget.getWidth() + 12 : 32));
+            RoundedImageWidget cover = new RoundedImageWidget(
+                    () -> this.showsCover() ? this.playlist.getCoverLocation() : null, 0, 0, 0, 0);
+            cover.fadeIn();
+            cover.setLinearFilter(true);
+            cover.setClickable(false);
+            cover.setBeforeRenderCallback(() -> {
+                double size = SPlayerStyle.px(36);
+                cover.setBounds(SPlayerStyle.px(12), (this.getHeight() - size) * .5, size, size);
+                cover.setRadius(SPlayerStyle.RADIUS_MD);
+                if (this.showsCover()) this.requestCover();
             });
+            this.addChild(cover);
 
-            lbl.setClickable(false);
+            // 没有对应 lucide 图标的入口（品牌字形、贴图图标）保留原来的图标控件。
+            if (this.splayerIcon == null && !this.hint) {
+                if (iconLocation != null) {
+                    ThemedTextureIconWidget textureIcon = new ThemedTextureIconWidget(iconLocation, FontManager.music18,
+                            0, 0, 12, 12);
+                    this.addChild(textureIcon);
+                    textureIcon.setBeforeRenderCallback(() -> {
+                        textureIcon.setHidden(this.showsCover());
+                        textureIcon.setColor(this.inkColor());
+                        textureIcon.setPosition(SPlayerStyle.px(22) - textureIcon.getWidth() * .5,
+                                this.getHeight() * .5 - textureIcon.getHeight() * .5);
+                    });
+                    textureIcon.setClickable(false);
+                } else if (icon != null) {
+                    LabelWidget glyphIcon = new LabelWidget(icon, iconFont == null ? FontManager.music18 : iconFont);
+                    this.addChild(glyphIcon);
+                    glyphIcon.setBeforeRenderCallback(() -> {
+                        glyphIcon.setHidden(this.showsCover());
+                        glyphIcon.setColor(this.inkColor());
+                        glyphIcon.setPosition(SPlayerStyle.px(22) - glyphIcon.getWidth() * .5,
+                                this.getHeight() * .5 - glyphIcon.getHeight() * .5);
+                    });
+                    glyphIcon.setClickable(false);
+                }
+            }
 
             this.setOnClickCallback(((relativeX, relativeY, mouseButton) -> {
 
@@ -3196,6 +3084,116 @@ public class NavigateBar extends NCMPanel {
 
                 return true;
             }));
+        }
+
+        /** 指定这一行的 lucide 图标（同一个旧字形在不同入口含义不同时用，如「最近播放」）。 */
+        PlaylistItem withSPlayerIcon(String lucide) {
+            this.splayerIcon = lucide;
+            return this;
+        }
+
+        /**
+         * 旧字形 → SPlayer 用的 lucide 图标。旧侧栏用 music 字体里的字母当图标（A 主页、D 歌单、
+         * C 我喜欢、K 搜索/热搜），汉字当徽记（台、每、控）。
+         */
+        private static String splayerIconFor(String glyph, String lucide) {
+            if (lucide != null) {
+                if (FoliaLucideIcons.ALBUM.equals(lucide)) return SPlayerIcons.DISC;
+                if (FoliaLucideIcons.CLOUD_DOWNLOAD.equals(lucide)) return SPlayerIcons.CLOUD;
+                return SPlayerIcons.has(lucide) ? lucide : null;
+            }
+            if (glyph == null) return null;
+            switch (glyph) {
+                case "A": return SPlayerIcons.HOME;
+                case "D": return SPlayerIcons.LIST_MUSIC;
+                case "C": return SPlayerIcons.HEART;
+                case "K": return SPlayerIcons.FLAME;
+                case "台": return SPlayerIcons.PODCAST;
+                case "每": return SPlayerIcons.CALENDAR_DAYS;
+                case "控": return "cast";
+                case "+": return SPlayerIcons.PLUS;
+                default: break;
+            }
+            if (glyph.equals(FontelloIcons.LEADERBOARD)) return SPlayerIcons.TROPHY;
+            if (glyph.equals(MusicBrandIcons.PERSONAL_FM)) return SPlayerIcons.RADIO;
+            return null;
+        }
+
+        /** 歌单行有封面地址时按封面行画（SPlayer 侧栏「显示歌单封面」）。 */
+        private boolean showsCover() {
+            PlayList list = this.playlist;
+            return list != null && list.getCoverUrl() != null && !list.getCoverUrl().trim().isEmpty();
+        }
+
+        private double rowHeight() {
+            return this.showsCover() ? SPlayerStyle.NAV_COVER_ROW_HEIGHT : SPlayerStyle.NAV_ROW_HEIGHT;
+        }
+
+        /** 文字与图标同色：选中主色，平时 onSurface/80，提示行再压暗。 */
+        private int inkColor() {
+            if (this.selected) return SPlayerStyle.a(SPlayerStyle.primary(), 1.0, this.getAlpha());
+            return SPlayerStyle.a(SPlayerStyle.onSurface(), this.hint ? .55 : .80, this.getAlpha());
+        }
+
+        /**
+         * 封面只请求一次，口径与主页歌单卡片一致（{@code HomePanel} 的封面加载）：同一张封面
+         * 落在同一个贴图位置，主页先下过的这里直接复用，反之亦然。
+         */
+        private void requestCover() {
+            if (this.coverRequested) return;
+            PlayList list = this.playlist;
+            Location location = list.getCoverLocation();
+            this.coverRequested = true;
+            if (TextureManager.getInstance().getTexture(location) != null) return;
+            String secureUrl = list.getCoverUrl().replace("http://", "https://");
+            String requestUrl = list.getPlatform() == MusicPlatform.QQ || list.getPlatform() == MusicPlatform.QISHUI
+                    || list.isSearchMode() ? secureUrl : secureUrl + "?param=256y256";
+            Textures.downloadTextureAndLoadAsync(requestUrl, location);
+        }
+
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            this.hover = SPlayerStyle.approach(this.hover, this.isHovering() ? 1f : 0f);
+            float alpha = this.getAlpha();
+            double x = this.getX();
+            double y = this.getY();
+            double width = this.getWidth();
+            double height = this.getHeight();
+            double centerY = y + height * .5;
+            if (!this.selected && this.hover > 0f) {
+                SPlayerStyle.fill(x, y, width, height, SPlayerStyle.RADIUS_LG,
+                        SPlayerStyle.a(SPlayerStyle.onSurface(), .05 * this.hover, alpha));
+            }
+            int ink = this.inkColor();
+            double left = x + SPlayerStyle.px(12);
+            double textX;
+            if (this.showsCover()) {
+                double size = SPlayerStyle.px(36);
+                if (TextureManager.getInstance().getTexture(this.playlist.getCoverLocation()) == null) {
+                    SPlayerStyle.fill(left, centerY - size * .5, size, size, SPlayerStyle.RADIUS_MD,
+                            SPlayerStyle.a(SPlayerStyle.onSurface(), .08, alpha));
+                    SPlayerIcons.draw(SPlayerIcons.LIST_MUSIC, left + size * .5, centerY, size * .45,
+                            SPlayerStyle.a(SPlayerStyle.onSurfaceVariant(), .6, alpha));
+                }
+                textX = left + size + SPlayerStyle.px(12);
+            } else if (this.hint) {
+                textX = left;
+            } else {
+                double iconBox = SPlayerStyle.px(20);
+                if (this.splayerIcon != null) {
+                    SPlayerIcons.draw(this.splayerIcon, left + iconBox * .5, centerY, iconBox, ink);
+                }
+                textX = left + iconBox + SPlayerStyle.px(12);
+            }
+            String text;
+            try {
+                text = this.label.get();
+            } catch (RuntimeException error) {
+                // 标签来自异步快照（账号名、歌单名），一次读失败不能带崩整列侧栏；下一帧再读。
+                text = "";
+            }
+            SPlayerStyle.text(SPlayerStyle.textSm(false), text, textX, centerY,
+                    x + width - SPlayerStyle.px(12) - textX, ink);
         }
 
         /**

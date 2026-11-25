@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.screens.ncm.panels;
 
+import com.muoniumplayer.core.screens.ncm.SPlayerStyle;
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
@@ -102,7 +103,7 @@ public final class RadioHubPanel extends NCMPanel {
         cardWidgets.clear();
         pendingCards = null;
 
-        LabelWidget title = new LabelWidget("电台 · 播客", FontManager.pf25bold);
+        LabelWidget title = new LabelWidget("电台 · 播客", SPlayerStyle.text2xl());
         addChild(title);
         title.setClickable(false);
         title.setBeforeRenderCallback(() -> title
