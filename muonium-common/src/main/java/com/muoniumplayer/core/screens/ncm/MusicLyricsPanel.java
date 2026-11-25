@@ -83,8 +83,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     boolean prevMouse = false;
 
-    /** 本帧是否出现「按过且刚抬起且没拖过」的点沿；onRender 头部捕获，歌词行 seek 消费。 */
-    private boolean tapReleaseEdge;
+    private final ClassicLyricPointer classicLyricPointer = new ClassicLyricPointer();
+    private ClassicLyricPointer.Track applePressTrack;
 
     /** 本帧是否出现按下沿（onRender 头部捕获）：进度条拖拽起手用，拖不属于点按语义。 */
     private boolean lmbPressEdge;
@@ -149,6 +149,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private final LyricStyleQuickPanel styleQuickPanel = new LyricStyleQuickPanel();
     /** QPlayer 流体背景的音频响应状态；背景不再叠加旧的模糊封面层。 */
     private final QPlayerFluidLyricBackground fluidLyricBackground = new QPlayerFluidLyricBackground();
+    private final AppleCoverBackdrop coverBackdrop = new AppleCoverBackdrop();
 
     /** folia 背景（与 QPlayer 那套完全独立，见 {@code foliabg} 包）。 */
     private final com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundHost foliaBackground =
@@ -198,6 +199,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     /** 当前样式对应的渲染器；{@code null} 表示走经典的滚动歌词。 */
+    private AppleLyricRenderer appleRenderer() {
+        return (AppleLyricRenderer) styleRenderers[FullscreenLyricStyle.APPLE.ordinal()];
+    }
+
     private FullscreenLyricRenderer currentStyleRenderer() {
         int index = FullscreenLyricStyle.current().ordinal();
         if (index < 0 || index >= styleRenderers.length) return null;
@@ -669,8 +674,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     public void onInit() {
+        invalidateLyricPointers();
         fluidLyricBackground.reset();
         foliaBackground.reset();
+        coverBackdrop.reset();
         if (handoffPrewarmed) {
             resetVisibleLyricStatus();
         } else {
@@ -708,6 +715,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     public void dispose() {
         fluidLyricBackground.dispose();
         foliaBackground.dispose();
+        coverBackdrop.reset();
+        appleRenderer().disposeLyricBlur();
         // 三级景深的模糊滤镜缓存：native 对象，渲染层整体关闭时统一释放。
         for (io.github.humbleui.skija.ImageFilter filter : EDGE_BLUR_FILTERS.values()) {
             filter.close();
@@ -716,6 +725,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     public void close() {
+        invalidateLyricPointers();
         closing = true;
         CoverHeroTransition.beginClose();
     }
@@ -730,17 +740,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     public void onRender(double mouseX, double mouseY, double posX, double posY, double width, double height, int dWheel) {
 
-        // 左键锁存与两条边沿都在这里统一结算（渲染各段之前）：
-        //  · tapReleaseEdge：「按过 + 刚抬起 + 这一按从头到尾没拖过」（TouchGestures#
-        //    lastPressWasDrag）= 一次点按。歌词行的 seek 据此结算——触屏时代按下那一下
-        //    可能只是滚动的起手，直接 seek 就是「想滑列表结果跳了进度」。
-        //  · lmbPressEdge：按下沿。进度条的拖拽起手是<b>拖</b>不是点，仍在按下沿启动，
-        //    由手势层的主轴锁定负责让位（竖向手势滑过进度条不 seek，见那一处的门）。
+        // The progress slider still uses the press edge; lyric clicks resolve through mouse events.
         boolean lmbDownNow = Mouse.isButtonDown(0);
-        boolean prevLatch = prevMouse;
-        this.tapReleaseEdge = prevLatch && !lmbDownNow
-                && !TouchGestures.get().lastPressWasDrag();
-        this.lmbPressEdge = lmbDownNow && !prevLatch;
+        this.lmbPressEdge = lmbDownNow && !prevMouse;
         prevMouse = lmbDownNow;
 
         // 本层不透明度不再自己插值，而是读转场时钟：整条「播放器主页 到 全屏歌词页」的进退场由
@@ -751,7 +753,14 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         if (!closing) prepareFrame(lyricViewport);
         // 进场前 16% 与退场末段本层都是全透明的。此前只有退场会跳过，进场仍会完整画一遍
         // 背景、控制栏与歌词；低配机上这就是开头连续掉帧的来源之一。
-        if (alpha <= CLOSE_ALPHA_EPSILON) return;
+        if (alpha <= CLOSE_ALPHA_EPSILON) {
+            invalidateLyricPointers();
+            return;
+        }
+        if (lmbDownNow) {
+            classicLyricPointer.pointerMoved(mouseX, mouseY, Math.max(1, TouchSettings.DRAG_THRESHOLD_PX));
+            appleRenderer().dragLyric(mouseX, mouseY);
+        }
 
         // 面板尺寸动画过程中按真实视口重排。阈值可避免亚像素变化导致每帧重建全部歌词。
         double viewportLyricWidth = lyricViewport.width;
@@ -794,11 +803,14 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             api.getGLStateManager().pushMatrix();
             api.getGLStateManager().translate(0, lyricRise, 0);
             if (presentation.preparing) {
+                invalidateLyricPointers();
                 renderPendingLyricStatus(lyricViewport, alpha);
             } else {
-                this.renderLyrics(mouseX, mouseY, posX, posY, width, height, lyricWheel, alpha, snapshot);
+                this.renderLyrics(mouseX, mouseY, posX, posY, width, height, lyricWheel, alpha, snapshot, contentScale, lyricRise);
             }
             api.getGLStateManager().popMatrix();
+        } else {
+            invalidateLyricPointers();
         }
         // 快捷面板画在最后：它是浮层，必须盖在封面与歌词之上。
         this.styleQuickPanel.render(mouseX, mouseY, posX, posY, width, height, alpha);
@@ -831,11 +843,15 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 hexColor(1, 1, 1, opacity * .54f));
     }
 
-    private void renderLyrics(double mouseX, double mouseY, double posX, double posY, double width, double height, int dWheel, float alphaIn, CloudMusic.PlaybackSnapshot snapshot) {
+    private void renderLyrics(double mouseX, double mouseY, double posX, double posY, double width, double height, int dWheel, float alphaIn, CloudMusic.PlaybackSnapshot snapshot,
+                              double contentScale, double lyricRise) {
         float alpha = alphaIn * (float) CoverHeroTransition.lyricsFade();
 
-        if (CloudMusic.lyrics.isEmpty()) return;
-        if (!CloudMusic.lyricsMatchCurrentTrack()) return;
+        long lyricRevision = CloudMusic.lyricsRevision;
+        if (CloudMusic.lyrics.isEmpty() || !CloudMusic.lyricsMatchCurrentTrack()) {
+            invalidateLyricPointers();
+            return;
+        }
 
         // 「有没有可用的播放时钟」不能问 snapshot.player：镜像态下出声的是外部播放器，
         // player 恒为 null，而进度与歌词都要照常走。
@@ -845,27 +861,32 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         double songProgress = playerNotReady ? 0 : (progressBarDragging ? overridePlaybackProgress : snapshot.positionMs);
 
         LyricViewport lyricViewport = createLyricViewport(posX, posY, width, height);
-        if (lyricViewport.width <= .5 || lyricViewport.height <= .5) return;
-
-        // 「未到歌词模糊」（移植 qplayer edgeBlur）：开启且清晰带已收敛时主循环只更新
-        // 状态不绘制，整列由循环后的「模糊份×带外蒙版 + 清晰份×带内蒙版」双通路绘制，
-        // 清晰带随活跃行指数平滑滑动（TAU=0.14s）。
-        edgeBlurBeginFrame(edgeBlurEnabled() && SkijaGfx.active(), lyricViewport.height);
+        if (lyricViewport.width <= .5 || lyricViewport.height <= .5) {
+            invalidateLyricPointers();
+            return;
+        }
 
         double lyricsWidth = lyricViewport.width;
         LyricLine displayedCurrentLyric = qplayerVisualAnchorLyric(songProgress);
 
         FullscreenLyricRenderer styleRenderer = currentStyleRenderer();
         if (styleRenderer != null) {
-            // 非 classic 样式不跑 edgeBlur 主循环，但也要把带状态停掉：
-            // 否则切回 classic 的头几帧会用分钟前的旧带算 ghostT，把行错误
-            // 模糊/清晰（dt 被钳 0.05 时要 5-8 帧才收敛回正确位置）。
-            edgeBlurBeginFrame(false, lyricViewport.height);
+            classicLyricPointer.invalidate();
+            if (styleRenderer instanceof AppleLyricRenderer apple && allowAppleLyricPointer()
+                    && lyricPointerTrack(snapshot, lyricRevision) != null) {
+                if (dWheel != 0) cancelLyricPointerPress();
+                apple.lyricPointer(mouseX, mouseY, snapshot, lyricRevision);
+            } else {
+                appleRenderer().invalidateLyricPointer();
+                applePressTrack = null;
+            }
             styleRenderer.render(lyricViewport.left, lyricViewport.top,
                     lyricViewport.width, lyricViewport.height, alpha, songProgress, displayedCurrentLyric);
             return;
         }
 
+        appleRenderer().invalidateLyricPointer();
+        applePressTrack = null;
         boolean lyricManualScroll = Math.abs(scrollTarget) > 0.01 || Math.abs(scrollOffset) > 0.01;
         updateLyricPositions(posY, height, lyricsWidth, displayedCurrentLyric,
                 songProgress, lyricManualScroll);
@@ -884,7 +905,6 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         if (scrollOffsetResetTimer.isDelayed(3000)) scrollTarget = 0;
         scrollOffset = Interpolations.interpolate(scrollOffset, scrollTarget, 0.25f);
 
-        double lyricRenderOffsetX = lyricViewport.left;
         double lyricsViewportTop = lyricViewport.top;
         double lyricsViewportBottom = lyricViewport.bottom();
 
@@ -900,7 +920,20 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             int renderStart = Math.max(0, qplayerGroupStart[anchorGroup] - 16);
             int renderEnd = Math.min(lines.size(), qplayerGroupEnd[anchorGroup] + 16 + 1);
             double fontHeight = FontManager.pf65bold.getHeight();
-            double lineStep = fontHeight;
+            var blurCanvas = HudConfig.fullscreenLyricEdgeBlur && !lyricManualScroll
+                    ? SkijaGfx.canvas() : null;
+            int playbackGroup = -1;
+            if (blurCanvas != null) {
+                for (int group = 0; group < qplayerGroupCount; group++) {
+                    if (qplayerGroupStartMs(group) > songProgress) break;
+                    playbackGroup = group;
+                }
+            }
+            int hoveredLine = updateClassicLyricPointer(lyricViewport, lines, renderStart, renderEnd,
+                    posX + width * .5, posY + height * .5, contentScale, lyricRise,
+                    posY + height * lyricFraction(), songProgress, mouseX, mouseY, dWheel,
+                    snapshot, lyricRevision);
+            if (hoveredLine >= 0) CursorUtils.setOverride(CursorUtils.HAND);
 
             for (int k = renderStart; k < renderEnd; k++) {
                 LyricLine lyric = lines.get(k);
@@ -910,53 +943,23 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
                 int groupIndex = qplayerLineToGroup[k];
                 float activeK = groupIndex >= 0 ? qplayerActiveK(groupIndex, songProgress) : 0f;
-                float qBaseAlpha = qplayerBaseAlpha(activeK);
-                if (edgeBlurFrameActive && activeK >= .5f) {
-                    // 活跃行按本帧实际绘制坐标进清晰带；ghost 行也在这里累计，保证带会追上它们。
-                    edgeBlurExpandLitBand(lyric.posY + scrollOffset,
-                            lyric.posY + scrollOffset + lyric.height);
-                }
                 lyric.alpha = activeK;
-                boolean isHovering = isHovered(mouseX, mouseY - scrollOffset,
-                        lyricRenderOffsetX, lyric.posY, lyricsWidth, lyric.height);
                 lyric.hoveringAlpha = Interpolations.interpolate(lyric.hoveringAlpha,
-                        isHovering ? 1f : 0f, 0.2f);
-                if (isHovering) CursorUtils.setOverride(CursorUtils.HAND);
-                // 模态浮层（选词、建单等）打开时这一帧的按住不属于歌词列：点遮罩会同时把
-                // 底下的歌词行当成跳转、seek 到那一行的时刻。
-                // 点击语义在松手沿结算（tapReleaseEdge，见 onRender 开头）：按下那一下可能
-                // 只是滚动的起手，直接 seek 就是「想滑列表结果跳了进度」。
-                if (!NCMScreen.getInstance().isModalOverlayActive()
-                        && isHovering && tapReleaseEdge) {
-                    if (CloudMusic.hasPlaybackClock() && CloudMusic.seekToMillis(lyric.timestamp)) {
-                        resetLyricStatus();
-                    }
-                    scrollTarget = 0;
-                }
+                        k == hoveredLine ? 1f : 0f, 0.2f);
 
-                // 「未到歌词模糊」开启且清晰带有效时，整列由循环后的模糊/清晰两个
-                // 蒙版通路绘制，主循环只跑交互与状态；带无效（首帧）时按清晰绘制。
-                if (!edgeBlurFrameActive || Double.isNaN(edgeBlurBandViewTop)) {
-                    renderQplayerColumn(lyric, k, songProgress, alpha, 0f,
-                            lyricViewport.left, lyricsWidth, lyricsViewportTop, lyricsViewportBottom,
-                            posY + height * lyricFraction());
-                }
             }
 
-            if (edgeBlurFrameActive) {
-                if (!Double.isNaN(edgeBlurBandViewTop)) {
-                    // 分级景深：清晰份在最下，三级模糊由近到远逐级接管更远的区域，
-                    // 相邻级蒙版互补换手——离清晰带越远越模糊，而不是一刀切的均匀模糊。
-                    for (int tier = 0; tier <= QPLAYER_EDGE_BLUR_TIER_SIGMA_SCALE.length; tier++) {
-                        edgeBlurRenderColumnPass(renderStart, renderEnd, lyricViewport.left, lyricsWidth,
-                                lyricsViewportTop, lyricsViewportBottom,
-                                posY + height * lyricFraction(), songProgress, alpha, tier);
-                    }
-                }
-                // 本帧清晰带目标（活跃组并集，无则锚点兜底）指数平滑进视图带。
-                // 放在带判定之外：首帧必须落带，否则 NaN 永远不消除、双通路永远不激活。
-                edgeBlurUpdateBand(posY + height * lyricFraction(), lyricViewport.height);
+            double anchorY = posY + height * lyricFraction();
+            for (int k = renderStart; k < renderEnd; k++) {
+                LyricLine lyric = lines.get(k);
+                if (!visibleLyric(lyric, lyricsViewportTop, lyricsViewportBottom)) continue;
+                int order = qplayerLineToGroup[k] - playbackGroup;
+                float blur = blurCanvas == null || qplayerLineToGroup[k] < 0 ? 0f :
+                        (float) LyricPlaybackFocus.blur(
+                                order, lyric.timestamp - songProgress, Math.max(lyric.alpha, lyric.hoveringAlpha));
+                drawFocusedLyric(blurCanvas, lyric, k, blur, songProgress, alpha, lyricViewport, anchorY, fontHeight);
             }
+
             renderQplayerInterludeDots(lyricViewport.left, lyricsWidth,
                     fontHeight, fontHeight, songProgress, alpha);
         } finally {
@@ -966,283 +969,167 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         }
     }
 
-    // ── 未到歌词模糊（移植自 qplayer 的渐进边缘模糊 / edgeBlur）─────────────
-
-    /** 模糊 sigma 相对主字号的比例，与 qplayer LyricCompositor.EDGE_BLUR_SIGMA_RATIO 一致。 */
-    private static final float QPLAYER_EDGE_BLUR_SIGMA_RATIO = 0.11f;
-    /** 无活跃行（前奏/间奏）时兜底清晰带的半高，相对视口高度。 */
-    private static final double QPLAYER_EDGE_BLUR_BAND_HALF = 0.09;
-    /** 清晰带边缘到全模糊的过渡余量，相对视口高度（对应 qplayer BAND_RAMP=0.24）。 */
-    private static final double QPLAYER_EDGE_BLUR_BAND_RAMP = 0.24;
-    /** 清晰带随换行滑动的指数平滑时间常数，对应 qplayer 的 TAU=0.14s。 */
-    private static final double QPLAYER_EDGE_BLUR_BAND_TAU = 0.14;
-
-    /** 本帧是否处于「未到歌词模糊」通路（开关开且 Skija 可用）。 */
-    private static boolean edgeBlurFrameActive;
-    /** 本帧过渡余量的像素值，beginFrame 时按视口高度折算。 */
-    private static double edgeBlurRampPx = 1.0;
-    /** 本帧观测到的活跃行（activeK≥.5）屏幕顶/底并集。 */
-    private static double edgeBlurLitTop = Double.POSITIVE_INFINITY;
-    private static double edgeBlurLitBottom = Double.NEGATIVE_INFINITY;
-    private static boolean edgeBlurLitAny;
-    /** 平滑后的清晰带（屏幕 Y，核心区，过渡在其外 {@link #edgeBlurRampPx} 内展开）。 */
-    private static double edgeBlurBandViewTop = Double.NaN;
-    private static double edgeBlurBandViewBottom = Double.NaN;
-    private static long edgeBlurBandLastNanos;
-
-    private static boolean edgeBlurEnabled() {
-        return HudConfig.fullscreenLyricEdgeBlur;
+    private int updateClassicLyricPointer(LyricViewport viewport, List<LyricLine> lines,
+                                         int start, int end, double centerX, double centerY,
+                                         double scale, double rise, double anchorY, double songProgress,
+                                         double mouseX, double mouseY, int wheel,
+                                         CloudMusic.PlaybackSnapshot snapshot, long revision) {
+        var track = lyricPointerTrack(snapshot, revision);
+        if (!allowLyricPointer() || track == null) {
+            classicLyricPointer.invalidate();
+            return -1;
+        }
+        if (wheel != 0 || lyricsTouchDragging) classicLyricPointer.cancel();
+        classicLyricPointer.beginFrame(track, centerX, centerY, scale, rise,
+                viewport.left, viewport.top, viewport.width, viewport.height);
+        double fontHeight = FontManager.pf65bold.getHeight();
+        for (int k = start; k < end; k++) {
+            LyricLine lyric = lines.get(k);
+            if (lyric == null || lyric.isBreakLine) continue;
+            double rowTop = lyric.posY + scrollOffset;
+            if (rowTop + lyric.height < viewport.top - 32 || rowTop > viewport.bottom() + 32) continue;
+            double columnWidth = LyricDuetGroups.columnWidth(viewport.width, lyric.duetSlot);
+            double columnLeft = LyricDuetGroups.columnLeft(viewport.left, viewport.width, lyric.duetSlot);
+            int rows = lyric.words.isEmpty()
+                    ? lyric.wrappedRows(FontManager.pf65bold, lyric.lyric, qplayerWrapWidth(columnWidth)).length
+                    : qplayerPlacement(lyric, lyric.words, columnLeft, qplayerWrapWidth(columnWidth),
+                            LyricDuetGroups.rightAligned(lyric.duetSlot)).first.length;
+            if (rows == 0) continue;
+            double mainTextHeight = rows * fontHeight;
+            double paintedHeight = mainTextHeight;
+            if (lyric.translationText != null && !lyric.translationText.isBlank()) {
+                CFontRenderer translationFont = FontManager.pf34bold;
+                int translationRows = lyric.wrappedRows(translationFont, lyric.translationText,
+                        qplayerWrapWidth(columnWidth)).length;
+                if (translationRows > 0) {
+                    double translationBottom = (rows - 1) * fontHeight + fontHeight * .85 + 8
+                            + translationRows * translationFont.getHeight() + 4 * (translationRows - 1);
+                    paintedHeight = Math.max(paintedHeight, translationBottom);
+                }
+            }
+            float activeK = qplayerActiveK(qplayerLineToGroup[k], songProgress);
+            double rowScale = qplayerLineScale(activeK, anchorY, rowTop + mainTextHeight * .5, mainTextHeight);
+            classicLyricPointer.addRow(k, lyric.timestamp, columnLeft, rowTop, columnWidth,
+                    paintedHeight, mainTextHeight, rowScale);
+        }
+        return classicLyricPointer.hover(mouseX, mouseY);
     }
 
-    private static void edgeBlurBeginFrame(boolean active, double viewportHeight) {
-        edgeBlurFrameActive = active;
-        edgeBlurRampPx = Math.max(1.0, viewportHeight * QPLAYER_EDGE_BLUR_BAND_RAMP);
-        edgeBlurLitTop = Double.POSITIVE_INFINITY;
-        edgeBlurLitBottom = Double.NEGATIVE_INFINITY;
-        edgeBlurLitAny = false;
-        if (!active) {
-            // 关闭期间清掉旧带：重新打开的第一帧全部清晰，避免拿陈旧带错杀行。
-            edgeBlurBandViewTop = Double.NaN;
-            edgeBlurBandViewBottom = Double.NaN;
-            edgeBlurBandLastNanos = 0L;
+    private boolean allowLyricPointer() {
+        return !closing && !styleQuickPanel.isExpanded() && !progressBarDragging
+                && !NCMScreen.getInstance().isModalOverlayActive() && CloudMusic.hasPlaybackClock()
+                && !CloudMusic.playbackPresentation().preparing;
+    }
+
+    private static ClassicLyricPointer.Track lyricPointerTrack(CloudMusic.PlaybackSnapshot snapshot, long revision) {
+        if (snapshot.preparing || snapshot.durationMs <= 0 || snapshot.music == null
+                || !CloudMusic.lyricsMatchCurrentTrack()) return null;
+        return new ClassicLyricPointer.Track(snapshot.sessionId, snapshot.music.getStableKey(), revision);
+    }
+
+    private boolean allowAppleLyricPointer() {
+        return allowLyricPointer() && !CoverHeroTransition.isRunning() && !PlayerIslandTransition.isRunning();
+    }
+
+    private void invalidateLyricPointers() {
+        classicLyricPointer.invalidate();
+        appleRenderer().invalidateLyricPointer();
+        applePressTrack = null;
+    }
+
+    boolean pressLyricPointer(double mouseX, double mouseY) {
+        if (!allowLyricPointer()) return false;
+        var snapshot = CloudMusic.getSnapshot();
+        long revision = CloudMusic.lyricsRevision;
+        var track = lyricPointerTrack(snapshot, revision);
+        var renderer = currentStyleRenderer();
+        if (renderer instanceof AppleLyricRenderer apple && allowAppleLyricPointer() && track != null
+                && apple.pressLyric(mouseX, mouseY, snapshot, revision)) {
+            applePressTrack = track;
+            return true;
+        }
+        return renderer == null && classicLyricPointer.press(mouseX, mouseY, track);
+    }
+
+    boolean hasLyricPointerPress() {
+        return classicLyricPointer.isPressed() || appleRenderer().hasLyricPress();
+    }
+
+    void cancelLyricPointerPress() {
+        classicLyricPointer.cancel();
+        appleRenderer().cancelLyricPress();
+        applePressTrack = null;
+    }
+
+    void releaseLyricPointer(double mouseX, double mouseY) {
+        if (!allowLyricPointer()) {
+            cancelLyricPointerPress();
+            return;
+        }
+        var snapshot = CloudMusic.getSnapshot();
+        long revision = CloudMusic.lyricsRevision;
+        var track = lyricPointerTrack(snapshot, revision);
+        var renderer = currentStyleRenderer();
+        long millis = -1;
+        if (renderer instanceof AppleLyricRenderer apple && allowAppleLyricPointer()
+                && track != null && track.equals(applePressTrack)) {
+            millis = apple.releaseLyric(mouseX, mouseY, snapshot, revision);
+        } else if (renderer == null) {
+            millis = classicLyricPointer.release(mouseX, mouseY, Math.max(1, TouchSettings.DRAG_THRESHOLD_PX), track);
+        }
+        cancelLyricPointerPress();
+        seekToLyric(millis, snapshot);
+    }
+
+    private void seekToLyric(long millis, CloudMusic.PlaybackSnapshot snapshot) {
+        // Mirrored playback has no local player/session to satisfy the local seek guard.
+        // Its identity was already checked against the captured frame before dispatch.
+        if (millis >= 0 && CloudMusic.seekToMillis(millis, snapshot.player == null ? null : snapshot)) {
+            resetLyricStatus();
+            scrollTarget = 0;
         }
     }
 
-    private static void edgeBlurExpandLitBand(double top, double bottom) {
-        edgeBlurLitTop = Math.min(edgeBlurLitTop, top);
-        edgeBlurLitBottom = Math.max(edgeBlurLitBottom, bottom);
-        edgeBlurLitAny = true;
+    private boolean visibleLyric(LyricLine lyric, double top, double bottom) {
+        if (lyric == null || lyric.isBreakLine) return false;
+        double y = lyric.posY + scrollOffset;
+        return y + lyric.height >= top - 32 && y <= bottom + 32;
     }
 
-    /** 由近到远模糊级的 sigma 倍率（相对基础 sigma = 字号×0.11）。
-     *  对齐 qplayer 上游：单一模糊级，整个带外共用一档 σ=1.0×base，温和失焦。 */
-    private static final float[] QPLAYER_EDGE_BLUR_TIER_SIGMA_SCALE = {1.0f};
-    /**
-     * 每级模糊的「墨水地板」。闲置行本身只有 0.22 的基础亮度（{@code qplayerBaseAlpha}），
-     * 高斯把字形能量摊开后等于再压一档，视觉上就是「消失」。补偿不走图层 alpha——
-     * 那条路会被 1.0 钳死，对 0.22 的闲置行根本加不上亮度——而是直接抬高模糊通路里
-     * 字形的基准亮度（0.22 → 0.30），让糊开的字迹仍然可辨。qplayer 上游不加补偿，
-     * 但它的字号更小、能量密度更高；本项目 65px 字号摊得更开，需要这一点地板。
-     */
-    private static final float[] QPLAYER_EDGE_BLUR_TIER_INK = {0.30f};
-    /**
-     * 清晰↔模糊的过渡宽度，占 {@link #edgeBlurRampPx}（=0.24 视口高，即 qplayer
-     * BAND_RAMP 口径）的比例。上游是整段 RAMP 直接线性换手，取 1.0 对齐。
-     */
-    private static final double QPLAYER_EDGE_BLUR_TIER_FADE = 1.0;
-    /** 模糊级的起点距离，占 R 的比例。上游单一模糊级从清晰带边缘（d=0）即开始接管。 */
-    private static final double QPLAYER_EDGE_BLUR_TIER_STEP = 0.0;
-
-    /**
-     * 分级景深的整列渲染（对应 qplayer LyricCompositor.drawProgressiveBlurColumn，
-     * 并按本项目需求把「单一模糊带外」扩成「由近到远三级渐进模糊」）。
-     *
-     * <p>{@code tier=0} 是清晰通路：整列画进包裹层，用「带内不透明、带外渐隐」的
-     * DST_IN 垂直渐变蒙版只保留清晰带内的部分。{@code tier=1..3} 是模糊通路：
-     * 整列画进挂了高斯 {@code ImageFilter} 的滤镜层（sigma 逐级增大），用各自的
-     * 距离蒙版只保留对应深度环带的部分。相邻级的蒙版在同一交叉区间一降一升、
-     * 各级处处合计为 1，所以从清晰带向外是<b>连续的逐级模糊</b>——先轻微糊，
-     * 再中度糊，最远处才是深度糊，没有行级硬切，也不会「越远越透明最后消失」。</p>
-     *
-     * <p>嵌套结构与 qplayer 一致：先开「包裹层」，模糊通路再在包裹层里开滤镜层；
-     * DST_IN 蒙版在包裹层 <b>restore 之前</b>画——蒙版只作用于包裹层自己的内容，
-     * 绝不会吃到主画布上的流体背景（DST_IN 乘目标 alpha，直接画主画布会把背景抹出洞）。</p>
-     *
-     * <p>每帧 1 + 3 次 saveLayer（清晰一层 + 三级模糊各一层整列图层），与 qplayer
-     * 的「three nested saveLayers + 整列画两遍」同量级；高斯滤镜按 sigma 缓存复用。</p>
-     */
-    private void edgeBlurRenderColumnPass(int renderStart, int renderEnd,
-                                          double viewportLeft, double viewportWidth,
-                                          double viewportTop, double viewportBottom,
-                                          double anchorY, double songProgress, float alpha,
-                                          int tier) {
-        io.github.humbleui.skija.Canvas canvas = SkijaGfx.canvas();
-        if (canvas == null) return;
-        List<LyricLine> lines = CloudMusic.lyrics;
-        float baseSigma = (float) Math.max(1.0,
-                FontManager.pf65bold.getHeight() * QPLAYER_EDGE_BLUR_SIGMA_RATIO);
-        boolean blurred = tier > 0;
-        float sigma = blurred ? Math.max(1.0f,
-                baseSigma * QPLAYER_EDGE_BLUR_TIER_SIGMA_SCALE[tier - 1]) : baseSigma;
-        // 模糊层外扩 3σ：DECAL 在层缘把 alpha 衰减掉，不外扩会把最外行也裁淡。
-        double pad = blurred ? sigma * 3.0 + 12.0 : 4.0;
-        double columnTop = viewportTop - pad;
-        double columnBottom = viewportBottom + pad;
-        io.github.humbleui.types.Rect column = io.github.humbleui.types.Rect.makeLTRB(
-                (float) (viewportLeft - pad), (float) columnTop,
-                (float) (viewportLeft + viewportWidth + pad), (float) columnBottom);
-
-        io.github.humbleui.skija.Paint filterPaint = null;
-        int depth = canvas.save();
-        try {
-            if (blurred) {
-                io.github.humbleui.skija.ImageFilter blur = edgeBlurFilter(sigma);
-                filterPaint = new io.github.humbleui.skija.Paint();
-                filterPaint.setImageFilter(blur);
-            }
-            // 外包裹层：下面那块 DST_IN 蒙版的作用域。
-            int wrapper = canvas.saveLayer(column, null);
-            int inner = wrapper;
-            if (wrapper >= 0 && blurred) {
-                inner = canvas.saveLayer(column, filterPaint);
-            }
-            // 各级模糊用「墨水地板」补偿高斯摊薄：直接抬高闲置行字形的基准亮度，
-            // 而不是乘图层 alpha（会被 1.0 钳死，对 0.22 的闲置行加不上亮度）。
-            float rowAlpha = alpha;
-            float inkFloor = blurred ? QPLAYER_EDGE_BLUR_TIER_INK[tier - 1] : 0f;
+    private void drawFocusedLyric(io.github.humbleui.skija.Canvas canvas, LyricLine lyric, int index,
+                                  float blur, double progress, float alpha, LyricViewport viewport,
+                                  double anchorY, double fontHeight) {
+        float sigma = (float) Math.min(5.5, fontHeight * .077) * blur;
+        if (canvas == null || sigma < .25f) {
+            renderQplayerColumn(lyric, index, progress, alpha, 0f,
+                    viewport.left, viewport.width, viewport.top, viewport.bottom(), anchorY);
+            return;
+        }
+        float pad = sigma * 3 + 8;
+        double y = lyric.posY + scrollOffset;
+        var area = LyricBlurClip.layer(viewport.left, viewport.top, viewport.left + viewport.width,
+                viewport.bottom(), y, y + lyric.height, pad);
+        if (area == null) return;
+        try (var paint = new io.github.humbleui.skija.Paint()) {
+            paint.setImageFilter(edgeBlurFilter(sigma));
+            int saved = canvas.saveLayer(area, paint);
             try {
-                for (int k = renderStart; k < renderEnd; k++) {
-                    LyricLine lyric = lines.get(k);
-                    if (lyric == null || lyric.isBreakLine) continue;
-                    double rowTop = lyric.posY + scrollOffset;
-                    if (rowTop + lyric.height < viewportTop - 32.0) continue;
-                    if (rowTop > viewportBottom + 32.0) continue;
-                    renderQplayerColumn(lyric, k, songProgress, rowAlpha, inkFloor, viewportLeft,
-                            viewportWidth, viewportTop, viewportBottom, anchorY);
-                }
+                renderQplayerColumn(lyric, index, progress, alpha, .22f + .07f * blur,
+                        viewport.left, viewport.width, viewport.top, viewport.bottom(), anchorY);
             } finally {
-                if (inner != wrapper && inner >= 0) canvas.restoreToCount(inner);
+                canvas.restoreToCount(saved);
             }
-
-            if (wrapper >= 0) {
-                float[][] mask = edgeBlurTierMask(tier, columnTop, columnBottom);
-                int stopCount = mask[0].length;
-                float[] stops = mask[0];
-                int[] colors = new int[stopCount];
-                for (int i = 0; i < stopCount; i++) {
-                    colors[i] = ((int) (Math.max(0f, Math.min(1f, mask[1][i])) * 255f) << 24)
-                            | 0x00FFFFFF;
-                }
-                try (io.github.humbleui.skija.Shader band = io.github.humbleui.skija.Shader.makeLinearGradient(
-                        0f, (float) columnTop, 0f, (float) columnBottom, colors, stops)) {
-                    io.github.humbleui.skija.Paint maskPaint = SkijaGfx.fillShader(band);
-                    maskPaint.setBlendMode(io.github.humbleui.skija.BlendMode.DST_IN);
-                    canvas.drawRect(column, maskPaint);
-                    maskPaint.setShader(null);
-                    maskPaint.setBlendMode(SkijaGfx.blendMode());
-                }
-            }
-        } finally {
-            if (filterPaint != null) filterPaint.close();
-            // 包裹层在这里合成进主画布；蒙版已经吃过，出来的就是带缘渐变的整列。
-            canvas.restoreToCount(depth);
         }
     }
 
-    /** sigma → 模糊滤镜缓存。与 {@code SkijaGfx} 的 MaskFilter 缓存同一套口径。 */
     private static final java.util.Map<Integer, io.github.humbleui.skija.ImageFilter> EDGE_BLUR_FILTERS =
             new java.util.HashMap<>();
 
     private static io.github.humbleui.skija.ImageFilter edgeBlurFilter(float sigma) {
-        int key = Math.max(1, Math.round(sigma * 16f));
+        int key = Math.round(sigma * 4f);
         return EDGE_BLUR_FILTERS.computeIfAbsent(key, k ->
-                io.github.humbleui.skija.ImageFilter.makeBlur(k / 16f, k / 16f,
+                io.github.humbleui.skija.ImageFilter.makeBlur(k / 4f, k / 4f,
                         io.github.humbleui.skija.FilterTileMode.DECAL));
-    }
-
-    /**
-     * 第 {@code tier} 级蒙版在「离清晰带边缘距离 d（按 R 归一）」处的保持度。
-     * 相邻级共用同一对交叉端点，一降一升严格互补，全级合计恒为 1：
-     * <pre>
-     *   tier0（清晰）：d≤0 恒 1，[0, F] 线性降到 0
-     *   tier t（1..N）：[起点, 起点+F] 线性升到 1，保持到下一级起点，
-     *                  再在 [下降起点, +F] 线性降回 0（最后一级不降）
-     * </pre>
-     * 其中第 t 级起点 = (t-1)×STEP，交叉宽度 = FADE。
-     */
-    private static float edgeBlurTierMaskAt(int tier, double d) {
-        if (tier <= 0) {
-            return d <= 0 ? 1f : (float) Math.max(0.0, 1.0 - d / QPLAYER_EDGE_BLUR_TIER_FADE);
-        }
-        int levels = QPLAYER_EDGE_BLUR_TIER_SIGMA_SCALE.length;
-        double riseStart = (tier - 1) * QPLAYER_EDGE_BLUR_TIER_STEP;
-        double riseEnd = riseStart + QPLAYER_EDGE_BLUR_TIER_FADE;
-        double fallStart = tier * QPLAYER_EDGE_BLUR_TIER_STEP;
-        double fallEnd = fallStart + QPLAYER_EDGE_BLUR_TIER_FADE;
-        if (d < riseStart) return 0f;
-        if (d < riseEnd) return (float) ((d - riseStart) / (riseEnd - riseStart));
-        if (tier >= levels || d < fallStart) return 1f;
-        if (d < fallEnd) return (float) (1.0 - (d - fallStart) / (fallEnd - fallStart));
-        return 0f;
-    }
-
-    /**
-     * 构建第 {@code tier} 级的垂直渐变蒙版：返回 {停靠点[], 保持度[]}。
-     * 停靠点取「列两端 + 清晰带两缘 + 每级交叉区间的全部端点」，逐点求值；
-     * 蒙版对 d 分段线性，所以相邻停点间的线性插值精确还原函数本身。
-     */
-    private static float[][] edgeBlurTierMask(int tier, double columnTop, double columnBottom) {
-        double bandTop = edgeBlurBandViewTop;
-        double bandBottom = edgeBlurBandViewBottom;
-        double r = Math.max(1.0, edgeBlurRampPx);
-        int levels = QPLAYER_EDGE_BLUR_TIER_SIGMA_SCALE.length;
-
-        // d 采样集合：0 与每级交叉区间端点（升序去重）。
-        java.util.TreeSet<Double> samples = new java.util.TreeSet<>();
-        samples.add(0.0);
-        for (int i = 0; i < levels; i++) {
-            samples.add(i * QPLAYER_EDGE_BLUR_TIER_STEP);
-            samples.add(i * QPLAYER_EDGE_BLUR_TIER_STEP + QPLAYER_EDGE_BLUR_TIER_FADE);
-        }
-
-        // (y, d) 候选点：上下两侧各采样一遍，外加列两端。
-        java.util.TreeMap<Double, Double> points = new java.util.TreeMap<>();
-        points.put(columnTop, (bandTop - columnTop) / r);
-        points.put(columnBottom, (columnBottom - bandBottom) / r);
-        for (double d : samples) {
-            points.put(bandTop - d * r, d);
-            points.put(bandBottom + d * r, d);
-        }
-
-        int count = points.size();
-        float[] stops = new float[count];
-        float[] alphas = new float[count];
-        double span = Math.max(1.0, columnBottom - columnTop);
-        int i = 0;
-        double prevY = Double.NEGATIVE_INFINITY;
-        for (java.util.Map.Entry<Double, Double> e : points.entrySet()) {
-            double y = e.getKey();
-            double d = e.getValue();
-            // 停靠点必须严格递增：几何上不同 y 不会重合，但浮点抖动要兜住。
-            if (y <= prevY) y = prevY + 1e-4;
-            prevY = y;
-            stops[i] = (float) Math.max(0f, Math.min(1f, (y - columnTop) / span));
-            alphas[i] = edgeBlurTierMaskAt(tier, d);
-            i++;
-        }
-        // 钳到 [0,1] 后仍可能首尾越界（列端在带外侧很远时 d 已到平台区，没问题；
-        // 但 stop 越界会被 Skija 拒绝），统一夹一遍。
-        for (int j = 1; j < count; j++) {
-            if (stops[j] <= stops[j - 1]) stops[j] = Math.min(1f, stops[j - 1] + 1e-4f);
-        }
-        return new float[][]{stops, alphas};
-    }
-
-    /** 本帧清晰带目标 → 指数平滑进视图带（qplayer 同款 TAU，dt 上限 0.05s）。 */
-    private static void edgeBlurUpdateBand(double anchorY, double viewportHeight) {
-        double targetTop, targetBottom;
-        if (edgeBlurLitAny) {
-            targetTop = edgeBlurLitTop;
-            targetBottom = edgeBlurLitBottom;
-        } else {
-            double center = anchorY;
-            double half = Math.max(24.0, viewportHeight * QPLAYER_EDGE_BLUR_BAND_HALF);
-            targetTop = center - half;
-            targetBottom = center + half;
-        }
-        long now = System.nanoTime();
-        double dt = edgeBlurBandLastNanos == 0L ? 0.0
-                : Math.min(0.05, (now - edgeBlurBandLastNanos) / 1.0e9);
-        edgeBlurBandLastNanos = now;
-        if (Double.isNaN(edgeBlurBandViewTop) || Double.isNaN(edgeBlurBandViewBottom)
-                || dt <= 0.0) {
-            edgeBlurBandViewTop = targetTop;
-            edgeBlurBandViewBottom = targetBottom;
-            return;
-        }
-        double blend = 1.0 - Math.exp(-dt / QPLAYER_EDGE_BLUR_BAND_TAU);
-        edgeBlurBandViewTop += (targetTop - edgeBlurBandViewTop) * blend;
-        edgeBlurBandViewBottom += (targetBottom - edgeBlurBandViewBottom) * blend;
     }
 
     /**
@@ -2294,13 +2181,16 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         // 两套参数各存各的，随时可以来回切。
         int kind = com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions.currentKind();
         boolean rendered;
-        if (!com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions.isQPlayer(kind)) {
+        if (kind == 1) {
+            rendered = coverBackdrop.render(posX, posY, width, height, alpha, snapshot,
+                    HudConfig.fullscreenLyricFluidStatic);
+        } else if (!com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions.isQPlayer(kind)) {
             rendered = foliaBackground.render(posX, posY, width, height, alpha, current);
         } else if (current == null) {
             rendered = false;
         } else {
             int previous = HudConfig.fullscreenLyricBackgroundMode;
-            HudConfig.fullscreenLyricBackgroundMode = kind == 1 ? 1 : 0;
+            HudConfig.fullscreenLyricBackgroundMode = 0;
             try {
                 rendered = fluidLyricBackground.render(posX, posY, width, height, alpha, current);
             } finally {

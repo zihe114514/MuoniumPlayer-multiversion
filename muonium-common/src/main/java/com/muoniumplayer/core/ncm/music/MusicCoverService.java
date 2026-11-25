@@ -683,6 +683,9 @@ final class MusicCoverService {
             CoverGradientColors.set(representatives);
         }
         Textures.loadTexture(musicCover, coverImage);
+        if (music != null) {
+            com.muoniumplayer.core.screens.ncm.CoverBackdropArtwork.publish(music.getStableKey(), coverImage);
+        }
         // 低优先级池：31 半径的高斯模糊是纯 CPU 卷积，一张 320×320 的封面就能吃满一个核几十毫秒。
         BackgroundWork.submit(() -> Textures.loadTexture(musicCoverBlur, blurCover(coverImage)));
     }
