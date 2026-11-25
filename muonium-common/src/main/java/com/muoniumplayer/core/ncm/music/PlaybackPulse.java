@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.automix.analysis.AutomixAnalyzer;
+
 import repackage.processing.sound.Amplitude;
 import repackage.processing.sound.SoundFile;
 

@@ -7,7 +7,7 @@ import com.muoniumplayer.core.management.FontAssetDownload;
 import com.muoniumplayer.core.audio.ffmpeg.FfmpegNativeAssets;
 import com.muoniumplayer.core.audio.ffmpeg.FfmpegRuntime;
 import com.muoniumplayer.core.ncm.lxsource.ClosureCompilerDownload;
-import com.muoniumplayer.core.ncm.music.FoliaModelManager;
+import com.muoniumplayer.automix.model.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.QishuiCompanionDownload;
 import com.muoniumplayer.core.ncm.music.ZstdNativeDownload;
 import com.muoniumplayer.core.settings.ConfigPaths;

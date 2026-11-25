@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.testsupport.AutomixSources;
+
 import com.muoniumplayer.testsupport.ProjectPaths;
 import org.junit.jupiter.api.Test;
 
@@ -182,8 +184,7 @@ class FocusVolumeDuckerTest {
     }
 
     private static String source(String file) throws Exception {
-        return Files.readString(ProjectPaths.sourceFile(Paths.get(
-                "com", "muoniumplayer", "core", "ncm", "music", file)));
+        return Files.readString(AutomixSources.music(file));
     }
 
     /** 某个成员的方法体，按签名定位、按配对的花括号截断。 */

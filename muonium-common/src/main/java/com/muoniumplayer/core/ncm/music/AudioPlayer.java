@@ -1,5 +1,10 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.automix.inference.FoliaStemProfile;
+
+import com.muoniumplayer.automix.config.AutomixSettings;
+import com.muoniumplayer.automix.playback.FoliaVocalStem;
+
 import lombok.Getter;
 import lombok.SneakyThrows;
 import repackage.com.jsyn.devices.AudioDeviceFactory;

@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.testsupport.AutomixSources;
+
 import com.muoniumplayer.core.ncm.music.dto.Album;
 import com.muoniumplayer.core.ncm.music.dto.Artist;
 import com.muoniumplayer.core.ncm.music.dto.Music;
@@ -180,8 +182,7 @@ class SearchQueueContinuationTest {
     }
 
     private static Path music(String name) {
-        return ProjectPaths.sourceFile(Paths.get(
-                "com", "muoniumplayer", "core", "ncm", "music", name));
+        return AutomixSources.music(name);
     }
 
     private static String read(Path path) throws IOException {

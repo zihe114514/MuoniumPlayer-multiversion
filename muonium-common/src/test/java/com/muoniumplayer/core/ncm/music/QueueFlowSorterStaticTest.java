@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.testsupport.AutomixSources;
+
 import com.muoniumplayer.testsupport.ProjectPaths;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -115,7 +117,7 @@ class QueueFlowSorterStaticTest {
     }
 
     private static Path music(String name) {
-        return ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "ncm", "music", name));
+        return AutomixSources.music(name);
     }
 
     private static Path screens(String... parts) {

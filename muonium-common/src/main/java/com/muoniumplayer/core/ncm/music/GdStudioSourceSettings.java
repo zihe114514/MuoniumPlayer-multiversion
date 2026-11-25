@@ -2,7 +2,6 @@ package com.muoniumplayer.core.ncm.music;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.settings.JsonConfigStorage;
 

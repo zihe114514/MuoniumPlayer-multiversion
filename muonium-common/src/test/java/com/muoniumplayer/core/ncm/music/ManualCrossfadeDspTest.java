@@ -1,5 +1,8 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.automix.config.AutomixSettings;
+import com.muoniumplayer.automix.planning.AutomixPlan;
+
 import org.junit.jupiter.api.Test;
 import repackage.com.jsyn.unitgen.VocalDuckFilter;
 

@@ -64,6 +64,18 @@ class KuGouFeatureStaticTest {
     }
 
     @Test
+    @DisplayName("概念版免费听使用概念版 endpoint、签名身份和嵌套 audio_info")
+    void conceptFreeListenUsesConceptIdentity() throws Exception {
+        String api = read("KuGouMusicApi.java");
+        assertTrue(api.contains("/concepts/v1/ai/recommend_song"), "免费听 endpoint");
+        assertTrue(api.contains("KuGouProfile.CONCEPT"), "必须固定概念版签名身份");
+        assertTrue(api.contains("parseAudioInfoTrack"), "免费听返回的 audio_info 需要复用解析器");
+        String http = read("KuGouHttp.java");
+        assertTrue(http.contains("KuGouProfile profile"),
+                "HTTP 层需要允许调用方显式指定签名身份");
+    }
+
+    @Test
     @DisplayName("CSCC：sty 只能是「手动」，auto 会被拒")
     void csccStyleMustBeManual() throws Exception {
         String reporter = read("KuGouCsccReporter.java");

@@ -2,10 +2,10 @@ package com.muoniumplayer.party;
 
 import com.google.gson.JsonObject;
 import com.muoniumplayer.core.ncm.music.AudioPlayer;
-import com.muoniumplayer.core.ncm.music.AutomixSettings;
+import com.muoniumplayer.automix.config.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
-import com.muoniumplayer.core.ncm.music.FoliaModelManager;
-import com.muoniumplayer.core.ncm.music.RoomAutomix;
+import com.muoniumplayer.automix.model.FoliaModelManager;
+import com.muoniumplayer.automix.playback.RoomAutomix;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 

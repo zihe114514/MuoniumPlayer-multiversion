@@ -61,6 +61,19 @@ class PlaylistImportStaticTest {
     }
 
     @Test
+    @DisplayName("酷狗扩展分享形态识别：collection、移动端 songlist 和短链")
+    void detectsExtendedKugouShareShapes() {
+        assertEquals(MusicPlatform.KUGOU,
+                PlaylistImportService.detect(
+                        "https://www.kugou.com/yy/special/single/546903.html?global_collection_id=collection_3_1_2_0")
+                        .platform);
+        assertEquals(MusicPlatform.KUGOU,
+                PlaylistImportService.detect("https://m.kugou.com/songlist/gcid_zyIxYzJm/").platform);
+        assertEquals(MusicPlatform.KUGOU,
+                PlaylistImportService.detect("https://t1.kugou.com/short-share-code").platform);
+    }
+
+    @Test
     @DisplayName("YouTube 明确拒绝，而不是误判成别的平台")
     void youtubeIsRejected() {
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,

@@ -2,7 +2,6 @@ package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.api.features.ExtensionScreen;
 import com.muoniumplayer.core.interfaces.SharedConstants;
-import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;

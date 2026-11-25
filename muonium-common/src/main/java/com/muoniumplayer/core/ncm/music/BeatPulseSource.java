@@ -1,5 +1,11 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.automix.model.FoliaModelManager;
+
+import com.muoniumplayer.automix.analysis.FoliaTrackProfile;
+import com.muoniumplayer.automix.analysis.FoliaTrackProfiler;
+import com.muoniumplayer.automix.config.AutomixSettings;
+
 import com.muoniumplayer.core.utils.other.multithreading.BackgroundWork;
 
 import java.util.concurrent.CompletableFuture;

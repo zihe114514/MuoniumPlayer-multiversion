@@ -196,7 +196,20 @@ public final class KuGouHttp {
      */
     public static JsonObject postJson(String baseUrl, String path, Map<String, String> params, String body,
                                       Sign sign, Map<String, String> extraHeaders) {
-        Map<String, String> signed = signIfNeeded(params, sign, body);
+        return postJson(baseUrl, path, params, body, sign, extraHeaders, KuGouProfile.active());
+    }
+
+    /**
+     * POST JSON with an explicit client identity.
+     *
+     * <p>Most calls follow the identity stored with the current credential. A small number of
+     * anonymous concept-edition endpoints still require the concept app id and salt even when
+     * the user has not logged in as concept, so those callers must not silently sign with the
+     * standard profile.</p>
+     */
+    static JsonObject postJson(String baseUrl, String path, Map<String, String> params, String body,
+                               Sign sign, Map<String, String> extraHeaders, KuGouProfile profile) {
+        Map<String, String> signed = signIfNeeded(params, sign, body, profile);
         String url = baseUrl + path + "?" + query(signed);
         Map<String, String> headers = headers(signed, extraHeaders);
         headers.put("Content-Type", "application/json");
@@ -271,10 +284,19 @@ public final class KuGouHttp {
     }
 
     private static Map<String, String> signIfNeeded(Map<String, String> params, Sign sign, String body) {
+        return signIfNeeded(params, sign, body, KuGouProfile.active());
+    }
+
+    private static Map<String, String> signIfNeeded(Map<String, String> params, Sign sign, String body,
+                                                    KuGouProfile profile) {
         Map<String, String> copy = params == null ? params() : new LinkedHashMap<String, String>(params);
         if (sign == Sign.ANDROID) {
             // 跟随当前身份：概念版是另一把盐值，与 appid 必须成套。
-            copy.put("signature", KuGouSign.android(copy, body, KuGouProfile.active()));
+            if (profile == null || profile == KuGouProfile.active()) {
+                copy.put("signature", KuGouSign.android(copy, body, KuGouProfile.active()));
+            } else {
+                copy.put("signature", KuGouSign.android(copy, body, profile));
+            }
         } else if (sign == Sign.WEB) {
             copy.put("signature", KuGouSign.web(copy, body));
         } else if (sign == Sign.REGISTER) {

@@ -54,6 +54,7 @@ public final class PlaylistImportService {
             "(?:disstid|tid|id)=(\\d{5,})");
     private static final Pattern KUGOU_SPECIAL = Pattern.compile("special/single/(\\d+)");
     private static final Pattern KUGOU_SONGLIST = Pattern.compile("songlist/(gcid_[A-Za-z0-9]+)");
+    private static final Pattern KUGOU_COLLECTION = Pattern.compile("(?:global_collection_id|global_specialid)=(collection_[A-Za-z0-9_]+)");
     private static final Pattern BV_ID = Pattern.compile("(BV[0-9A-Za-z]{5,})");
     private static final Pattern AV_ID = Pattern.compile("av(\\d{2,})");
     private static final Pattern DIGITS = Pattern.compile("\\d{6,}");
@@ -358,11 +359,20 @@ public final class PlaylistImportService {
 
     private static PlayList importKugou(String text) {
         String normalized = text.trim();
+        String resolved = followKugouRedirect(normalized);
+        if (!resolved.isEmpty()) normalized = resolved;
         String id;
         String platformId;
+        String collection = firstGroup(normalized, KUGOU_COLLECTION);
+        if (collection == null) {
+            collection = firstGroup(normalized, Pattern.compile("(?:^|[^A-Za-z0-9_])(collection_[A-Za-z0-9_]+)"));
+        }
         Matcher songlist = KUGOU_SONGLIST.matcher(normalized);
         Matcher special = KUGOU_SPECIAL.matcher(normalized);
-        if (songlist.find()) {
+        if (collection != null) {
+            id = collection;
+            platformId = "collection:" + collection;
+        } else if (songlist.find()) {
             id = songlist.group(1);
             // 非数字的 gcid_ 是云端歌单主键，取曲目端点不同——前缀协议见 KuGouMusicService 类注释。
             platformId = "collection:" + id;
@@ -373,7 +383,10 @@ public final class PlaylistImportService {
             id = normalized;
             platformId = normalized;
         } else {
-            throw new IllegalArgumentException("没识别出酷狗歌单，请粘贴 special/single 或 songlist 链接");
+            String html = fetchKugouPage(normalized);
+            PlayList parsed = parseKugouSharePage(html);
+            if (parsed != null) return parsed;
+            throw new IllegalArgumentException("没识别出酷狗歌单，请粘贴 special/single、songlist 或 collection 链接");
         }
 
         String title = "";
@@ -399,6 +412,112 @@ public final class PlaylistImportService {
         result.setPlatform(MusicPlatform.KUGOU);
         result.setPlatformPlaylistId(platformId);
         return result;
+    }
+
+    /** 只跟一跳酷狗短链，避免把导入变成任意 URL 抓取器。 */
+    private static String followKugouRedirect(String text) {
+        String link = firstLink(text);
+        if (link.isEmpty() || !link.toLowerCase(Locale.ROOT).contains("t1.kugou.com")) return link;
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(link))
+                    .timeout(Duration.ofMillis(8_000))
+                    .header("User-Agent", MOBILE_USER_AGENT)
+                    .GET()
+                    .build();
+            HttpResponse<Void> response = HTTP.send(request, HttpResponse.BodyHandlers.discarding());
+            String location = response.headers().firstValue("location").orElse("");
+            return location.trim();
+        } catch (Throwable ignored) {
+            return link;
+        }
+    }
+
+    private static String fetchKugouPage(String text) {
+        String link = firstLink(text);
+        if (link.isEmpty() || !link.toLowerCase(Locale.ROOT).contains("kugou.com")) return "";
+        try {
+            String url = link;
+            if (url.contains("m.kugou.com/songlist/")) {
+                url = url.replaceFirst("^http://", "https://")
+                        .replace("://m.kugou.com/", "://m3ws.kugou.com/");
+            }
+            return get(url, MOBILE_USER_AGENT, null);
+        } catch (Throwable error) {
+            System.err.println("[Music/Import] KuGou share page failed: " + message(error));
+            return "";
+        }
+    }
+
+    /** 解析酷狗移动端 SSR 或 PC 分享页，只保存曲目引用所需的歌单主键。 */
+    private static PlayList parseKugouSharePage(String html) {
+        if (html == null || html.trim().isEmpty()) return null;
+        JsonObject output = null;
+        Matcher ssr = Pattern.compile("window\\.\\$output\\s*=\\s*(\\{[\\s\\S]*?\\});\\s*</script>").matcher(html);
+        if (ssr.find()) output = asObject(ssr.group(1));
+        if (output != null) {
+            JsonObject info = asObject(output.get("info"));
+            JsonObject list = info == null ? null : asObject(info.get("listinfo"));
+            if (list != null) {
+                String gid = text(list, "global_collection_id");
+                if (gid.startsWith("collection_")) {
+                    return kugouReference("collection:" + gid, text(list, "name"),
+                            text(list, "pic").replace("{size}", "300"), intOf(list, "song_count", "songnum"));
+                }
+                String specialId = firstText(list, "specialid", "special_id");
+                if (!specialId.isEmpty()) {
+                    return kugouReference(specialId, text(list, "name"),
+                            text(list, "pic").replace("{size}", "300"), intOf(list, "song_count", "songnum"));
+                }
+            }
+        }
+
+        Matcher smarty = Pattern.compile("var\\s+dataFromSmarty\\s*=\\s*(\\[[\\s\\S]*?\\])\\s*[,;]").matcher(html);
+        if (smarty.find()) {
+            try {
+                JsonElement parsed = JsonParser.parseString(smarty.group(1));
+                if (parsed.isJsonArray() && parsed.getAsJsonArray().size() > 0) {
+                    JsonObject firstItem = parsed.getAsJsonArray().get(0).isJsonObject()
+                            ? parsed.getAsJsonArray().get(0).getAsJsonObject() : null;
+                    String first = firstText(firstItem, "global_collection_id", "global_specialid");
+                    if (first.startsWith("collection_")) {
+                        return kugouReference("collection:" + first, "酷狗分享歌单", "", parsed.getAsJsonArray().size());
+                    }
+                    String specialId = firstText(firstItem, "specialid", "special_id", "listid");
+                    if (!specialId.isEmpty()) {
+                        return kugouReference(specialId, "酷狗分享歌单", "", parsed.getAsJsonArray().size());
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+
+        Matcher collection = Pattern.compile("(?:global_collection_id|global_specialid)\\s*[=:]\\s*[\\\"'](collection_[A-Za-z0-9_]+)").matcher(html);
+        if (collection.find()) return kugouReference("collection:" + collection.group(1), "酷狗分享歌单", "", 0);
+        Matcher special = Pattern.compile("(?:specialid|special_id)\\s*[=:]\\s*[\\\"'](\\d{4,})").matcher(html);
+        if (special.find()) return kugouReference(special.group(1), "酷狗分享歌单", "", 0);
+        return null;
+    }
+
+    private static PlayList kugouReference(String platformId, String title, String cover, int count) {
+        String normalizedId = platformId == null ? "" : platformId.trim();
+        if (normalizedId.isEmpty()) {
+            return null;
+        }
+        PlayList result = new PlayList(stableLong("kugou:playlist:" + normalizedId),
+                title == null || title.trim().isEmpty() ? "酷狗分享歌单" : title.trim(),
+                cover == null ? "" : cover.trim(), Math.max(0, count), 0L, null, "", 0L);
+        result.setPlatform(MusicPlatform.KUGOU);
+        result.setPlatformPlaylistId(normalizedId);
+        return result;
+    }
+
+    private static String firstText(JsonObject object, String... keys) {
+        if (object == null || keys == null) return "";
+        for (String key : keys) {
+            String value = text(object, key);
+            if (!value.isEmpty()) return value;
+        }
+        return "";
     }
 
     // ════════════════════════════ 哔哩哔哩 ════════════════════════════

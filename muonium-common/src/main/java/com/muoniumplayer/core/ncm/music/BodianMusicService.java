@@ -8,7 +8,6 @@ import com.muoniumplayer.core.music.source.QrCode;
 import com.muoniumplayer.core.music.source.QrLoginState;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
-import com.muoniumplayer.core.ncm.music.Quality;
 
 import java.net.URI;
 import java.net.URLEncoder;

@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.screens.ncm;
 
+import com.muoniumplayer.automix.ui.AutomixCuePainter;
+
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.core.input.TouchGestures;
@@ -10,7 +12,7 @@ import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.AudioPlayer;
-import com.muoniumplayer.core.ncm.music.AutomixCueMarker;
+import com.muoniumplayer.automix.ui.AutomixCueMarker;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.PlaybackPresentation;
 import com.muoniumplayer.core.ncm.music.dto.Music;

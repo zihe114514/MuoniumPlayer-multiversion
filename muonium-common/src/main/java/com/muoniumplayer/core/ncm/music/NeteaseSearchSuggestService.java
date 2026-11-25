@@ -5,7 +5,6 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.core.ncm.RequestUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
-import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
 import java.util.ArrayList;

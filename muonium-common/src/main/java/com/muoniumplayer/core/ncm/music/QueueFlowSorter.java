@@ -1,5 +1,10 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.automix.analysis.AutomixEnvelope;
+import com.muoniumplayer.automix.analysis.FoliaTrackProfiler;
+import com.muoniumplayer.automix.config.AutomixSettings;
+import com.muoniumplayer.automix.planning.AutomixFlowPlanner;
+
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.utils.other.multithreading.BackgroundWork;
 

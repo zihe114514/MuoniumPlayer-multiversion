@@ -1,5 +1,11 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.automix.model.FoliaModelManager;
+
+import com.muoniumplayer.automix.analysis.FoliaTrackProfile;
+import com.muoniumplayer.automix.analysis.FoliaTrackProfiler;
+import com.muoniumplayer.automix.config.AutomixSettings;
+
 /**
  * 「卡点运镜」的节拍门面：把仓库已有的三级节拍链整理成调度器要的<b>网格级</b>视图。
  *

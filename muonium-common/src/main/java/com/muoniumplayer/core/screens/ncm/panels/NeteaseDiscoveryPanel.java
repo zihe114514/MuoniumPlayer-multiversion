@@ -41,7 +41,8 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         HOT_SEARCH("热搜", "网易云实时热搜"),
         DIGITAL_ALBUMS("我的数字专辑", "已购买的数字专辑"),
         TOP_LISTS("排行榜", "网易云音乐榜单"),
-        RECENT_SONGS("最近播放", "最近播放的歌曲");
+        RECENT_SONGS("最近播放", "最近播放的歌曲"),
+        FREE_LISTEN("免费听", "酷狗概念版免费推荐流");
 
         final String title;
         final String subtitle;
@@ -621,6 +622,19 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
             });
             return;
         }
+        if (page == Page.FREE_LISTEN) {
+            NCMPanel target = loadKuGouFreeListenPanel();
+            MultiThreadingUtil.runOnMainThread(() -> {
+                loading = false;
+                if (target == null) {
+                    status = "酷狗概念版免费听暂无内容";
+                    renderLayout();
+                } else {
+                    NCMScreen.getInstance().replaceCurrentPanel(target);
+                }
+            });
+            return;
+        }
 
         List<String> keywords = KuGouMusicService.hotSearch();
         List<Entry> hot = new ArrayList<>();
@@ -673,6 +687,13 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         return buildSongsPanel(songs, false);
     }
 
+    /** 酷狗概念版免费听：只构造现有歌曲列表页，播放与缓存仍走统一链路。 */
+    public static NCMPanel loadKuGouFreeListenPanel() {
+        List<Music> songs = KuGouMusicService.conceptFreeListen(1, 30);
+        if (songs.isEmpty()) return null;
+        return buildSongsPanel(songs, false);
+    }
+
     private String pageTitle() {
         if (platform == MusicPlatform.QQ && page == Page.TOP_LISTS) return "QQ 音乐排行榜";
         if (platform == MusicPlatform.QQ && page == Page.HOT_SEARCH) return "QQ 音乐热搜";
@@ -682,6 +703,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
                 case HOT_SEARCH: return "酷狗热搜";
                 case RECENT_SONGS: return "酷狗最近播放";
                 case DIGITAL_ALBUMS: return "酷狗每日推荐";
+                case FREE_LISTEN: return "酷狗免费听";
                 default: break;
             }
             return page.title;
@@ -698,6 +720,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
                 case HOT_SEARCH: return "酷狗实时热搜 · 点击直接搜索";
                 case RECENT_SONGS: return "酷狗听歌历史 · 需要登录";
                 case DIGITAL_ALBUMS: return "酷狗每日推荐 · 每天更新";
+                case FREE_LISTEN: return "概念版免费听推荐流 · 匿名可用";
                 default: break;
             }
             return page.subtitle;

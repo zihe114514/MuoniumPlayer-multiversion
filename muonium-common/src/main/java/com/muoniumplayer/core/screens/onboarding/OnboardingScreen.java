@@ -20,7 +20,7 @@ import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
 import com.muoniumplayer.core.screens.onboarding.steps.AccountStep;
 import com.muoniumplayer.core.screens.onboarding.steps.AppearanceStep;
-import com.muoniumplayer.core.screens.onboarding.steps.AutomixModelStep;
+import com.muoniumplayer.automix.ui.AutomixModelStep;
 import com.muoniumplayer.core.screens.onboarding.steps.FinishStep;
 import com.muoniumplayer.core.screens.onboarding.steps.SourceStep;
 import com.muoniumplayer.core.screens.onboarding.steps.WelcomeStep;

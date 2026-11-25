@@ -594,6 +594,45 @@ public final class KuGouMusicApi {
     }
 
     /**
+     * 酷狗概念版「免费听」推荐流。
+     *
+     * <p>该端点属于概念版客户端的 {@code concepts/v1} 网关，即使当前没有概念版凭证也要
+     * 用概念版 appid、clientver 和 Android 盐签名。已登录概念版时才附带对应 token；标准版
+     * token 不能混进这条请求，否则会出现签名可计算但接口静默不给数据的身份错位。</p>
+     *
+     * <p>上游返回的曲目放在 {@code data.list}，歌曲元数据又嵌在 {@code audio_info} 内，
+     * 与普通每日推荐的扁平结构不同，因此这里保留独立入口，仍复用 {@link Track} 模型。</p>
+     */
+    public static List<Track> conceptFreeListen(int page, int limit) {
+        List<Track> result = new ArrayList<Track>();
+        int safePage = Math.max(1, page);
+        int pageSize = clampPageSize(limit);
+
+        JsonObject body = new JsonObject();
+        body.addProperty("apiver", 2);
+        body.addProperty("source", 2);
+        body.addProperty("pagesize", pageSize);
+        body.addProperty("page", safePage);
+
+        Map<String, String> params = conceptDeviceParams();
+        JsonObject root = KuGouHttp.postJson(KuGouHttp.GATEWAY, "/concepts/v1/ai/recommend_song",
+                params, body.toString(), KuGouHttp.Sign.ANDROID, null, KuGouProfile.CONCEPT);
+        if (!isOk(root)) return result;
+
+        JsonArray list = array(object(root, "data"), "list", "songs", "info");
+        if (list == null) return result;
+        for (JsonElement element : list) {
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject item = element.getAsJsonObject();
+            Track track = parseAudioInfoTrack(item);
+            if (track == null) track = parseLayeredTrack(item);
+            if (track == null) track = parseFlatTrack(item);
+            if (track != null) result.add(track);
+        }
+        return result;
+    }
+
+    /**
      * 热搜榜。
      *
      * <p>{@code navid=1} 是「热搜榜」这个导航项，其它取值对应别的榜单（例如歌手榜）。
@@ -3079,7 +3118,8 @@ public final class KuGouMusicApi {
             track.hash = KuGouSign.lower(firstText(audio, "hash", "hash_128"));
             track.hash320 = KuGouSign.lower(text(audio, "hash_320"));
             track.hashLossless = KuGouSign.lower(firstText(audio, "hash_flac", "hash_super"));
-            track.durationMillis = normalizedDuration(audio, "duration", "duration_128");
+            track.durationMillis = normalizedDuration(audio, "duration", "duration_128", "timelength", "timelen");
+            if (track.privilege == 0) track.privilege = firstPrivilege(audio, "privilege", "pay_type");
         }
         JsonObject album = object(item, "album_info");
         if (album != null) {
@@ -3087,6 +3127,9 @@ public final class KuGouMusicApi {
             track.coverTemplate = firstText(album, "sizable_cover", "cover");
         }
         track.privilege = privilegeFromDownload(item);
+        if (track.privilege == 0 && audio != null) {
+            track.privilege = firstPrivilege(audio, "privilege", "pay_type");
+        }
         track.vip = track.privilege == 10;
         if (KuGouSign.isBlank(track.hash)) return null;
         return KuGouSign.isBlank(track.name) ? null : track;
@@ -3418,6 +3461,22 @@ public final class KuGouMusicApi {
 
     private static int clampPageSize(int limit) {
         return Math.max(1, Math.min(MAX_PAGE_SIZE, limit <= 0 ? 30 : limit));
+    }
+
+    /** 概念版免费听使用概念版签名；只有概念版凭证才把登录态附到请求里。 */
+    private static Map<String, String> conceptDeviceParams() {
+        Map<String, String> params = KuGouHttp.params();
+        params.put("dfid", KuGouDevice.dfid());
+        params.put("mid", KuGouDevice.mid());
+        params.put("uuid", "-");
+        params.put("appid", KuGouProfile.CONCEPT.appId());
+        params.put("clientver", KuGouProfile.CONCEPT.clientVer());
+        params.put("clienttime", String.valueOf(System.currentTimeMillis() / 1000L));
+        if (KuGouProfile.active() == KuGouProfile.CONCEPT && KuGouDevice.isLoggedIn()) {
+            params.put("token", KuGouDevice.token());
+            params.put("userid", KuGouDevice.userId());
+        }
+        return params;
     }
 
     private static String firstUrl(JsonArray urls) {

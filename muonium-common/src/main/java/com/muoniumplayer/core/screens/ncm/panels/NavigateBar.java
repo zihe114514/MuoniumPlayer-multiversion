@@ -19,7 +19,6 @@ import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
 import com.muoniumplayer.core.ncm.music.PlaylistRefreshResult;
-import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.ImportedPlaylistStore;
 import com.muoniumplayer.core.ncm.music.LocalPlaylistStore;
 import com.muoniumplayer.core.update.AnnouncementChecker;
@@ -1072,6 +1071,10 @@ public class NavigateBar extends NCMPanel {
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "每日推荐", () -> NCMScreen.getInstance()
                         .navigateAsync("每日推荐", NeteaseDiscoveryPanel::loadKuGouDailyPanel)));
+                this.addSidebarRow("nav:free-listen", new PlaylistItem("免", FontManager.pf12bold,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                        () -> "免费听", () -> NCMScreen.getInstance().navigateAsync(
+                        "酷狗免费听", NeteaseDiscoveryPanel::loadKuGouFreeListenPanel)));
                 this.addSidebarRow("nav:fm", new PlaylistItem(MusicBrandIcons.PERSONAL_FM, FontManager.musicBrand16,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
                         () -> "私人 FM", () -> NCMScreen.getInstance().setCurrentPanel(new PersonalFmPanel())));

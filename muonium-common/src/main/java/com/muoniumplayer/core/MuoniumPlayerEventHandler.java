@@ -11,7 +11,7 @@ import org.apache.commons.lang3.Validate;
 import com.muoniumplayer.core.utils.logging.Logger;
 import com.muoniumplayer.api.events.EventRender2D;
 import com.muoniumplayer.api.interfaces.EventHandler;
-import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
+import com.muoniumplayer.automix.ui.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.MusicSpectrumRenderer;
 import com.muoniumplayer.render.skija.SkijaHost;

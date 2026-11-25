@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.testsupport.AutomixSources;
+
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.testsupport.ProjectPaths;
 import org.junit.jupiter.api.DisplayName;
@@ -145,7 +147,7 @@ class YouTubePrefetchStaticTest {
     }
 
     private static Path music(String file) {
-        return ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "ncm", "music", file));
+        return AutomixSources.music(file);
     }
 
     private static String read(Path path) throws IOException {

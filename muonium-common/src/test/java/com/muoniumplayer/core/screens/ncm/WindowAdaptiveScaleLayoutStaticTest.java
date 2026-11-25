@@ -86,8 +86,7 @@ class WindowAdaptiveScaleLayoutStaticTest {
                 "com", "muoniumplayer", "core", "rendering", "MusicSpectrumRenderer.java")));
         assertTrue(spectrum.contains("if(ownedLayout) WindowAdaptiveScale.beginForced();"),
                 "频谱 renderHud 必须自带强制布局括号");
-        String automix = read(ProjectPaths.sourceFile(Paths.get(
-                "com", "muoniumplayer", "core", "rendering", "AutomixTransitionAnimation.java")));
+        String automix = read(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "automix", "ui", "AutomixTransitionAnimation.java")));
         assertTrue(automix.contains("if (ownedLayout) WindowAdaptiveScale.beginForced();"),
                 "Automix 切换动画 render() 必须自带强制布局括号");
     }

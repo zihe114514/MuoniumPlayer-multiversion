@@ -2,7 +2,6 @@ package com.muoniumplayer.core.update;
 
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.render.skija.SkijaNatives;
-import com.muoniumplayer.render.skija.SkijaNatives;
 
 import java.io.File;
 import java.io.IOException;

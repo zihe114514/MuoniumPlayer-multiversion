@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.screens.ncm;
 
+import com.muoniumplayer.testsupport.AutomixSources;
+
 import com.muoniumplayer.testsupport.ProjectPaths;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -173,7 +175,7 @@ class ModelInstallNoticeStaticTest {
     }
 
     private static Path music(String file) {
-        return ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "ncm", "music", file));
+        return AutomixSources.music(file);
     }
 
     private static Path screens(String file) {

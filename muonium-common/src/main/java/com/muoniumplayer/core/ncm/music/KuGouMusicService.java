@@ -118,6 +118,11 @@ public final class KuGouMusicService {
         return adaptTracks(KuGouMusicApi.dailyRecommend(null));
     }
 
+    /** 概念版「免费听」推荐流；匿名可拉取，登录概念版时沿用账号身份。 */
+    public static List<Music> conceptFreeListen(int page, int limit) {
+        return adaptTracks(KuGouMusicApi.conceptFreeListen(page, limit));
+    }
+
     /** 私人 FM（需要登录）。{@code excludeHash} 用来避免连续推同一首。 */
     public static List<Music> personalFm(int limit, String excludeHash) {
         return personalFm(KuGouMusicApi.FmMode.NORMAL, limit, excludeHash);

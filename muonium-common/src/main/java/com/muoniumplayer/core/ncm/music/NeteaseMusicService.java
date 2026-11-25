@@ -20,7 +20,6 @@ import com.muoniumplayer.core.music.source.MuHttp;
 import com.muoniumplayer.core.music.source.MuCredentialStore;
 import com.muoniumplayer.core.ncm.OptionsUtil;
 import com.muoniumplayer.core.ncm.kugou.KuGouProfile;
-import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;

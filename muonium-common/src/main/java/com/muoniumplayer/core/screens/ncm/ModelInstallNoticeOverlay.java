@@ -1,8 +1,8 @@
 package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.core.management.FontManager;
-import com.muoniumplayer.core.ncm.music.FoliaModelManager;
-import com.muoniumplayer.core.ncm.music.FoliaModelNotice;
+import com.muoniumplayer.automix.model.FoliaModelManager;
+import com.muoniumplayer.automix.model.FoliaModelNotice;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.ui.container.Panel;

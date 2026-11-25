@@ -1,6 +1,6 @@
 package com.muoniumplayer.core.rendering;
 
-import com.muoniumplayer.core.ncm.music.AutomixSettings;
+import com.muoniumplayer.automix.config.AutomixSettings;
 import com.muoniumplayer.core.settings.HudConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

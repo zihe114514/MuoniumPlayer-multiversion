@@ -2,7 +2,6 @@ package com.muoniumplayer.core.settings;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.muoniumplayer.core.settings.JsonConfigStorage;
 
 import java.io.File;
 

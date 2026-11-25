@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.screens.ncm.panels;
 
+import com.muoniumplayer.automix.config.AutomixSettings;
+
 import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.core.input.TouchGestures;
 import com.muoniumplayer.core.settings.TouchSettings;
@@ -273,7 +275,7 @@ public class PlayQueuePanel extends NCMPanel {
             flowSort.setHidden(this.roomMode
                     || (!com.muoniumplayer.core.ncm.music.QueueFlowSorter.isRunning()
                     && (this.rows.size() < 2
-                    || !com.muoniumplayer.core.ncm.music.AutomixSettings.isAdvancedModeEnabled())));
+                    || !com.muoniumplayer.automix.config.AutomixSettings.isAdvancedModeEnabled())));
             flowSort.setBounds(FLOW_BUTTON_WIDTH, 14.0)
                     .setPosition(this.drawer.getWidth() - DRAWER_PADDING - 16.0 - 4.0 - 34.0
                                     - 4.0 - FLOW_BUTTON_WIDTH,

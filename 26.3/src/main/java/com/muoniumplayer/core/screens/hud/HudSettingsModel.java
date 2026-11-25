@@ -1,16 +1,16 @@
 package com.muoniumplayer.core.screens.hud;
 
 import com.muoniumplayer.core.MuoniumPlayerExtension;
-import com.muoniumplayer.core.ncm.music.AutomixSettings;
+import com.muoniumplayer.automix.config.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.ExternalPlayback;
 import com.muoniumplayer.core.ncm.music.FocusVolumeDucker;
-import com.muoniumplayer.core.ncm.music.FoliaModelManager;
+import com.muoniumplayer.automix.model.FoliaModelManager;
 import com.muoniumplayer.core.cine.CineSettings;
 import com.muoniumplayer.core.ncm.music.MusicSpin;
 import com.muoniumplayer.core.ncm.music.TransparentMode;
 import com.muoniumplayer.core.ncm.music.VoicechatBroadcast;
 import com.muoniumplayer.core.ncm.music.MusicAudioCache;
-import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
+import com.muoniumplayer.automix.ui.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.HudSettingsIcons;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
