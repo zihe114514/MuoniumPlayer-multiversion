@@ -33,8 +33,8 @@ public class Engine {
 
 	@SneakyThrows
 	private static AudioDeviceManager createDefaultAudioDeviceManager() {
-		Class.forName("javax.sound.sampled.AudioSystem");
-		// 先创建一个 JavaSound 设备
+        // The host installs its sole output manager before engine/effect creation.
+        // Do not initialize JavaSound bridges just to retrieve an already installed manager.
 		return AudioDeviceFactory.createAudioDeviceManager();
 	}
 

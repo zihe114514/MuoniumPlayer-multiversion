@@ -100,6 +100,7 @@ public final class AcousticsRuntime {
                 return;
             }
             try {
+                com.muoniumplayer.core.ncm.music.AudioPlayer.ensureAudioBackend();
                 Engine.getEngine().setTrailingOutputProcessor(new OutputChain());
                 installed = true;
             } catch (Throwable failure) {

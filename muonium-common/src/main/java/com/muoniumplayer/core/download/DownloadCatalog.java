@@ -4,8 +4,9 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.core.management.FontAssetDownload;
+import com.muoniumplayer.core.audio.ffmpeg.FfmpegNativeAssets;
+import com.muoniumplayer.core.audio.ffmpeg.FfmpegRuntime;
 import com.muoniumplayer.core.ncm.lxsource.ClosureCompilerDownload;
-import com.muoniumplayer.core.ncm.music.FfmpegInstaller;
 import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.QishuiCompanionDownload;
 import com.muoniumplayer.core.ncm.music.ZstdNativeDownload;
@@ -130,7 +131,7 @@ public final class DownloadCatalog {
         addQishui(items);
         addZstd(items);
         addClosure(items);
-        addFfmpeg(items);
+        addFfmpegNative(items);
         addFolia(items);
         return Collections.unmodifiableList(items);
     }
@@ -221,23 +222,27 @@ public final class DownloadCatalog {
                         ? ClosureCompilerDownload::ensureDownload : null));
     }
 
-    private static void addFfmpeg(List<Item> items) {
-        boolean supported = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
-        if (!supported) {
-            items.add(item("ffmpeg", "FFmpeg", "动态封面解码器 · 可选", "", Group.AUDIO,
-                    Status.UNSUPPORTED, -1, "自动安装包仅支持 Windows x64", true, "", null));
-            return;
-        }
-        int state = com.muoniumplayer.core.ncm.music.FfmpegInstaller.state();
-        Status status = FfmpegInstaller.isAvailableFromCachedProbe() || state == FfmpegInstaller.SUCCESS
-                ? Status.INSTALLED : state == com.muoniumplayer.core.ncm.music.FfmpegInstaller.RUNNING
-                ? Status.DOWNLOADING : state == com.muoniumplayer.core.ncm.music.FfmpegInstaller.FAILED
-                ? Status.FAILED : Status.NOT_INSTALLED;
-        items.add(item("ffmpeg", "FFmpeg", "动态封面解码器 · 可选",
-                com.muoniumplayer.core.settings.ConfigPaths.BIN_DIR.getAbsolutePath(), Group.AUDIO,
-                status, FfmpegInstaller.progressPercent(), FfmpegInstaller.failureReason(), true,
-                status == Status.NOT_INSTALLED || status == Status.FAILED ? "安装" : "",
-                status == Status.NOT_INSTALLED || status == Status.FAILED ? FfmpegInstaller::start : null));
+    private static void addFfmpegNative(List<Item> items) {
+        FfmpegNativeAssets.Snapshot state = FfmpegNativeAssets.snapshot();
+        Status status;
+        boolean embedded = FfmpegRuntime.hasEmbeddedNative();
+        if (FfmpegRuntime.linkageFailure() != null) status = Status.FAILED;
+        else if (embedded || FfmpegRuntime.isLoaded() || state.phase() == FfmpegNativeAssets.Phase.READY) status = Status.INSTALLED;
+        else status = switch (state.phase()) {
+            case DOWNLOADING -> HttpDownloadRace.networkState().waitingTasks() > 0 ? Status.WAITING_NETWORK : Status.DOWNLOADING;
+            case INSTALLING -> Status.INSTALLING;
+            case FAILED -> Status.FAILED;
+            case UNSUPPORTED -> Status.UNSUPPORTED;
+            default -> Status.NOT_INSTALLED;
+        };
+        boolean canPrepare = !embedded && FfmpegRuntime.linkageFailure() == null
+                && (status == Status.NOT_INSTALLED || status == Status.FAILED);
+        String message = FfmpegRuntime.linkageFailure() == null ? state.detail() : "原生音频初始化失败，修复依赖后请重启游戏";
+        String location = embedded ? "随 MOD 内置" : ConfigPaths.FFMPEG_NATIVE_ROOT.getAbsolutePath();
+        items.add(item("ffmpeg-native", "音频解码引擎", "FFmpeg 8.1.2 · JavaCPP · "
+                        + (embedded ? "Windows 精简版" : "首次使用按需下载"), location, Group.AUDIO,
+                status, state.percent(), message, false, canPrepare ? "下载/修复" : "",
+                canPrepare ? FfmpegNativeAssets::retryAsync : null));
     }
 
     private static void addFolia(List<Item> items) {

@@ -168,10 +168,11 @@ class FocusVolumeDuckerTest {
         assertTrue(body(ducker, "public static void onClientTick(").contains("Engine.installFinalOutputProcessor(OUTPUT_STAGE)"));
 
         String live = source("LiveStreamPlayer.java");
-        assertTrue(body(live, "void refreshVolumeOnLine(").contains("FocusVolumeDucker.gain()"),
-                "直播流不走 JSyn，倍率在它每次写线时乘");
-        assertTrue(body(live, "private SourceDataLine openLine(").contains("FocusVolumeDucker.gain()"),
-                "开线时的首次增益也要带倍率，否则失焦状态下开播第一段是满音量");
+        assertTrue(live.contains("FocusVolumeDucker::gain"),
+                "直播仍从同一个失焦倍率读取目标，不走广播 tap");
+        assertTrue(body(live, "private void applyOutputGain(").contains("services.focusGain().getAsDouble()"),
+                "每个 PCM 块都刷新失焦倍率，首块也适用");
+        assertFalse(live.contains("EngineOutputTap" + "."), "直播不能接入语音广播 tap");
     }
 
     private static double[] filled(int n) {

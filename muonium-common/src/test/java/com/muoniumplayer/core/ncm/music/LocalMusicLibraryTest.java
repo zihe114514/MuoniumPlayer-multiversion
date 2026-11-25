@@ -95,17 +95,19 @@ class LocalMusicLibraryTest {
     @DisplayName("只收支持的扩展名；标题缺标签时用文件名兜底")
     void scanPicksSupportedFilesAndFallsBackToFilenames() throws IOException {
         assertTrue(new File(temp.toFile(), "晴天.mp3").createNewFile());
-        assertTrue(new File(temp.toFile(), "假歌.ogg").createNewFile(), "ogg 明确不支持");
+        assertTrue(new File(temp.toFile(), "Vorbis.ogg").createNewFile());
+        assertTrue(new File(temp.toFile(), "Opus.opus").createNewFile());
+        assertTrue(new File(temp.toFile(), "ALAC.m4a").createNewFile());
         assertTrue(new File(temp.toFile(), "README.txt").createNewFile());
         assertTrue(new File(temp.toFile(), "无损.flac").createNewFile());
 
         List<Music> scanned = LocalMusicLibrary.scanDirectory(temp.toString());
-        assertEquals(2, scanned.size(), "只收 mp3/flac，ogg 与非音频不入列");
+        assertEquals(5, scanned.size(), "新增 native 格式进入扫描，文本文件仍不入列");
         for (Music music : scanned) {
             assertEquals(MusicPlatform.LOCAL, music.getSource());
             assertFalse(music.getName().trim().isEmpty(), "无标签文件退化成文件名当标题");
             // 兜底标题是「去掉扩展名的文件名」（晴天 / 无损），不是原始文件名。
-            assertTrue(music.getName().equals("晴天") || music.getName().equals("无损"),
+            assertTrue(java.util.Set.of("晴天", "无损", "Vorbis", "Opus", "ALAC").contains(music.getName()),
                     "兜底标题应为去扩展名的文件名，实得: " + music.getName());
         }
     }

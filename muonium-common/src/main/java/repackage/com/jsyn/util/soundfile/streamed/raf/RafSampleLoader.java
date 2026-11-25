@@ -11,15 +11,21 @@ import java.io.RandomAccessFile;
 public class RafSampleLoader extends CustomSampleLoader {
 
     public FloatSample loadFloatSample(RandomAccessFile raf) throws IOException {
-        RafIFFParser parser = new RafIFFParser(raf);
-        parser.readHead();
-        if (parser.isRIFF()) {
-            RafWAVEFileParser fileParser = new RafWAVEFileParser();
-            return fileParser.load(parser);
-        } else if (parser.isIFF()) {
-            throw new UnsupportedOperationException("AIFF is not supported");
-        } else {
-            throw new IOException("Unsupported audio file type.");
+        try {
+            RafIFFParser parser = new RafIFFParser(raf);
+            parser.readHead();
+            if (parser.isRIFF()) {
+                RafWAVEFileParser fileParser = new RafWAVEFileParser();
+                return fileParser.load(parser);
+            } else if (parser.isIFF()) {
+                throw new UnsupportedOperationException("AIFF is not supported");
+            } else {
+                throw new IOException("Unsupported audio file type.");
+            }
+        } catch (IOException | RuntimeException | Error failure) {
+            try { raf.close(); }
+            catch (IOException closeFailure) { failure.addSuppressed(closeFailure); }
+            throw failure;
         }
     }
 

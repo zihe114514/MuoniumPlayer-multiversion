@@ -315,3 +315,6 @@ tasks.register('dumpCompileClasspath') {
         f.text = cp.asPath
     }
 }
+
+// In-process FFmpeg: slim Windows bundled; other native dependencies install on demand.
+apply from: rootProject.file('../gradle/ffmpeg-audio.gradle')

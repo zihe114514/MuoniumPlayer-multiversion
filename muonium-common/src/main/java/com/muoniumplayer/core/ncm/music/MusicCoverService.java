@@ -73,8 +73,7 @@ final class MusicCoverService {
     /**
      * 跨平台曲目匹配到的网易云 songId（{@code stableKey → songId}）。
      *
-     * <p>必须独立于 {@link #DYNAMIC_COVER_ATTEMPTS}：后者在 ffmpeg 缺失时会被 {@link #forgetAttempt}
-     * 撤销，允许下次播到同一首再试，没有这层缓存就得重烧一次网易云搜索额度。0 也是有效结论。</p>
+     * <p>独立缓存匹配结果以复用网易云搜索结论；0 也是有效结论。</p>
      */
     private static final Map<String, Long> NETEASE_COVER_IDS =
             new java.util.concurrent.ConcurrentHashMap<String, Long>();
@@ -103,7 +102,7 @@ final class MusicCoverService {
      *
      * <p>网易云的动态封面实际上是一段几秒的循环 <b>MP4</b>(接口字段 {@code videoPlayUrl}),因此这里有
      * 两条路:极少数返回 GIF/APNG 之类的图片时直接用 ImageIO 解;返回视频时交给 {@link VideoCoverFrames}
-     * 用 ffmpeg 抽成有限帧,再包成项目已有的 {@link AnimatedCoverTexture} 循环播放。</p>
+     * 通过内置 FFmpeg 解成有限帧,再包成项目已有的 {@link AnimatedCoverTexture} 循环播放。</p>
      *
      * <h3>取址优先级（三级，见 {@link #resolveCoverSources}）</h3>
      * <ol>
@@ -167,7 +166,7 @@ final class MusicCoverService {
                     return;
                 }
                 install(music, dynamicLocation, texture);
-            } catch (Throwable failure) {
+            } catch (Exception failure) {
                 // 动态封面纯属装饰,静态封面始终是保底;但静默失败会让问题无法定位,所以留一行。
                 System.err.println("[Music/Cover] Dynamic cover lookup failed for " + music.getStableKey()
                         + ": " + failure);
@@ -341,11 +340,7 @@ final class MusicCoverService {
         return key == null ? null : NETEASE_COVER_IDS.get(key);
     }
 
-    /**
-     * 记一次匹配结论。0 也要记 —— 负结论不重烧搜索额度是这张表的另一半意义：
-     * {@link #forgetAttempt} 在 ffmpeg 缺失时会撤销尝试记录，下次播到同一首还要再试，
-     * 没有这层缓存就得再搜一遍。
-     */
+    /** 记一次匹配结论；0 也缓存，避免重复搜索。 */
     static void rememberNeteaseCoverId(String key, long songId) {
         if (key == null || key.isEmpty()) {
             return;
@@ -431,11 +426,6 @@ final class MusicCoverService {
         return HudConfig.animatedCoverEnabled;
     }
 
-    /** ffmpeg 的已缓存探测结论:1 可用,-1 探测过但没找到,0 还没探测。不会触发新的探测。 */
-    static int ffmpegState() {
-        return FfmpegSupport.cachedState();
-    }
-
     /** 同一首歌只尝试一次,避免每次重新播放都打一遍接口。 */
     private static boolean markAttempted(Music music) {
         synchronized (DYNAMIC_COVER_ATTEMPTS) {
@@ -443,13 +433,6 @@ final class MusicCoverService {
                 DYNAMIC_COVER_ATTEMPTS.clear();
             }
             return DYNAMIC_COVER_ATTEMPTS.add(music.getStableKey());
-        }
-    }
-
-    /** 撤销尝试记录。只有"这次没成是环境问题"时才用,例如用户还没装 ffmpeg。 */
-    private static void forgetAttempt(Music music) {
-        synchronized (DYNAMIC_COVER_ATTEMPTS) {
-            DYNAMIC_COVER_ATTEMPTS.remove(music.getStableKey());
         }
     }
 
@@ -469,20 +452,11 @@ final class MusicCoverService {
         }
     }
 
-    /**
-     * 视频型动态封面:下载到临时文件后用 ffmpeg 抽帧。ffmpeg 不存在时提示一次并撤销尝试记录——用户可能
-     * 稍后才装上,下次播到这首歌应该还能再试。
-     */
+    /** 视频型动态封面下载到临时文件后，由独立 worker 会话在进程内解码为有限 RGBA 帧。 */
     private static ITextureObject decodeVideoCover(Music music, String videoUrl) {
         if (videoUrl == null || videoUrl.isEmpty()) {
             return null;
         }
-        if (!FfmpegSupport.isAvailable()) {
-            FfmpegSupport.warnMissingOnce();
-            forgetAttempt(music);
-            return null;
-        }
-
         File temporary = null;
         try {
             temporary = File.createTempFile("muonium-cover-", ".mp4");
@@ -506,7 +480,7 @@ final class MusicCoverService {
             System.out.println("[Music/Cover] Animated cover ready for " + music.getStableKey() + ": "
                     + frames.size() + " frames, " + (texture.getHeapBytes() / (1024L * 1024L)) + " MB");
             return texture;
-        } catch (Throwable failure) {
+        } catch (Exception failure) {
             System.err.println("[Music/Cover] Animated cover unavailable for " + music.getStableKey() + ": "
                     + failure);
             return null;

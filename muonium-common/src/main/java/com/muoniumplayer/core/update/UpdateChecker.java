@@ -18,9 +18,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 /**
  * 更新检查的状态与持久化。界面在 {@code com.muoniumplayer.core.screens.GuiUpdateNotice}。
  *
- * <p>结构与 {@code FfmpegNotice} 刻意保持一致（后台探一次 + 本次启动只弹一次）：
- * 那套「守护线程探测 + 每 tick 轮询是否该弹」的骨架已经在四个版本上跑通过，
- * 这里换的只是数据来源 —— 从「探本机有没有 ffmpeg」换成「拉一份远端版本清单」。</p>
+ * <p>后台获取远端版本清单，每 tick 轮询是否该显示提示，本次启动只弹一次。</p>
  *
  * <p>网络行为（<b>不可关闭</b> —— 曾经有过一个「不再检查更新」的开关，现在已删掉：检查只发一个
  * 匿名 GET，而用户一旦关掉就再也收不到新版本与安全提醒，代价远大于那点请求）：
@@ -686,7 +684,7 @@ public final class UpdateChecker {
         return new UpdateManifest.Entry(
                 "1.9.1",
                 DOWNLOAD_PAGE,
-                "新增：重写 ffmpeg 缺失提示与更新提示的界面渲染；"
+                "新增：重写更新提示的界面渲染；"
                         + "修复：界面文字因宽度上限被裁成空串而整行不显示；"
                         + "修复：界面文字颜色缺少透明度导致完全不可见。"
                         + "这是一段特意写长的更新说明，用来检查正文换行、面板高度与按钮位置是否仍然正确。",

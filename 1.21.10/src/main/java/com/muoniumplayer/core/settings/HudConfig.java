@@ -560,7 +560,7 @@ public final class HudConfig {
     public static float dynamicIslandAmbientNowPlayingSeconds = 8.0f;
 
     /**
-     * 网易云动态封面(需要外部 ffmpeg 抽帧)。关掉后桌面歌曲信息、全屏歌词页与播放条一律用静态封面。
+     * 网易云动态封面。关掉后桌面歌曲信息、全屏歌词页与播放条一律用静态封面。
      * 这里是唯一的真实来源,HUD 编辑器与模块开关都读写它。
      */
     public static boolean animatedCoverEnabled = true;

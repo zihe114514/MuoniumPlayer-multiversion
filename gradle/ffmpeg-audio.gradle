@@ -1,0 +1,75 @@
+// Java bindings plus the verified audio and video-cover Windows runtime. Other natives install on first use.
+def ffmpegVersion = '8.1.2-1.5.14'
+def javaCppVersion = '1.5.14'
+def runtimeVersion = '8.1.2-1.5.14-media.1'
+if (providers.gradleProperty('muoniumAudioRepository').isPresent()) {
+    def localAudioRepository = repositories.maven { url = uri(providers.gradleProperty('muoniumAudioRepository').get()) }
+    repositories.exclusiveContent {
+        forRepositories(localAudioRepository)
+        filter { includeGroup 'org.bytedeco' }
+    }
+}
+configurations { ffmpegJava { transitive = false } }
+dependencies {
+    ffmpegJava "org.bytedeco:javacpp:${javaCppVersion}"
+    ffmpegJava "org.bytedeco:ffmpeg:${ffmpegVersion}"
+}
+def windowsRoot = rootProject.file('../native/ffmpeg/prebuilt/windows-x86_64')
+def windowsManifest = new File(windowsRoot, 'manifest.json')
+if (!windowsManifest.isFile()) throw new GradleException('Missing verified Windows FFmpeg native build input')
+def runtimeTask = tasks.register('bundleFfmpegAudio', Jar) {
+    group = 'build'
+    description = 'Bundles JavaCPP audio bindings and the slim Windows runtime; other platforms download on demand'
+    archiveBaseName = 'muonium-ffmpeg-audio'
+    archiveVersion = runtimeVersion
+    destinationDirectory = layout.buildDirectory.dir('ffmpeg-runtime')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    includeEmptyDirs = false
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+    manifest.attributes('Automatic-Module-Name': 'muonium.ffmpeg.audio',
+            'Muonium-FFmpeg-Version': ffmpegVersion,
+            'Muonium-Native-Provenance': 'windows-source-slim-other-platforms-on-demand')
+    from({ configurations.ffmpegJava.collect { zipTree(it) } }) {
+        exclude 'META-INF/MANIFEST.MF', 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
+        exclude '**/module-info.class', 'META-INF/versions/**'
+        exclude 'META-INF/native-image/**/jniavdevice/**', 'META-INF/native-image/**/jniavfilter/**'
+        exclude 'org/bytedeco/ffmpeg/avdevice/**', 'org/bytedeco/ffmpeg/avfilter/**'
+        exclude 'org/bytedeco/ffmpeg/global/avdevice.class', 'org/bytedeco/ffmpeg/global/avfilter.class'
+        exclude 'org/bytedeco/ffmpeg/presets/avdevice.class', 'org/bytedeco/ffmpeg/presets/avfilter.class'
+    }
+    from(windowsRoot) { include '**/*.dll'; into 'org/bytedeco' }
+    from(windowsManifest) { into 'META-INF/muonium/ffmpeg/windows'; rename { 'build-manifest.json' } }
+    from(rootProject.file('../native/ffmpeg/licenses')) { into 'META-INF/muonium/ffmpeg/licenses'; exclude '.gitattributes' }
+    inputs.file(windowsManifest)
+    doFirst {
+        def metadata = new groovy.json.JsonSlurper().parse(windowsManifest)
+        metadata.files.each { relative, expected ->
+            def input = new File(windowsRoot, relative)
+            if (!input.isFile() || input.length() != expected.bytes) throw new GradleException("Missing or incomplete FFmpeg native: ${relative}")
+            def digest = java.security.MessageDigest.getInstance('SHA-256').digest(input.bytes).encodeHex().toString()
+            if (digest != expected.sha256) throw new GradleException("FFmpeg native input hash mismatch: ${relative}")
+        }
+    }
+    doLast { logger.lifecycle("Windows-slim FFmpeg audio runtime: ${archiveFile.get().asFile.length()} bytes; other platforms install on first use") }
+}
+// A task-backed component capability works with Loom and both JarJar generations.
+def audioElements = configurations.create('ffmpegAudioElements') {
+    canBeConsumed = true
+    canBeResolved = false
+    outgoing.capability("com.muoniumplayer:muonium-ffmpeg-audio:${runtimeVersion}")
+    attributes {
+        attribute(org.gradle.api.attributes.Usage.USAGE_ATTRIBUTE, objects.named(org.gradle.api.attributes.Usage, org.gradle.api.attributes.Usage.JAVA_RUNTIME))
+        attribute(org.gradle.api.attributes.Category.CATEGORY_ATTRIBUTE, objects.named(org.gradle.api.attributes.Category, org.gradle.api.attributes.Category.LIBRARY))
+        attribute(org.gradle.api.attributes.LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(org.gradle.api.attributes.LibraryElements, org.gradle.api.attributes.LibraryElements.JAR))
+        attribute(org.gradle.api.attributes.Bundling.BUNDLING_ATTRIBUTE, objects.named(org.gradle.api.attributes.Bundling, org.gradle.api.attributes.Bundling.EXTERNAL))
+    }
+}
+artifacts.add(audioElements.name, runtimeTask)
+components.java.addVariantsFromConfiguration(audioElements) { mapToMavenScope('runtime') }
+dependencies {
+    implementation files(runtimeTask)
+    def nestedAudio = project.dependencies.project(path: project.path)
+    nestedAudio.capabilities { requireCapability("com.muoniumplayer:muonium-ffmpeg-audio:${runtimeVersion}") }
+    if (project.name == 'fabric') include(nestedAudio) else jarJar(nestedAudio)
+}

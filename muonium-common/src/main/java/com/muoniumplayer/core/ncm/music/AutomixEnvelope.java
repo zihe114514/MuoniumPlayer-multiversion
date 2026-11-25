@@ -22,9 +22,8 @@ import java.util.Arrays;
  * <p>因为算不起，也来不及。一次整曲扫描要把 4 分钟素材过两遍双二阶滤波器并逐跳求 RMS，
  * 而它必须赶在<b>规划那一刻</b>之前落盘 —— 预备发生得很早（出场曲播到 10 秒就开始，见
  * {@code CloudMusic.PlayThread#maybeArmNextTrack}），规划紧跟在预备后面，绝不能压到渲染线程；
- * 更要命的是
- * {@link FfmpegAnalysisAudio} 每次缓存未命中都会<b>起一个 ffmpeg 进程</b>（上限 25 秒超时），
- * 单次 {@code readMono} 最多 60 秒窗口，整曲要开好几次进程。</p>
+ * {@link FfmpegAnalysisAudio} 在后台持有独立 native 解码句柄；单次 {@code readMono}
+ * 最多读取 60 秒窗口，完整扫描仍有解码和重采样成本。</p>
  *
  * <p>所以这里把结论落盘：包络在预热线程上扫一次（跟 profile 同一时机、同一线程预算），
  * 之后每次规划只是读几万字节的边车。{@link #load(File)} 是<b>只读</b>的，绝不触发扫描——
@@ -49,7 +48,7 @@ final class AutomixEnvelope {
     /** 细包络只用来做形状相关（判「A 的尾巴和 B 的开头是不是同一段律动」），10 ms 足够。 */
     static final int FINE_HOP_MILLIS = 10;
 
-    /** 单次 {@code readMono} 的请求长度上限，留 5 秒余量给两个 60 秒实现（WAV 与 ffmpeg）。 */
+    /** 单次 {@code readMono} 的请求长度上限，为统一 native 分析接口的 60 秒窗口上限留 5 秒余量。 */
     private static final long CHUNK_MILLIS = 55_000L;
     /** 超过这个长度不再扫：五小时的现场录音不该为 automix 花四分钟扫包络。 */
     private static final long MAX_SCAN_MILLIS = 20 * 60_000L;
@@ -264,7 +263,7 @@ final class AutomixEnvelope {
 
     /**
      * 扫一遍整曲并落盘。只允许在<b>非渲染帧的低优先级线程</b>上调用（{@link #scan} 会逐块解码，
-     * 外部格式还要起 ffmpeg 进程）。已经扫过就直接回缓存，不重复解码。
+     * 由独立 native 句柄解码）。已经扫过就直接回缓存，不重复解码。
      *
      * @return 磁盘上现在有没有这份可用的包络
      */

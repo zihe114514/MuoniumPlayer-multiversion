@@ -57,7 +57,7 @@ class ConfigPathLayoutStaticTest {
                 "CACHE_DIR 必须指向 MuoniumPlayer/cache：1.7GB 级音频缓存不能进导出包");
         // 运行资产刻意留在 config：整合包作者自取舍，带了用户装机即用省下载
         assertTrue(source.contains("BIN_DIR = new File(CONFIG_DIRECTORY, \"bin\")"),
-                "ffmpeg 等运行资产留在 config（整合包作者自取舍）");
+                "伴生工具运行资产留在 config（整合包作者自取舍）");
         assertTrue(source.contains("SKIJA_NATIVE_ROOT = new File(CONFIG_DIRECTORY, \"native/skija\")"),
                 "Skija 原生库留在 config（同上）");
         // 迁移代码存在且参数化可测
@@ -94,8 +94,8 @@ class ConfigPathLayoutStaticTest {
         assertTrue(cache.contains("ConfigPaths.MUSIC_CACHE"));
         assertFalse(cache.contains("new File(\"MusicCache\")"));
 
-        String ffmpeg = stripComments(read(ffmpegSource()));
-        assertTrue(ffmpeg.contains("ConfigPaths.BIN_DIR"));
+        String ffmpegNative = stripComments(read(ffmpegNativeSource()));
+        assertTrue(ffmpegNative.contains("ConfigPaths.FFMPEG_NATIVE_ROOT"));
 
         String skija = stripComments(read(skijaSource()));
         assertTrue(skija.contains("ConfigPaths.SKIJA_NATIVE_ROOT"));
@@ -120,9 +120,9 @@ class ConfigPathLayoutStaticTest {
                 "com", "muoniumplayer", "core", "ncm", "music", "MusicAudioCache.java"));
     }
 
-    private static Path ffmpegSource() {
+    private static Path ffmpegNativeSource() {
         return ProjectPaths.sourceFile(Paths.get(
-                "com", "muoniumplayer", "core", "ncm", "music", "FfmpegSupport.java"));
+                "com", "muoniumplayer", "core", "audio", "ffmpeg", "FfmpegNativeAssets.java"));
     }
     private static Path skijaSource() {
         return ProjectPaths.sourceFile(Paths.get(

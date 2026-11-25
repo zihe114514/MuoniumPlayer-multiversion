@@ -1,0 +1,31 @@
+--- a/libavformat/tls_openssl.c
++++ b/libavformat/tls_openssl.c
+@@ -20,6 +20,7 @@
+  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+  */
+ 
++#include "config_components.h"
+ #include "libavutil/mem.h"
+ #include "network.h"
+ #include "os_support.h"
+@@ -528,9 +529,12 @@
+ static int url_bio_bread(BIO *b, char *buf, int len)
+ {
+     TLSContext *c = BIO_get_data(b);
++#if CONFIG_DTLS_PROTOCOL
+     TLSShared *s = &c->tls_shared;
++#endif
+     int ret = ffurl_read(c->tls_shared.is_dtls ? c->tls_shared.udp : c->tls_shared.tcp, buf, len);
+     if (ret >= 0) {
++#if CONFIG_DTLS_PROTOCOL
+         if (s->is_dtls && s->listen && !c->dest_addr_len) {
+             int err_ret;
+ 
+@@ -542,6 +546,7 @@
+             }
+             av_log(c, AV_LOG_TRACE, "Set UDP remote addr on UDP socket, now 'connected'\n");
+         }
++#endif
+ 
+         return ret;
+     }

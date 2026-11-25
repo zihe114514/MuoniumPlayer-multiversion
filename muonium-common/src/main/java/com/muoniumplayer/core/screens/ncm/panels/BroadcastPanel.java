@@ -25,9 +25,8 @@ import java.util.List;
 /**
  * 广播电台：真实 FM 电台的浏览 / 收藏页。
  *
- * <p>诚实边界：广播电台是直播流，当前播放引擎是"整段下载再播"模型，播不了无限流 ——
- * 所以频道卡左键查询并展示当前节目信息（若上游给出的是常规歌曲则可直接播放，当前实现
- * 给出信息反馈），右键收藏/取消收藏。直播流播放需要流式引擎改造，属后续任务。</p>
+ * <p>左键现取直播地址，交给 LiveStreamSession 通过统一 FFmpeg/OpenAL 流式播放；
+ * HTTP(S) 与 HLS 地址不进入整曲下载缓存。右键收藏/取消收藏。</p>
  */
 public final class BroadcastPanel extends NCMPanel {
 

@@ -174,7 +174,7 @@ public final class QishuiCompanionDownload {
      * 本平台是否支持运行伴生后端。签名后端只发布了 windows-x64 包（bdms.node 是
      * Windows 客户端里的原生模块），其它平台下载了也跑不起来——所以安装/热补/拉起
      * 三个入口都要先过这道闸，别让手机端与 Linux/macOS 白耗 33 MB 流量。
-     * 照 {@code FfmpegNotice.isWindows()} 同款判法；安卓的 os.name 是 Linux，
+     * 按 os.name 判断平台；安卓的 os.name 是 Linux，
      * 不会误判成支持。
      */
     public static boolean supportedPlatform() {

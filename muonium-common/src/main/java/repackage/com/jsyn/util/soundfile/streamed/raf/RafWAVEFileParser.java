@@ -92,7 +92,8 @@ public class RafWAVEFileParser extends WAVEFileParser {
         if (samplesPerFrame == 0) {
             throw new IOException("WAV file has samplesPerFrame = zero");
         }
-        return (samplesPerBlock * byteOffset) / (samplesPerFrame * blockAlign);
+        if (byteOffset < 0 || byteOffset % blockAlign != 0) throw new IOException("Misaligned WAV PCM data");
+        return byteOffset / blockAlign;
     }
 
     private int calculateNumFrames(int numBytes) throws IOException {
@@ -172,65 +173,31 @@ public class RafWAVEFileParser extends WAVEFileParser {
         final float[] empty = new float[0];
 
         public float[] read(long pos) throws IOException {
-
-            if (pos >= totalSize || this.startPos + pos >= parser.raf.length()) {
-//                System.out.println("由于EOF而返回空值");
-                return empty;
+            int sampleBytes = getSampleSizeInBytes();
+            if (pos < 0 || pos % sampleBytes != 0) throw new IOException("Invalid PCM byte offset");
+            if (pos >= totalSize) return empty;
+            int length = (int) Math.min((long) getArrSize(floatArrLen), totalSize - pos);
+            if (length % sampleBytes != 0) throw new IOException("Incomplete PCM sample");
+            if (byteData.length != length) {
+                byteData = new byte[length];
+                floatData = new float[length / sampleBytes];
             }
-
-            long filePointer = parser.raf.getFilePointer();
-            if (filePointer != this.startPos + pos) {
-//                System.out.println("Seeking to " + (this.startPos + pos) + ", curPos: " + filePointer);
-                this.seekToPosRelative(pos);
-                filePointer = this.startPos + pos;
+            // totalSize is relative to data; startPos/filePointer are absolute file offsets.
+            parser.raf.seek(startPos + pos);
+            parser.raf.readFully(byteData);
+            if (bitsPerSample == 16) {
+                SampleLoader.decodeLittleI16ToF32(byteData, 0, length, floatData, 0);
+            } else if (bitsPerSample == 24) {
+                SampleLoader.decodeLittleI24ToF32(byteData, 0, length, floatData, 0);
+            } else if (bitsPerSample == 32 && format == WAVE_FORMAT_IEEE_FLOAT) {
+                SampleLoader.decodeLittleF32ToF32(byteData, 0, length, floatData, 0);
+            } else if (bitsPerSample == 32 && format == WAVE_FORMAT_PCM) {
+                SampleLoader.decodeLittleI32ToF32(byteData, 0, length, floatData, 0);
+            } else {
+                throw new IOException("Unsupported prepared PCM format");
             }
-
-            int arrSize = this.getArrSize(floatArrLen);
-
-            if (totalSize - filePointer < arrSize) {
-//                System.out.println("调整数组大小，因为没有足够的数据");
-//                System.out.println("totalSize: " + totalSize + ", filePointer: " + filePointer);
-                int i = this.fillArrSize((int) (totalSize - filePointer));
-                byteData = new byte[(int) (totalSize - filePointer)];
-                floatData = new float[i / this.getSampleSizeInBytes()];
-            } else if (byteData.length != arrSize) {
-                byteData = new byte[arrSize];
-                floatData = new float[floatArrLen];
-            }
-
-            int read = this.parser.read(byteData);
-
-            if (read == -1) {
-//                System.out.println("Read " + read + " bytes but expected " + arrSize);
-//                System.out.println("尝试读取" + (this.startPos + pos) + ",解析器pos:" + filePointer + ",总长度:" + parser.raf.length());
-                return empty;
-            }
-
-            int length = floatData.length * this.getSampleSizeInBytes();
-
-            try {
-                if (bitsPerSample == 16) {
-                    SampleLoader.decodeLittleI16ToF32(byteData, 0, length, floatData, 0);
-                } else if (bitsPerSample == 24) {
-                    // 3b to 1f
-                    SampleLoader.decodeLittleI24ToF32(byteData, 0, length, floatData, 0);
-                } else if (bitsPerSample == 32) {
-                    // 4b至1f
-                    if (format == WAVE_FORMAT_IEEE_FLOAT) {
-                        SampleLoader.decodeLittleF32ToF32(byteData, 0, length, floatData, 0);
-                    } else if (format == WAVE_FORMAT_PCM) {
-                        SampleLoader.decodeLittleI32ToF32(byteData, 0, length, floatData, 0);
-                    }
-                }
-            } catch (ArrayIndexOutOfBoundsException aioobe) {
-
-                System.err.println("ArrayIndexOutOfBoundsException: byte[" + byteData.length + "], float[" + floatData.length + "], Sample Size Bytes: " + this.getSampleSizeInBytes() + ", Remaining: " + (totalSize - filePointer));
-
-            }
-
             return floatData;
         }
-
     }
 
     public void parseDataChunk(IFFParser parser, int ckSize) throws IOException {

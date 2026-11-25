@@ -1,0 +1,2 @@
+# Keep exact upstream license bytes, including original whitespace.
+*.txt -text -whitespace

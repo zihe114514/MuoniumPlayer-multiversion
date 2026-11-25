@@ -3,11 +3,8 @@ package com.muoniumplayer.core.ncm.music;
 /**
  * 单个已解码曲目的合理性上限。
  *
- * <p>JSyn 把整个采样保存在 RAM 中（{@code FloatSample.allocate} 做 {@code new float[frames *
- * channels]}），因此一个 16 位 PCM 流大约需要两倍字节大小的堆。这里的上限
- * 刻意设得宽松：它的存在是为了阻止病态载荷（一个指向
- * 数小时上传的第三方链接）填满音频缓存，而非管束长曲目。任何仍
- * 放不下的内容都被播放器当作普通曲目失败处理，而非让游戏崩溃。</p>
+ * <p>当前音频准备使用磁盘 float32 PCM 与有界预取；此预算保留原容量策略，
+ * 不再代表整首采样会常驻堆。RIFF 与旧 deck 的采样索引仍限制最大产物。</p>
  */
 final class PlaybackMemoryLimits {
 
@@ -35,7 +32,7 @@ final class PlaybackMemoryLimits {
     /** 播放失败卡片使用的面向用户原因。 */
     static String describeOverLimit(long pcmBytes) {
         long limit = maxDecodedPcmBytes();
-        return "音频约 " + minutes(pcmBytes) + " 分钟（上限 " + minutes(limit) + " 分钟），已跳过";
+        return "解码音频约 " + megabytes(pcmBytes) + " MB（缓存上限 " + megabytes(limit) + " MB），已跳过";
     }
 
     static long minutes(long pcmBytes) {

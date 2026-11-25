@@ -6,9 +6,9 @@ import java.util.List;
 /**
  * 「这台电脑还没装 Folia 分析模型」提示的状态。
  *
- * <p>与 {@link FfmpegNotice} 同一套路：状态与界面分开，界面在
- * {@code com.muoniumplayer.core.screens.ncm.ModelInstallNoticeOverlay}。区别在触发时机——
- * ffmpeg 提示在主菜单弹，这个提示在<b>本次启动第一次打开播放器界面</b>时弹，因为那才是用户
+ * <p>状态与界面分开，界面在
+ * {@code com.muoniumplayer.core.screens.ncm.ModelInstallNoticeOverlay}。
+ * 提示在<b>本次启动第一次打开播放器界面</b>时弹，因为那才是用户
  * 真正开始用到 automix 的时刻。</p>
  *
  * <p>刻意不落盘、也没有「永不展示」：需求就是这个提示每次启动都要在第一次打开播放器时出现

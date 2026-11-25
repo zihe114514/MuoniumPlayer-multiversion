@@ -15,7 +15,7 @@ import java.io.IOException;
 /**
  * 「有新版本」提示的宿主界面。
  *
- * <p>与 {@link GuiFfmpegNotice} 同构：这个提示要在<b>主菜单</b>就弹出来，而主菜单上没有播放器
+ * <p>这个提示要在<b>主菜单</b>就弹出来，而主菜单上没有播放器
  * 界面可以承载浮层，所以用一个最薄的原版 {@code Screen} 当宿主，界面本体全部交给
  * {@link UpdateNoticeOverlay}（它跑在模组的 Skija 渲染栈上，与播放器里的模态提示同一套组件）。
  * 宿主只做四件事：</p>
@@ -48,11 +48,8 @@ public class GuiUpdateNotice extends GuiScreen {
     /**
      * 每 tick 调一次：条件满足就把提示顶到最前面。
      *
-     * <p>与 {@link GuiFfmpegNotice#tickAutoShow(Minecraft)} 同样用轮询而不是界面切换事件：
+     * <p>使用轮询检查是否该显示提示：
      * 版本清单是在后台线程上拉的，主菜单出现的那一刻结论往往还没回来，换 GUI 只有一次机会。</p>
-     *
-     * <p>ffmpeg 提示先弹的情况下这里读到的当前界面不是主菜单，于是本 tick 直接跳过，等用户关掉
-     * 那个提示回到主菜单再弹 —— 两个提示天然排队，不会互相盖掉。</p>
      */
     public static void tickAutoShow(Minecraft mc) {
         if (mc == null) return;

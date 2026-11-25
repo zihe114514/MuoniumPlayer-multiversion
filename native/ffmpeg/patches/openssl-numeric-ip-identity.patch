@@ -1,0 +1,13 @@
+--- a/libavformat/tls_openssl.c
++++ b/libavformat/tls_openssl.c
+@@ -868,2 +868,10 @@
+     init_bio_method(h);
++    if (!s->listen && s->numerichost) {
++        if (!X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(c->ssl), s->host)) {
++            av_log(h, AV_LOG_ERROR, "Failed to set IP address for TLS/SSL verification: %s\n",
++                   openssl_get_error(c));
++            ret = AVERROR_EXTERNAL;
++            goto fail;
++        }
++    }
+     if (!s->listen && !s->numerichost) {

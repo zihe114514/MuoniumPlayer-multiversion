@@ -317,7 +317,7 @@ class BilibiliFeatureStaticTest {
         String source = read(MUSIC_DIR, "BilibiliMusicService.java");
         assertTrue(body(source, "public static ResolveResult getSongUrl")
                         .contains("resolve(sourceId, requestedQuality, false)"),
-                "播放必须走 allowHires=false：AacAudioDecoder 只认 AAC-LC 分片");
+                "播放保持 allowHires=false 的来源选流策略，高解析仍由下载入口单独放开");
         assertTrue(body(source, "public static ResolveResult getDownloadUrl")
                         .contains("Quality.LOSSLESS, true"),
                 "下载才有放开高解析的入口");

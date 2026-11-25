@@ -48,7 +48,7 @@ class ExpressivePromptsStaticTest {
     private static final String NCM = "com/muoniumplayer/core/screens/ncm/";
     private static final String MUSIC = "com/muoniumplayer/core/ncm/music/";
     private static final String[] PROMPTS = {"ConfirmationOverlay", "AddToPlaylistOverlay", "UpdateNoticeOverlay",
-            "FfmpegNoticeOverlay", "ModelInstallNoticeOverlay", "PlaylistImportOverlay", "PlaylistCreateSheet"};
+            "ModelInstallNoticeOverlay", "PlaylistImportOverlay", "PlaylistCreateSheet"};
 
     @Test
     void promptsUseSharedComponentsWithoutGuessedHoverApiOrTinyBodyFont() throws IOException {
@@ -106,7 +106,7 @@ class ExpressivePromptsStaticTest {
                 "Emit every accepted character and resume at the exact end, with no skipped punctuation");
         assertFalse(calls(wrap).stream().anyMatch(call -> List.of("trim", "replace", "replaceAll", "remove").contains(callName(call))),
                 "The shared wrap seam must not discard text to make a line fit");
-        for (String name : new String[]{"ConfirmationOverlay", "UpdateNoticeOverlay", "FfmpegNoticeOverlay",
+        for (String name : new String[]{"ConfirmationOverlay", "UpdateNoticeOverlay",
                 "ModelInstallNoticeOverlay", "PlaylistImportOverlay", "PlaylistCreateSheet"}) {
             Source source = screen(name);
             assertTrue(calls(source.type).stream().anyMatch(call -> call.getMethodSelect().toString().equals("NcmExpressive.wrap")),
@@ -357,26 +357,6 @@ class ExpressivePromptsStaticTest {
                 "A failed retry must stay open for another attempt");
         assertBefore(compact(poll), "UpdateChecker.allowNoticeAgain()", "cancel()", "Successful retry lets the host show its new conclusion");
         assertTrue(calls(source.type).stream().anyMatch(call -> callName(call).equals("pollRetry")), "Polling must actually be wired to frames");
-    }
-
-    @Test
-    void ffmpegCloses2600msAfterVerifiedSuccessWithoutCancellingItsWorker() throws IOException {
-        Source source = screen("FfmpegNoticeOverlay");
-        String watchdog = compact(source.method("tickInstallWatchdog"));
-        assertTrue(watchdog.contains("FfmpegInstaller.state()!=FfmpegInstaller.SUCCESS"));
-        assertTrue(watchdog.contains("successSeenAt=System.currentTimeMillis()"));
-        assertTrue(watchdog.contains("System.currentTimeMillis()-successSeenAt>=2600L"));
-        assertTrue(calls(source.method("tickInstallWatchdog")).stream().anyMatch(call -> callName(call).equals("cancel")));
-        assertTrue(calls(source.method("onInit")).stream().anyMatch(call -> callName(call).equals("tickInstallWatchdog")));
-        assertTrue(compact(source.method("startInstall")).contains("successSeenAt=-1L") && compact(source.method("startInstall")).contains("FfmpegInstaller.start()"));
-        assertCloseIsUiOnly(source);
-        Source installer = read(MUSIC + "FfmpegInstaller.java", "FfmpegInstaller");
-        MethodTree worker = installer.method("runInstall");
-        assertBefore(compact(worker), "FfmpegPackageDownload.unpack(", "FfmpegSupport.forceReprobe()", "Reprobe the unpacked executable, not package existence");
-        assertTrue(ifs(worker).stream().anyMatch(branch -> compact(branch.getCondition()).contains("FfmpegSupport.forceReprobe()!=null")
-                        && compact(branch.getThenStatement()).contains("finish(true,null)")
-                        && compact(branch.getElseStatement()).contains("finish(false,")), "Only a successful real reprobe may publish success");
-        assertTrue(compact(installer.method("start")).contains("thread.setDaemon(true)"));
     }
 
     @Test

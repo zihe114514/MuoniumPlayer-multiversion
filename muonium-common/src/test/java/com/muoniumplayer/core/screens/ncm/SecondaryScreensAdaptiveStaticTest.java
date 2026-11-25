@@ -36,7 +36,6 @@ class SecondaryScreensAdaptiveStaticTest {
     private static final String[] HOST_SCREENS = {
             "com/muoniumplayer/core/screens/GuiAnnouncements.java",
             "com/muoniumplayer/core/screens/GuiUpdateNotice.java",
-            "com/muoniumplayer/core/screens/GuiFfmpegNotice.java",
     };
 
     /** 共享层的两个括号消费方。 */

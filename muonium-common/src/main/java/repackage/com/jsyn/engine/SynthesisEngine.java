@@ -373,67 +373,126 @@ public class SynthesisEngine implements Synthesizer {
         public void run() {
             logger.fine("JSyn synthesis thread starting.");
 
-            if (audioInputStream != null) {
-                logger.fine("JSyn synthesis thread trying to start audio INPUT!");
-                audioInputStream.start();
-                mInputLatency = audioInputStream.getLatency();
-                String msg = String.format("Input Latency in = %5.1f msec",
-                        1000 * mInputLatency);
-                logger.fine(msg);
-            }
-            if (audioOutputStream != null) {
-                logger.fine("JSyn synthesis thread trying to start audio OUTPUT!");
-                audioOutputStream.start();
-                mOutputLatency = audioOutputStream.getLatency();
-                String msg = String.format("Output Latency = %5.1f msec",
-                        1000 * mOutputLatency);
-                logger.fine(msg);
-                // 在我们填充缓冲区的同时争取一点时间。
-                try {
-                    audioOutputStream.write(outputBuffer.interleavedBuffer);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
+            Throwable failure = null;
+            try {
+                if (audioInputStream != null) {
+                    logger.fine("JSyn synthesis thread trying to start audio INPUT!");
+                    audioInputStream.start();
+                    mInputLatency = audioInputStream.getLatency();
+                    String msg = String.format("Input Latency in = %5.1f msec",
+                            1000 * mInputLatency);
+                    logger.fine(msg);
                 }
-            }
-
-            while (go) {
-                try {
-
-                    boolean throttled = false;
-                    if (audioInputStream != null) {
-                        // 当输入为空时，此调用将被阻止。
-                        audioInputStream.read(inputBuffer.interleavedBuffer);
-                        throttled = true;
-                    }
-
-                    runAudioTasks();
-                    generateNextBuffer();
-
-                    if (audioOutputStream != null) {
-                        // 当输出已满时，此调用将阻塞。
+                if (audioOutputStream != null) {
+                    logger.fine("JSyn synthesis thread trying to start audio OUTPUT!");
+                    audioOutputStream.start();
+                    mOutputLatency = audioOutputStream.getLatency();
+                    String msg = String.format("Output Latency = %5.1f msec",
+                            1000 * mOutputLatency);
+                    logger.fine(msg);
+                    // 在我们填充缓冲区的同时争取一点时间。
+                    try {
                         audioOutputStream.write(outputBuffer.interleavedBuffer);
-                        throttled = true;
+                    } catch (IOException e) {
+                        if (go) throw new RuntimeException("JSyn audio output failed", e);
+                        return; // Requested stop; finally still releases both streams.
                     }
-                    if (!throttled && isRealTime()) {
-                        Thread.sleep(2); // 避免空转并消耗 CPU
+                }
+
+                while (go) {
+                    boolean audioIo = false;
+                    try {
+
+                        boolean throttled = false;
+                        if (audioInputStream != null) {
+                            // 当输入为空时，此调用将被阻止。
+                            audioIo = true;
+                            audioInputStream.read(inputBuffer.interleavedBuffer);
+                            audioIo = false;
+                            throttled = true;
+                        }
+
+                        runAudioTasks();
+                        generateNextBuffer();
+
+                        if (audioOutputStream != null) {
+                            // 当输出已满时，此调用将阻塞。
+                            audioIo = true;
+                            audioOutputStream.write(outputBuffer.interleavedBuffer);
+                            audioIo = false;
+                            throttled = true;
+                        }
+                        if (!throttled && isRealTime()) {
+                            Thread.sleep(2); // 避免空转并消耗 CPU
+                        }
+
+                    } catch (IOException problem) {
+                        if (go) throw new RuntimeException("JSyn audio I/O failed", problem);
+                        break;
+                    } catch (InterruptedException problem) {
+                        Thread.currentThread().interrupt();
+                        if (go) throw new RuntimeException("JSyn synthesis interrupted", problem);
+                        break;
+                    } catch (Throwable problem) {
+                        if (audioIo) {
+                            // Legacy input streams expose unchecked I/O failures.
+                            // Do not keep generating buffers for a failed device.
+                            if (problem instanceof Error) throw (Error) problem;
+                            if (!go) break;
+                            if (problem instanceof RuntimeException) throw (RuntimeException) problem;
+                            throw new RuntimeException("JSyn audio I/O failed", problem);
+                        }
+                        if (!go && Thread.currentThread().isInterrupted()) break;
+                        // Preserve the existing non-I/O synthesis-task policy.
+                        problem.printStackTrace();
                     }
-
-                } catch (Throwable e) {
-                    e.printStackTrace();
-//                go = false;
-
+                }
+            } catch (RuntimeException | Error problem) {
+                if (!go && problem instanceof RuntimeException) {
+                    // start() may wrap an interrupt from opening a native stream.
+                    Throwable cause = problem;
+                    for (int depth = 0; cause != null && depth < 16; depth++, cause = cause.getCause()) {
+                        if (cause instanceof InterruptedException || cause instanceof java.io.InterruptedIOException) {
+                            return;
+                        }
+                    }
+                }
+                failure = problem;
+                throw problem;
+            } finally {
+                // Cancellation must not skip close, including when start only partially opened.
+                boolean interrupted = Thread.interrupted();
+                Throwable cleanupFailure = null;
+                AutoCloseable[] cleanup = {
+                        () -> { if (audioInputStream != null) audioInputStream.stop(); },
+                        () -> { if (audioInputStream != null) audioInputStream.close(); },
+                        () -> { if (audioOutputStream != null) audioOutputStream.stop(); },
+                        () -> { if (audioOutputStream != null) audioOutputStream.close(); }
+                };
+                for (AutoCloseable action : cleanup) {
+                    try {
+                        action.close();
+                    } catch (Throwable problem) {
+                        if (cleanupFailure == null) cleanupFailure = problem;
+                        else if (cleanupFailure != problem) cleanupFailure.addSuppressed(problem);
+                    } finally {
+                        interrupted |= Thread.interrupted();
+                    }
+                }
+                if (interrupted) Thread.currentThread().interrupt();
+                logger.fine("JSyn synthesis thread exiting.");
+                if (cleanupFailure != null) {
+                    if (failure != null) {
+                        if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
+                    } else if (cleanupFailure instanceof Error) {
+                        throw (Error) cleanupFailure;
+                    } else if (cleanupFailure instanceof RuntimeException) {
+                        throw (RuntimeException) cleanupFailure;
+                    } else {
+                        throw new RuntimeException("Cannot release JSyn audio streams", cleanupFailure);
+                    }
                 }
             }
-
-            logger.info("JSyn synthesis thread in finally code.");
-            // 音频系统
-            if (audioInputStream != null) {
-                audioInputStream.stop();
-            }
-            if (audioOutputStream != null) {
-                audioOutputStream.stop();
-            }
-            logger.fine("JSyn synthesis thread exiting.");
         }
     }
 

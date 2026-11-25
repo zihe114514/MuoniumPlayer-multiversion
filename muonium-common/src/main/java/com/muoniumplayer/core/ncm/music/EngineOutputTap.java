@@ -42,6 +42,7 @@ public final class EngineOutputTap {
      * 已经约定好「此刻引擎该在」的时机调用。
      */
     public static void install() {
+        com.muoniumplayer.core.ncm.music.AudioPlayer.ensureAudioBackend();
         Engine.getEngine().setOutputObserver(EngineOutputTap::dispatch);
     }
 

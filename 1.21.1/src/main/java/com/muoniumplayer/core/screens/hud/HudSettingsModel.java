@@ -7,7 +7,6 @@ import com.muoniumplayer.core.ncm.music.ExternalPlayback;
 import com.muoniumplayer.core.ncm.music.FocusVolumeDucker;
 import com.muoniumplayer.core.ncm.music.VoicechatBroadcast;
 import com.muoniumplayer.core.ncm.music.FoliaModelManager;
-import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.cine.CineSettings;
 import com.muoniumplayer.core.ncm.music.MusicSpin;
 import com.muoniumplayer.core.ncm.music.TransparentMode;
@@ -751,16 +750,9 @@ public final class HudSettingsModel {
         }
     }
 
-    /**
-     * 动态封面依赖外部 ffmpeg。已经探测过但没找到时把结论写进标签，否则用户只会看到「开着却没动画」。
-     * 这里只读缓存结论，不会在渲染线程上真的去探测（那会创建子进程并卡帧）。
-     */
+    /** 动态封面开关的显示名称。 */
     public static String animatedCoverLabel() {
-        try {
-            return CloudMusic.animatedCoverToolingState() < 0 ? "动态封面 · 未检测到 ffmpeg" : "动态封面";
-        } catch (Throwable ignored) {
-            return "动态封面";
-        }
+        return "动态封面";
     }
 
     /** 让旧版模块包装器的尺寸值与持久化视口保持一致。 */
@@ -2171,7 +2163,7 @@ public final class HudSettingsModel {
                                     public String get() {
                                         return animatedCoverLabel();
                                     }
-                                }, "歌卡和全屏页用会动的封面（MP4 / GIF）。没装 ffmpeg 或关掉就用静图。",
+                                }, "歌卡和全屏页用会动的封面（MP4 / GIF）。关闭后使用静图。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.animatedCoverEnabled;

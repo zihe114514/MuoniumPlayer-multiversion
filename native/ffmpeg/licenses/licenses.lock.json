@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "reviewedOn": "2026-11-25",
+  "purpose": "Reproducible upstream license-text staging for the universal audio runtime, not an assertion of full distribution compliance",
+  "files": [
+    {
+      "file": "ffmpeg-LICENSE.txt",
+      "bytes": 4346,
+      "sha256": "2e1d16c72fd74e12063776371da757322f8b77589386532f4fd8634bde7de1af",
+      "component": "ffmpeg",
+      "originKind": "official-source-archive-member",
+      "sourceUrl": "https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz",
+      "sourceSha256": "464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c",
+      "archiveMember": "ffmpeg-8.1.2/LICENSE.md",
+      "transformation": "none; byte-for-byte copy"
+    },
+    {
+      "file": "ffmpeg-COPYING.LGPLv2.1.txt",
+      "bytes": 26517,
+      "sha256": "246041b6ecf9bc32d718a62c57877c78b5eb397b6467e74ed7ae2626ab189c30",
+      "component": "ffmpeg",
+      "originKind": "official-source-archive-member",
+      "sourceUrl": "https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz",
+      "sourceSha256": "464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c",
+      "archiveMember": "ffmpeg-8.1.2/COPYING.LGPLv2.1",
+      "transformation": "none; byte-for-byte copy"
+    },
+    {
+      "file": "ffmpeg-COPYING.LGPLv3.txt",
+      "bytes": 7651,
+      "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+      "component": "ffmpeg",
+      "originKind": "official-source-archive-member",
+      "sourceUrl": "https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz",
+      "sourceSha256": "464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c",
+      "archiveMember": "ffmpeg-8.1.2/COPYING.LGPLv3",
+      "transformation": "none; byte-for-byte copy"
+    },
+    {
+      "file": "ffmpeg-COPYING.GPLv3.txt",
+      "bytes": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+      "component": "ffmpeg",
+      "originKind": "official-source-archive-member",
+      "sourceUrl": "https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz",
+      "sourceSha256": "464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c",
+      "archiveMember": "ffmpeg-8.1.2/COPYING.GPLv3",
+      "transformation": "none; byte-for-byte copy"
+    },
+    {
+      "file": "openssl-LICENSE.txt",
+      "bytes": 10175,
+      "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+      "component": "openssl",
+      "originKind": "official-source-archive-member",
+      "sourceUrl": "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz",
+      "sourceSha256": "a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8",
+      "archiveMember": "openssl-3.5.7/LICENSE.txt",
+      "transformation": "none; byte-for-byte copy"
+    },
+    {
+      "file": "zlib-README.txt",
+      "bytes": 5317,
+      "sha256": "d106dcdb2a0b3087cb3a2380b9f00a0bbadc7eb835cd80408f94a2d78d69727d",
+      "component": "zlib",
+      "originKind": "official-source-archive-member",
+      "sourceUrl": "https://zlib.net/fossils/zlib-1.3.1.tar.gz",
+      "sourceSha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+      "archiveMember": "zlib-1.3.1/README",
+      "transformation": "none; byte-for-byte copy"
+    },
+    {
+      "file": "javacpp-LICENSE.txt",
+      "bytes": 31556,
+      "sha256": "bd5f6b1276fd448f016115dcd4a39ee6f5e3ce32441a0cccdb9e6370e9df5434",
+      "component": "javacpp",
+      "originKind": "official-upstream-release-file",
+      "repository": "https://github.com/bytedeco/javacpp",
+      "releaseTag": "1.5.14",
+      "releaseCommit": "d7ee5be30f28a6ea5f84a001d2222b17407a3db0",
+      "sourceUrl": "https://raw.githubusercontent.com/bytedeco/javacpp/d7ee5be30f28a6ea5f84a001d2222b17407a3db0/LICENSE.txt",
+      "transformation": "none; original CRLF preserved"
+    },
+    {
+      "file": "javacpp-presets-LICENSE.txt",
+      "bytes": 31556,
+      "sha256": "bd5f6b1276fd448f016115dcd4a39ee6f5e3ce32441a0cccdb9e6370e9df5434",
+      "component": "javacpp-presets",
+      "originKind": "official-upstream-release-file",
+      "repository": "https://github.com/bytedeco/javacpp-presets",
+      "releaseTag": "1.5.14",
+      "releaseCommit": "d57d8a28635211e174df378611cb1952f751c943",
+      "sourceUrl": "https://raw.githubusercontent.com/bytedeco/javacpp-presets/d57d8a28635211e174df378611cb1952f751c943/LICENSE.txt",
+      "transformation": "none; original CRLF preserved"
+    },
+    {
+      "file": "certifi-LICENSE.txt",
+      "bytes": 989,
+      "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
+      "component": "certifi",
+      "originKind": "official-wheel-member",
+      "sourceUrl": "https://files.pythonhosted.org/packages/6d/39/5eec3296860b94ac20bb8ed807725b88f6adfab3f343df592afd975f5f86/certifi-2026.11.20-py3-none-any.whl",
+      "sourceSha256": "7422df25243767b9877031a2248cb14d09ddac9beee846f4cef3d5c9191d488f",
+      "archiveMember": "certifi-2026.11.20.dist-info/licenses/LICENSE",
+      "transformation": "none; byte-for-byte copy"
+    }
+  ],
+  "inspectedJavaArtifacts": [
+    {
+      "coordinate": "org.bytedeco:javacpp:1.5.14",
+      "sourceUrl": "https://repo.maven.apache.org/maven2/org/bytedeco/javacpp/1.5.14/javacpp-1.5.14.jar",
+      "sourceSha256": "cb95a82ce1c337690436017eb8886597de71c1463dc16a3570f6a96b7c98a82b",
+      "embeddedLicenseNoticeEntries": [],
+      "licenseTextSource": "corresponding 1.5.14 upstream LICENSE.txt copied above; not an invented JAR member"
+    },
+    {
+      "coordinate": "org.bytedeco:ffmpeg:8.1.2-1.5.14",
+      "sourceUrl": "https://repo.maven.apache.org/maven2/org/bytedeco/ffmpeg/8.1.2-1.5.14/ffmpeg-8.1.2-1.5.14.jar",
+      "sourceSha256": "1bc7d6db5ef4d8fee1b3be8cd6b2e3ef8409cb7be630f290c4d5d82d2a2fa079",
+      "embeddedLicenseNoticeEntries": [],
+      "licenseTextSource": "corresponding 1.5.14 upstream LICENSE.txt copied above; not an invented JAR member"
+    }
+  ],
+  "stockNativeBoundary": "Stock FFmpeg codec libraries can statically include upstream external dependencies; component trimming does not remove their notices/obligations. Preserve per-platform stock/mixed/source-built provenance and collect the actual upstream dependency notices before any future authorized release."
+}

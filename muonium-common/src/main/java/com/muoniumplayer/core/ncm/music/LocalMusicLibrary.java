@@ -52,9 +52,10 @@ public final class LocalMusicLibrary {
     private static final Object LOCK = new Object();
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
 
-    /** 支持的音频扩展名，与 {@code AudioContainerSupport.SUPPORTED_CONTAINERS} 对齐（ogg 明确不支持）。 */
+    /** 本地扫描的音频扩展名；最终是否含可解码音轨由 native 探测确认。 */
     private static final Set<String> AUDIO_EXTENSIONS = new LinkedHashSet<>(Arrays.asList(
-            "mp3", "flac", "wav", "m4a", "aac", "mp4"));
+            "mp3", "mp2", "flac", "wav", "m4a", "aac", "mp4", "ogg", "opus",
+            "ape", "wv", "wma", "aif", "aiff", "mka", "mkv", "ac3", "eac3", "caf"));
 
     private static boolean loaded;
     /** 保持插入顺序；重复添加按「目录已登记」处理而不是报错。 */

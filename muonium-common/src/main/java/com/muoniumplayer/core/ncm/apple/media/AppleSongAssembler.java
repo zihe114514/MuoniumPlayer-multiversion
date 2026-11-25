@@ -23,7 +23,7 @@ import java.util.List;
  *   <li>输出 ftyp + moov + mdat。</li>
  * </ol>
  *
- * <p>与 ffmpeg -c copy 产物等价,纯 JVM 无子进程;典型 4MB 歌曲亚秒级。
+ * <p>在 JVM 内重封装已解密的音频样本，不创建子进程。
  * tfhd/trun 解析覆盖 Apple 流实际形态(durations/sizes 逐样本给出);
  * 与 {@link AppleCencDecryptor} 共享盒遍历原语。</p>
  */
@@ -165,7 +165,7 @@ public final class AppleSongAssembler {
             int subCount = u16(data, cursor);
             cursor += 2;
             // Apple AAC 每样本固定 1024 个 PCM 样帧(trun 不带 duration 字段),
-            // ffprobe 174.05s = 7496×1024/44100 与此完全吻合
+            // 记录样本数与样本率即可换算媒体时长。
             durations.add(1024);
             int sampleSize = 0;
             for (int sub = 0; sub < subCount; sub++) {

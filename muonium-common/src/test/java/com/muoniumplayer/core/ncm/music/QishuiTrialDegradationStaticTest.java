@@ -105,7 +105,7 @@ class QishuiTrialDegradationStaticTest {
                 "试听播放路径要点亮试听标记（UI 徽标的依据）");
         assertTrue(init.contains("lastStreamIncomplete = false"),
                 "试听继续播就不算播放失败——不能触发后续换源救援文案");
-        assertTrue(init.contains("musicFile.delete()"),
+        assertTrue(init.contains("AudioCacheFiles.invalidatePlayableAudio(musicFile)"),
                 "换源开启（或非汽水）时维持现状：删试听缓存，防止旧键命中坏缓存");
         // automix 两条预备路径同判据
         String arm = methodBody(cloud, "private void armTrack(");

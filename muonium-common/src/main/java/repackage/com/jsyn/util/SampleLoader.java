@@ -20,13 +20,10 @@ import lombok.SneakyThrows;
 import repackage.com.jsyn.data.DownmixSample;
 import repackage.com.jsyn.data.FloatSample;
 import repackage.com.jsyn.util.soundfile.CustomSampleLoader;
-import repackage.com.jsyn.util.soundfile.streamed.buffered.BufferedSampleLoader;
 import repackage.com.jsyn.util.soundfile.streamed.raf.RafSampleLoader;
-import repackage.javazoom.jl.converter.Converter;
 
 import java.io.*;
 import java.net.URL;
-import java.nio.file.Files;
 
 /**
  * 从各种来源加载FloatSample。默认加载器使用自定义代码加载WAV或AIF
@@ -73,28 +70,14 @@ public class SampleLoader {
         return loader.loadFloatSample(inputStream);
     }
 
+    /** Reads prepared disk PCM. All compressed inputs are decoded by the native audio service first. */
     @SneakyThrows
     public static FloatSample loadStreamedFloatSample(File fileIn) {
-
-        String name = fileIn.getName();
-        if (name.endsWith(".flac")) {
-            // FLAC 的 StreamInfo 声道数原样透传：5.1 环绕声会建成 6 声道 FloatSample，
-            // 而播放引擎只认 1/2 声道（mono/stereo 读头 + 端口声道数校验）。出口统一
-            // 降混成立体声，1/2 声道的样本原样归还（零包装开销）。
-            return DownmixSample.stereoOrSame(new BufferedSampleLoader()
-                    .loadFromFlacStream(new BufferedInputStream(Files.newInputStream(fileIn.toPath()))));
-        } else if (name.endsWith(".wav")) {
-            // WAV 的声道数来自 fmt 头，同样原样透传（多声道 WAV 走这里），出口同上。
-            return DownmixSample.stereoOrSame(new RafSampleLoader()
-                    .loadFloatSample(new RandomAccessFile(fileIn, "r")));
-        } else if (name.endsWith(".mp3")) {
-            Converter converter = new Converter();
-            return DownmixSample.stereoOrSame(loadFloatSample(
-                    new ByteArrayInputStream(converter.convert(Files.newInputStream(fileIn.toPath()), null, null))));
-        } else {
-            throw new RuntimeException("Extension not supported: " + name.substring(name.lastIndexOf(".")));
+        if (!fileIn.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".wav")) {
+            throw new IOException("Streamed playback requires FFmpeg-prepared PCM WAV: " + fileIn.getName());
         }
-
+        return DownmixSample.stereoOrSame(new RafSampleLoader()
+                .loadFloatSample(new RandomAccessFile(fileIn, "r")));
     }
 
     /**

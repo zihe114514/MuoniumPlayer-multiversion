@@ -316,3 +316,6 @@ tasks.register('dumpBundleDeps') {
 // 与 F:/donked/新建文件夹 (3) 下的服务端 mod 是同一套线协议，因此本播放器与 Melodify
 // 可以在同一个房间里一起听。
 // （mpparty-common 已在上面的 sourceSets 里声明，不再追加。）
+
+// In-process FFmpeg: slim Windows bundled; other native dependencies install on demand.
+apply from: rootProject.file('../gradle/ffmpeg-audio.gradle')

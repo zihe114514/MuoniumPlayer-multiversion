@@ -65,8 +65,8 @@ public class GuiAnnouncements extends GuiScreen {
      * <p>与 {@link GuiUpdateNotice#tickAutoShow(Minecraft)} 同样用轮询而不是界面切换事件：
      * 公告是在后台线程上拉的，主菜单出现的那一刻往往还没回来。</p>
      *
-     * <p>排在更新提示之后调用，所以 ffmpeg / 更新提示任一在屏幕上时这里读到的当前界面不是主菜单，
-     * 本 tick 直接跳过 —— 三个提示天然排队，不会互相盖掉。</p>
+     * <p>排在更新提示之后调用，更新提示在屏幕上时这里读到的当前界面不是主菜单，
+     * 本 tick 直接跳过 —— 两个提示天然排队，不会互相盖掉。</p>
      */
     public static void tickAutoShow(Minecraft mc) {
         if (mc == null) {

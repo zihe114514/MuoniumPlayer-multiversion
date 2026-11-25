@@ -1,0 +1,268 @@
+{
+  "schemaVersion": 1,
+  "reviewedOn": "2026-11-25",
+  "ffmpegVersion": "8.1.2",
+  "javaCppVersion": "1.5.14",
+  "ffmpegMavenVersion": "8.1.2-1.5.14",
+  "minimumJava": 17,
+  "bundleClassifierPolicy": "windows-embedded-other-on-demand",
+  "platforms": [
+    "windows-x86_64",
+    "linux-x86_64",
+    "android-arm64"
+  ],
+  "unsupportedOrUnconfirmedPlatforms": {
+    "windows-arm64": "FFmpeg 8.1.2-1.5.14 classifier is not published; no support claim"
+  },
+  "libraries": {
+    "avutil": 60,
+    "swresample": 6,
+    "avcodec": 62,
+    "avformat": 62,
+    "swscale": 9
+  },
+  "components": {
+    "decoders": [
+      "aac",
+      "aac_latm",
+      "ac3",
+      "eac3",
+      "alac",
+      "amrnb",
+      "amrwb",
+      "ape",
+      "dca",
+      "dsd_lsbf",
+      "dsd_msbf",
+      "dsd_lsbf_planar",
+      "dsd_msbf_planar",
+      "flac",
+      "mlp",
+      "mp1float",
+      "mp2float",
+      "mp3float",
+      "opus",
+      "speex",
+      "tak",
+      "truehd",
+      "tta",
+      "vorbis",
+      "wavpack",
+      "wmav1",
+      "wmav2",
+      "wmapro",
+      "wmalossless",
+      "adpcm_ima_wav",
+      "adpcm_ms",
+      "gsm_ms",
+      "pcm_alaw",
+      "pcm_mulaw",
+      "pcm_u8",
+      "pcm_s8",
+      "pcm_s8_planar",
+      "pcm_s16le",
+      "pcm_s16be",
+      "pcm_s16le_planar",
+      "pcm_s16be_planar",
+      "pcm_s24le",
+      "pcm_s24be",
+      "pcm_s24le_planar",
+      "pcm_s32le",
+      "pcm_s32be",
+      "pcm_s32le_planar",
+      "pcm_s64le",
+      "pcm_s64be",
+      "pcm_f16le",
+      "pcm_f24le",
+      "pcm_f32le",
+      "pcm_f32be",
+      "pcm_f64le",
+      "pcm_f64be",
+      "pcm_u16le",
+      "pcm_u16be",
+      "pcm_u24le",
+      "pcm_u24be",
+      "pcm_u32le",
+      "pcm_u32be",
+      "pcm_bluray",
+      "pcm_dvd",
+      "h264",
+      "hevc"
+    ],
+    "demuxers": [
+      "aac",
+      "ac3",
+      "eac3",
+      "aiff",
+      "amr",
+      "ape",
+      "asf",
+      "caf",
+      "iff",
+      "dsf",
+      "dts",
+      "flac",
+      "hls",
+      "loas",
+      "matroska",
+      "mlp",
+      "mov",
+      "mp3",
+      "mpegts",
+      "ogg",
+      "spdif",
+      "tak",
+      "truehd",
+      "tta",
+      "w64",
+      "wav",
+      "wv"
+    ],
+    "parsers": [
+      "aac",
+      "aac_latm",
+      "ac3",
+      "dca",
+      "flac",
+      "mlp",
+      "mpegaudio",
+      "opus",
+      "tak",
+      "vorbis",
+      "h264",
+      "hevc"
+    ],
+    "protocols": [
+      "file",
+      "subfile",
+      "pipe",
+      "http",
+      "https",
+      "httpproxy",
+      "tcp",
+      "tls",
+      "crypto"
+    ]
+  },
+  "configureBase": [
+    "--disable-autodetect",
+    "--disable-everything",
+    "--disable-programs",
+    "--disable-doc",
+    "--disable-debug",
+    "--disable-avdevice",
+    "--disable-avfilter",
+    "--disable-encoders",
+    "--disable-muxers",
+    "--disable-filters",
+    "--disable-devices",
+    "--disable-hwaccels",
+    "--disable-gpl",
+    "--disable-nonfree",
+    "--enable-version3",
+    "--enable-shared",
+    "--disable-static",
+    "--enable-pic",
+    "--enable-small",
+    "--enable-runtime-cpudetect",
+    "--enable-avutil",
+    "--enable-swresample",
+    "--enable-avcodec",
+    "--enable-avformat",
+    "--enable-swscale",
+    "--enable-network",
+    "--enable-openssl",
+    "--enable-zlib"
+  ],
+  "externalDependencies": {
+    "openssl": "3.5.7 (static into FFmpeg shared libraries; TLS backend)",
+    "zlib": "1.3.1 (static; HTTP content encoding / Matroska compressed headers)",
+    "caRoots": "certifi 2026.11.20 Mozilla CA snapshot; included as resource; host must set ca_file and tls_verify=1"
+  },
+  "audioContract": {
+    "internalPcm": "float PCM; sample rate and AVChannelLayout explicit; conversion only when required",
+    "maxChannelsPolicy": "runtime policy; FFmpeg build must retain channel layouts and swresample rematrixing",
+    "resampler": "native libswresample; no libsoxr dependency",
+    "streamingInput": "reserved direct avformat path with interrupt/deadline and finite PCM queue; no unbounded file or heap accumulation"
+  },
+  "streaming": {
+    "required": [
+      "HTTP",
+      "HTTPS",
+      "ICY / Icecast HTTP response metadata",
+      "HLS / M3U8 master and media playlists",
+      "MPEG-TS AAC/MP3 segments",
+      "fMP4 / CMAF audio segments",
+      "AES-128 HLS through FFmpeg crypto protocol",
+      "HTTPS transport with explicit runtime trust options; identity audit deferred"
+    ],
+    "notClaimed": [
+      "DRM / Widevine / FairPlay",
+      "SAMPLE-AES / CENC decryption",
+      "DASH",
+      "RTMP / RTSP / RTP / UDP / SRT",
+      "arbitrary M3U / PLS station-list parsing",
+      "automatic reconnect policy or application UI implemented merely by enabling FFmpeg"
+    ]
+  },
+  "featureEvidence": [
+    {
+      "requirement": "Downloaded audio and container probe",
+      "files": [
+        "muonium-common/src/main/java/com/muoniumplayer/core/ncm/music/AudioContainerSupport.java",
+        "muonium-common/src/main/java/com/muoniumplayer/core/ncm/music/AudioCacheFiles.java",
+        "muonium-common/src/main/java/com/muoniumplayer/core/ncm/music/CloudMusic.java"
+      ],
+      "retained": "WAV, FLAC, MPEG audio, ADTS AAC, MP4/M4A and Ogg; plus explicit optional music/container decoder headroom"
+    },
+    {
+      "requirement": "Broadcast radio",
+      "files": [
+        "muonium-common/src/main/java/com/muoniumplayer/core/ncm/music/LiveStreamPlayer.java",
+        "muonium-common/src/main/java/com/muoniumplayer/core/ncm/music/LiveStreamSession.java"
+      ],
+      "retained": "HTTP long-lived MP3 stream; bounded buffering, cancellation, pause, volume, station ownership; headers/ICY metadata must remain available"
+    },
+    {
+      "requirement": "Animated video cover",
+      "files": [
+        "muonium-common/src/main/java/com/muoniumplayer/core/ncm/music/VideoCoverFrames.java"
+      ],
+      "retained": "In-process JavaCPP H.264/HEVC decode and libswscale conversion to bounded RGBA frames; application owns frame/dimension/time budgets, sampling, padding, cancellation and static-cover fallback. No subprocess, PNG encoder or libavfilter pipeline."
+    },
+    {
+      "requirement": "HLS/HTTPS future streams",
+      "files": [],
+      "retained": "Explicit user requirement on 2026-11-25; demuxers/protocols compiled now; application stream session, TLS trust export, runtime protocol whitelist and tests still required"
+    },
+    {
+      "requirement": "FLAC legacy trailing TAG local bounded view",
+      "files": [
+        "muonium-common/src/main/java/com/muoniumplayer/core/audio/ffmpeg/LocalFileReadView.java",
+        "muonium-common/src/main/java/com/muoniumplayer/core/audio/ffmpeg/FfmpegAudioDecoder.java"
+      ],
+      "retained": "subfile input protocol plus file; exact FFmpeg 8.1.2 subfile start/end view, preserving strict FLAC CRC/STREAMINFO validation without editing source or adding codec fallback"
+    }
+  ],
+  "verificationBoundary": "Exact-release registry/configuration validation is not native compilation or runtime verification. Source builds target Windows x64, Linux x64 and Android arm64 only; stock on-demand classifiers are not source-slim evidence. Video-cover runtime tests remain separate from audio smoke.",
+  "tlsHardening": {
+    "status": "deferred",
+    "enabledByDefault": false,
+    "coreBuildGate": false,
+    "profile": "--tls-hardening (optional source patches), --tls-identity-tests (optional QA)",
+    "openSslBackendFollowUps": [
+      "FFmpeg 8.1.2 numeric-IP certificate identity check",
+      "HLS TLS-option propagation",
+      "redirect and HLS nested URL identity tests",
+      "plain HTTP/local playlist changing to HTTPS needs application per-open trust injection"
+    ],
+    "otherTlsBackends": "Schannel/GnuTLS/etc need independent identity tests; OpenSSL patch is not evidence for them",
+    "productionSecurityClaim": false
+  },
+  "onDemandStockPlatforms": [
+    "linux-arm64",
+    "macosx-x86_64",
+    "macosx-arm64",
+    "android-x86_64"
+  ]
+}

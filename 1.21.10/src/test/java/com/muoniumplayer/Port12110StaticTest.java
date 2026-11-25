@@ -46,8 +46,8 @@ class Port12110StaticTest {
             ProjectPaths.fabric().resolve(Paths.get("src", "main", "resources"));
     private static final Path GUI_SCREEN =
             ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "mc", "GuiScreen.java"));
-    private static final Path FFMPEG_NOTICE =
-            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "screens", "GuiFfmpegNotice.java"));
+    private static final Path UPDATE_NOTICE =
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "screens", "GuiUpdateNotice.java"));
     private static final Path SKIJA_HOST =
             ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "render", "skija", "SkijaHost.java"));
     private static final Path ATLAS_BRIDGE =
@@ -132,10 +132,10 @@ class Port12110StaticTest {
         assertTrue(guiScreen.contains("mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount)"),
                 "GuiEventListener#mouseScrolled 在 1.21.10 仍是水平/垂直两分量的四参");
 
-        String notice = stripComments(read(FFMPEG_NOTICE));
-        // 这个提示整套界面在 Skija 上（FfmpegNoticeOverlay），宿主只开帧、转发输入、关闭时返回。
-        assertTrue(notice.contains("FfmpegNoticeOverlay"),
-                "提示界面必须由 Skija 浮层渲染（FfmpegNoticeOverlay），不要退回原版控件自绘");
+        String notice = stripComments(read(UPDATE_NOTICE));
+        // 这个提示整套界面在 Skija 上（UpdateNoticeOverlay），宿主只开帧、转发输入、关闭时返回。
+        assertTrue(notice.contains("UpdateNoticeOverlay"),
+                "提示界面必须由 Skija 浮层渲染（UpdateNoticeOverlay），不要退回原版控件自绘");
         // 曾经这里用 RenderSystem.getModelViewStack() 缩放标题。那是给 3D 世界用的 Matrix4fStack，
         // 而 GUI 文字由 GuiGraphics 自己的 pose 栈定位，两者不相干——于是标题按未变换坐标
         // 画到屏幕左上角、左半被裁掉，一直没被发现。

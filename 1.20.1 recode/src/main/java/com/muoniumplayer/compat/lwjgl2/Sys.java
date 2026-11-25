@@ -11,7 +11,7 @@ public final class Sys {
     private Sys() {
     }
 
-    /** @return 是否成功交给系统处理（异常即视为失败，调用方 GuiFfmpegNotice 会退到剪贴板方案） */
+    /** @return 是否成功交给系统处理（异常即视为失败） */
     public static boolean openURL(String url) {
         try {
             Util.getPlatform().openUri(url);

@@ -44,7 +44,16 @@ class SkijaTrailWiringStaticTest {
             assertTrue(host.contains("drawGpuTrailCanvas(io.github.humbleui.skija.Picture"), port);
             assertTrue(host.contains("return drawTrailCanvas(null, picture"), port);
             assertTrue(host.contains("return drawTrailCanvas(px, null"), port);
-            assertTrue(host.contains("if (picture != null) return false;"), port + ": GPU rejection must not poison raster path");
+            int drawStart = host.indexOf("private boolean drawTrailCanvas(int[] px, io.github.humbleui.skija.Picture");
+            int drawEnd = host.indexOf("int argb =", drawStart);
+            assertTrue(drawStart >= 0 && drawEnd > drawStart, port);
+            String draw = host.substring(drawStart, drawEnd);
+            java.util.regex.Matcher gpuFailure = java.util.regex.Pattern.compile(
+                    "if \\(picture != null\\)\\s*(?:return false;|\\{\\s*"
+                            + "trailCanvasPictureCache\\[slot\\]\\.invalidate\\(\\);\\s*return false;\\s*\\})")
+                    .matcher(draw);
+            assertTrue(gpuFailure.find(), port + ": GPU rejection must return without setting the raster error flag");
+            assertTrue(gpuFailure.end() < draw.indexOf("trailCanvasError = true;"), port);
         }
         Path root = ProjectPaths.repoRoot();
         String gpu = Files.readString(root.resolve("muonium-common/src/main/java/com/muoniumplayer/render/skija/SkijaTrailRenderer.java"));

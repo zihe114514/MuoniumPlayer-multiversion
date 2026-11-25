@@ -17,7 +17,7 @@ import java.util.List;
  *
  * <p>只暴露本项目实际用到的那部分生命周期与工具方法，方法名/签名/protected 修饰
  * 全部与 1.8.9 一致，因此 {@code NCMScreen} / {@code CoverflowOverlay} /
- * {@code GuiHudEditor(Pro)} / {@code GuiFfmpegNotice} 只需要改 import。
+ * {@code GuiHudEditor(Pro)} 只需要改 import。
  *
  * <p>键盘事件的形状差异是移植里唯一需要留意的地方：1.8.9 一次
  * {@code keyTyped(char, int)} 同时给出字符和键码；1.20.1 拆成

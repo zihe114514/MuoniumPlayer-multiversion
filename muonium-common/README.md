@@ -21,6 +21,15 @@
 
 版本差异放各树 compat，加载器注册放各树外壳。共享层零加载器符号；新共享文件直接放这里，不需要先复制七份或运行去重迁移器。
 
+## 统一音频解码与输出
+
+共享音频入口位于 `core/audio/ffmpeg`，使用匹配的 JavaCPP `1.5.14` / FFmpeg `8.1.2`；文件、HTTP/HTTPS 和 HLS 输入共用音轨探测、解码和 `libswresample` 转换。输入选项、取消、时长/seek 能力及 native 指针所有权见 [解码接口说明](src/main/java/com/muoniumplayer/core/audio/ffmpeg/README.md)。
+
+- 当前歌曲保留按来源下载/解密再准备磁盘 PCM 的行为，解码与离线分析不再调用外部 ffmpeg 或单独的 Java codec 库。动态视频封面复用同一套 JavaCPP native，通过 H.264/HEVC 与 swscale 输出有界 RGBA 帧；不再探测、安装或调用外部 FFmpeg。
+- 电台直接解码网络流并提交有界 OpenAL 队列，不无限落盘；暂停时结束当前流，恢复时重新连接直播边缘。保留房间/镜像互斥、音量/失焦、未知总时长和广播排除。
+- OpenAL 为音乐和电台的统一设备后端，float32 优先。输出 API 具备 5.1(side)/7.1 能力，实际扩展必须验证；现有 JSyn/ViPER/AUTOMIX 主歌曲混音仍是立体声，不能将底层多声道能力写成整个主链已贯通。
+- 每个 MC/加载器目标仍只有一个 MOD：默认内置精简 Windows x64 原生库；Android arm64、Linux x64 首次使用时按需下载精简包。公开描述 `src/main/resources/muonium/ffmpeg-native.properties` 钉版本、大小、SHA-256 和多条下载线路；复用现有镜像竞速并展示在依赖管理界面。存储凭据不进入客户端。`native/ffmpeg` 保存源码白名单、Windows依赖输入与原生构建配方，其他平台停止本轮精简投入。
+
 ## 场景声学的共享边界
 
 `core/ncm/music/acoustics` 统一持有计划推导、采样调度、双耳延迟、早期反射和 FDN；世界/方块采样仍在七树 `ListenerProbe`，不把 MC 版本差异搬进共享业务。

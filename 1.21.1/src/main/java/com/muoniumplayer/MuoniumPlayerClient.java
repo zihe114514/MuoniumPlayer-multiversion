@@ -6,13 +6,11 @@ import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.MusicHotkeys;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.ExternalPlayback;
-import com.muoniumplayer.core.ncm.music.FfmpegNotice;
 import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.GuiAnnouncements;
-import com.muoniumplayer.core.screens.GuiFfmpegNotice;
 import com.muoniumplayer.core.screens.GuiUpdateNotice;
 import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
 import com.muoniumplayer.core.screens.hud.MConfigHudScreen;
@@ -183,11 +181,6 @@ public final class MuoniumPlayerClient {
         // 2. 初始化 MuoniumPlayer 音乐扩展（注册事件处理器、模块、Widget）
         MuoniumPlayerExtension.getInstance().init(this.api);
 
-        // 3. 动态封面与 B 站音频解析都要外部 ffmpeg。这里只是在守护线程上探一次并把结论缓存下来：
-        //    缺少时由 GuiFfmpegNotice 在主菜单弹一次全屏提示，同时也让 HUD 编辑器的「未检测到 ffmpeg」
-        //    标签在用户放第一首歌之前就有结论。探测会创建子进程，绝不能放在主线程上。
-        FfmpegNotice.beginProbe();
-
         // 4. 更新检查：守护线程上最多拉一次远端版本清单（结果缓存 30 分钟，失败静默），
         //    有新版本时由 GuiUpdateNotice 在主菜单弹一次提示。检查不可关闭，用户只能「先不更新」有限几次。
         UpdateChecker.beginCheck(MOD_VERSION, MC_VERSION, loaderId);
@@ -261,15 +254,7 @@ public final class MuoniumPlayerClient {
         if (mc.player != null && !Float.isNaN(spinPitch)) {
             mc.player.setXRot(spinPitch);
         }
-        // ---- 缺少 ffmpeg 的一次性全屏提示 ----
-        // 每 tick 问一次而不是在界面切换事件里换掉主菜单：探测在后台线程上跑，主菜单出现的那一刻
-        // 结论往往还没出来，换 GUI 只有一次机会，轮询则下一 tick 再问一次就行。内部自带
-        // 「本次启动只弹一次」与「永不展示」两道闸，条件不满足时只是一次布尔判断。
-        GuiFfmpegNotice.tickAutoShow(mc);
-
         // ---- 有新版本的一次性主菜单提示 ----
-        // 与上面 ffmpeg 那条同构，闸门也一样在内部：本次启动只弹一次 / 先不更新有次数上限。
-        // ffmpeg 提示已经占住界面时，这里读到的当前界面不是主菜单，本 tick 直接跳过 —— 两个提示天然排队。
         GuiUpdateNotice.tickAutoShow(mc);
 
         // ---- 有未读公告时的一次性主菜单提示 ----

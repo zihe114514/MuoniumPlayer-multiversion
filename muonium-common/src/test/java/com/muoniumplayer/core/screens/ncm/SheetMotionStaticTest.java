@@ -40,7 +40,7 @@ class SheetMotionStaticTest {
     /** 各自继承 {@code NCMPanel}、但同样接上 {@link SheetClock} 的那几层。 */
     private static final String[] STANDALONE = {
             "ConfirmationOverlay.java", "AddToPlaylistOverlay.java", "ThemePaletteOverlay.java",
-            "FfmpegNoticeOverlay.java", "ModelInstallNoticeOverlay.java",
+            "ModelInstallNoticeOverlay.java",
             "UpdateNoticeOverlay.java"};
 
     /** 独立内容中心有自己的分层编排，不走 NcmSheet，也不退回单块浮层的短时钟。 */

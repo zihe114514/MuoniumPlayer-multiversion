@@ -97,7 +97,6 @@ class SharedLayoutStaticTest {
             // --- 聊天音乐卡：onPress/onButton 描述符与 26.3 SDL 按键状态桥各树适配 ---
             "com/muoniumplayer/mixin/ChatIslandMouseMixin.java",
             "com/muoniumplayer/core/screens/GuiAnnouncements.java",
-            "com/muoniumplayer/core/screens/GuiFfmpegNotice.java",
             "com/muoniumplayer/core/screens/GuiUpdateNotice.java",
             "com/muoniumplayer/core/screens/RenderLayerNotice.java",
             "com/muoniumplayer/core/screens/TitleMenuAnnouncementButton.java",

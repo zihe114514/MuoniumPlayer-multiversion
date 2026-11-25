@@ -708,6 +708,8 @@ final class LyricLoadService {
         if (playbackFile == null || !playbackFile.isFile()) {
             return null;
         }
+        File original = NativeAudioPreparation.originalSource(playbackFile);
+        if (original != null && original.isFile()) return original;
         String name = playbackFile.getName();
         final String decodedSuffix = ".decoded.wav";
         if (!name.endsWith(decodedSuffix)) {

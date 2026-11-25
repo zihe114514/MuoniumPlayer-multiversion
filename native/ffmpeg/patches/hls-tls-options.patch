@@ -1,0 +1,8 @@
+--- a/libavformat/aviobuf.c
++++ b/libavformat/aviobuf.c
+@@ -996,3 +996,4 @@
+     const char *opts[] = {
+-        "headers", "user_agent", "cookies", "http_proxy", "referer", "rw_timeout", "icy", NULL };
++        "headers", "user_agent", "cookies", "http_proxy", "referer", "rw_timeout", "icy",
++        "tls_verify", "ca_file", NULL };
+     const char **opt = opts;

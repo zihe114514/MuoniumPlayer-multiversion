@@ -413,7 +413,7 @@ public final class ConfigPaths {
     /**
      * 每首歌手动设置的歌词时间轴偏移（毫秒）。
      *
-     * <p>与 {@link #FFMPEG_NOTICE} 同理单独一个文件：这是用户对某首歌的补偿值，读失败的代价只是
+     * <p>单独一个文件：这是用户对某首歌的补偿值，读失败的代价只是
      * 「这首歌回到零偏移」，不该有机会影响播放器主配置的读写。</p>
      */
     public static final File LYRIC_OFFSETS = new File(CONFIG_DIRECTORY, "lyric_offsets.json");
@@ -440,19 +440,13 @@ public final class ConfigPaths {
     /** Skija 原生库的确定性回退解压目录。 */
     public static final File SKIJA_NATIVE_ROOT = new File(CONFIG_DIRECTORY, "native/skija");
 
-    /**
-     * 「没装 ffmpeg」全屏提示的「永不展示」选择。
-     *
-     * <p>刻意单独一个文件而不是塞进 {@link #HUD}：这个提示要在<b>主菜单</b>就决定要不要弹，
-     * 那时 HUD 配置的读写路径还牵着一整套 HUD 组件；单独一个只有一个布尔值的小文件，读失败也
-     * 只是「再提示一次」，不会影响任何别的设置。</p>
-     */
-    public static final File FFMPEG_NOTICE = new File(CONFIG_DIRECTORY, "ffmpeg_notice.json");
+    /** Versioned JavaCPP FFmpeg audio natives, installed on first use. */
+    public static final File FFMPEG_NATIVE_ROOT = new File(CONFIG_DIRECTORY, "native/ffmpeg");
 
     /**
      * 更新提示的开关、被跳过的版本号与远端清单缓存。
      *
-     * <p>与 {@link #FFMPEG_NOTICE} 同理单独一个文件：这个提示同样要在<b>主菜单</b>就决定要不要弹，
+     * <p>单独一个文件：这个提示同样要在<b>主菜单</b>就决定要不要弹，
      * 读失败的代价只是「多打一次网络请求、多提示一次」，不该有机会影响任何别的设置。
      * 把 {@code enabled} 改成 {@code false} 就是彻底关掉更新检查（连网络都不会打）。</p>
      */
@@ -483,7 +477,7 @@ public final class ConfigPaths {
     /**
      * 界面字体的选择（哪一款系统字体或哪一个字体文件）。
      *
-     * <p>与 {@link #FFMPEG_NOTICE} 同理单独一个文件：字体要在 {@code FontManager.init()} 里就读到，
+     * <p>单独一个文件：字体要在 {@code FontManager.init()} 里就读到，
      * 那时 HUD 配置那一整套组件还没建起来；而读失败的代价仅是回到内置字体，不该有机会影响
      * 任何别的设置。</p>
      */
@@ -501,7 +495,7 @@ public final class ConfigPaths {
     /**
      * 已导入的 LX Music 自定义源脚本，以及当前启用的是哪一个。
      *
-     * <p>与 {@link #FFMPEG_NOTICE} 同理单独一个文件，但理由更硬：里面存的是用户导入的
+     * <p>单独一个文件：里面存的是用户导入的
      * <b>脚本正文</b>（压缩后的 base64，单个可能几十 KB）。把它们摆进 {@link #PLAYER}
      * 会让播放器主配置胀成百 KB，而那个文件是每次改设置都要重写一遍的；
      * 更关键的是一份写坏的脚本存档不能有机会把整个主配置一起拘进去。</p>
@@ -511,7 +505,7 @@ public final class ConfigPaths {
     /**
      * 私人 FM 的模式选择（模式 + 场景子模式）。
      *
-     * <p>与 {@link #FFMPEG_NOTICE} 同理单独一个文件：这只是「上次选了哪个推荐模式」两三个字符串，
+     * <p>单独一个文件：这只是「上次选了哪个推荐模式」两三个字符串，
      * 读失败的代价仅是回到默认推荐，不该有机会影响播放器主配置的读写。</p>
      */
     public static final File PERSONAL_FM_MODE = new File(CONFIG_DIRECTORY, "personal_fm_mode.json");

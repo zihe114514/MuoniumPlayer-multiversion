@@ -157,10 +157,9 @@ public final class BilibiliMusicService {
     /**
      * 为<b>下载</b>解析音轨：允许返回 FLAC/杜比。
      *
-     * <p>播放与下载分成两条是有原因的。{@link AacAudioDecoder} 是围绕 {@code fnval=80} 的
-     * AAC-LC 分片 MP4 写的，只解析 {@code tfhd}/{@code trun} 的一个子集；把 30251(FLAC)
-     * 或 30250(杜比) 塞进播放链路会直接解不出来。下载落盘后交给外部工具或后续解码器处理，
-     * 所以只有这一条路径开放高解析档位。</p>
+     * <p>播放保持现有的 AAC-LC 选流策略，下载路径则允许在账号权限满足时选择高解析音轨。
+     * 这两条路径只决定来源侧的选流范围，落盘文件的容器探测和解码统一由
+     * {@link NativeAudioPreparation} 处理。</p>
      */
     public static ResolveResult getDownloadUrl(String sourceId) {
         return resolve(sourceId, Quality.LOSSLESS, true);
@@ -226,8 +225,7 @@ public final class BilibiliMusicService {
             String urlValue = firstNonBlank(string(chosen, "baseUrl"), string(chosen, "base_url"));
             if (urlValue.isEmpty()) throw new IllegalStateException("Bilibili audio stream has no URL");
             long bandwidth = longValue(chosen, "bandwidth");
-            // Bilibili 纯音频 DASH 是分片 MP4。返回 "mp4" 可让现有的
-            // 字节级检测器和 AacAudioDecoder 继续负责真实容器。
+            // Bilibili 纯音频 DASH 是分片 MP4；返回来源提示，真实容器由统一 native 核心探测。
             return new ResolveResult(urlValue, "mp4", bandwidth, track);
         } catch (Throwable throwable) {
             System.err.println("[Music/Bilibili] Song URL failed for " + nonBlank(sourceId) + ": "

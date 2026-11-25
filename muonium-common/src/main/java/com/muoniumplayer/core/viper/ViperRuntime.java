@@ -328,6 +328,7 @@ public final class ViperRuntime {
             if (installed) {
                 return;
             }
+            com.muoniumplayer.core.ncm.music.AudioPlayer.ensureAudioBackend();
             Engine.getEngine().setOutputProcessor(PROCESSOR);
             installed = true;
             System.out.println("[MuoniumPlayer/ViPER] 输出处理器已挂接（" + ConfigPaths.VIPER_DIR + "）");

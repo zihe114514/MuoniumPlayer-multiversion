@@ -2499,7 +2499,7 @@ public class CloudMusic implements SharedConstants {
                     // Windows 上先释放解码器句柄再删除试听缓存；只在后台队列等待，避免占用状态锁。
                     AudioPlayer.releaseLater(() -> {
                         try {
-                            musicFile.delete();
+                            AudioCacheFiles.invalidatePlayableAudio(musicFile);
                         } catch (Throwable ignored) {
                         }
                     });
@@ -2817,7 +2817,8 @@ public class CloudMusic implements SharedConstants {
  * GD Studio 曲目回退到另一个健康的 GD 源。
  */
         private File getValidationFallbackFile(Music song, String failedUrl, RuntimeException primaryFailure) {
-            if (song == null || !(song.isNetease() || song.isGd())) {
+            if (Thread.currentThread().isInterrupted()
+                    || song == null || !(song.isNetease() || song.isGd())) {
                 throw primaryFailure;
             }
 
@@ -2835,7 +2836,7 @@ public class CloudMusic implements SharedConstants {
                         + song.getStableKey() + "; retrying "
                         + (song.isGd() ? "another GD source." : "standard MP3."));
                 return getCachedOrTempFile(standardPlayUrl.getA(),
-                        AudioContainerSupport.normalizeReportedContainer(standardPlayUrl.getB()), song);
+                        AudioContainerSupport.normalizeReportedContainer(standardPlayUrl.getB()), song, true);
             } catch (RuntimeException standardFailure) {
                 primaryFailure.addSuppressed(standardFailure);
                 throw primaryFailure;
@@ -2888,11 +2889,16 @@ public class CloudMusic implements SharedConstants {
  * 所以缓存扩展名必须跟随下载到的字节，而不是上报的 URL 类型。
  *
  * <p>本方法只剩委托：真正的落盘序列在 {@link #cachedAudioFile}，与房间的提前下载共用同一条。
- * 实播比那条序列多出来的唯一一步是 {@link #resolvePlayableAudioFile}（AAC/MP4 转 WAV 边车），
+ * 实播比那条序列多出来的唯一一步是 {@link #resolvePlayableAudioFile}（native 解码与 PCM 缓存），
  * 那是「能不能出声」的事，提前下载不做。</p>
  */
         private File getCachedOrTempFile(String playUrl, String type, Music song) {
             return resolvePlayableAudioFile(cachedAudioFile(playUrl, type, song, quality, true), song);
+        }
+
+        private File getCachedOrTempFile(String playUrl, String type, Music song, boolean forceReload) {
+            return resolvePlayableAudioFile(
+                    cachedAudioFile(playUrl, type, song, quality, true, forceReload), song);
         }
 
         /**
@@ -2915,24 +2921,30 @@ public class CloudMusic implements SharedConstants {
  */
         static File cachedAudioFile(String playUrl, String type, Music song, Quality quality,
                                     boolean downloadIfMissing) {
+            return cachedAudioFile(playUrl, type, song, quality, downloadIfMissing, false);
+        }
+
+        private static File cachedAudioFile(String playUrl, String type, Music song, Quality quality,
+                                            boolean downloadIfMissing, boolean forceReload) {
             // 只读探测不能被后台下载挡住；半成品不会以音频扩展名暴露。
-            if (!downloadIfMissing) return cachedAudioFileLocked(playUrl, type, song, quality, false);
+            if (!downloadIfMissing) return cachedAudioFileLocked(playUrl, type, song, quality, false, false);
             // 手动点歌可能与自动预取命中同一曲；复用在途缓存，而不是互删同一个 .download。
             synchronized (audioPreparationLock(song, playUrl)) {
                 if (Thread.currentThread().isInterrupted()) throw new IllegalStateException("Audio preparation cancelled");
-                return cachedAudioFileLocked(playUrl, type, song, quality, downloadIfMissing);
+                return cachedAudioFileLocked(playUrl, type, song, quality, downloadIfMissing, forceReload);
             }
         }
 
         private static File cachedAudioFileLocked(String playUrl, String type, Music song, Quality quality,
-                                                  boolean downloadIfMissing) {
+                                                  boolean downloadIfMissing, boolean forceReload) {
             File musicCacheDir = MusicAudioCache.directory();
             if (!musicCacheDir.exists() && !musicCacheDir.mkdirs()) {
                 throw new IllegalStateException("Unable to create music cache directory: " + musicCacheDir.getAbsolutePath());
             }
 
             String cacheKey = audioCacheKey(song, quality.getQuality());
-            File cachedMusic = AudioCacheFiles.findCachedAudioFile(musicCacheDir, cacheKey, type);
+            File cachedMusic = forceReload ? null
+                    : AudioCacheFiles.findCachedAudioFile(musicCacheDir, cacheKey, type);
             if (cachedMusic != null) {
                 // 命中也要记一笔：容量淘汰只看 lastModified 的话，一首常听但下载得早的歌
                 // 会被当成最冷的缓存删掉。
@@ -2978,8 +2990,12 @@ public class CloudMusic implements SharedConstants {
                 // 归因说清是「文件本身不是受支持的音频」，与下载链的容器校验同一立场。
                 final String container = AudioContainerSupport.detectContainer(localFile);
                 if (!AudioContainerSupport.isSupportedContainer(container)) {
-                    throw new IllegalStateException("本地文件不是受支持的音频容器: "
-                            + localFile.getName());
+                    try {
+                        NativeAudioPreparation.probe(localFile);
+                    } catch (IOException | LinkageError failure) {
+                        throw new IllegalStateException("本地音频 native 探测失败: " + localFile.getName(), failure);
+                    }
+                    throw new IllegalStateException("本地文件没有可解码的音轨: " + localFile.getName());
                 }
                 MusicAudioCache.touch(localFile);
                 return localFile;
@@ -3009,10 +3025,19 @@ public class CloudMusic implements SharedConstants {
 
             String actualType = AudioContainerSupport.detectContainer(temporaryMusic);
             if (!AudioContainerSupport.isSupportedContainer(actualType)) {
-                temporaryMusic.delete();
-                throw new IllegalStateException("Downloaded audio has an unsupported or invalid container: " + cacheKey);
+                try {
+                    NativeAudioPreparation.probe(temporaryMusic);
+                } catch (IOException | LinkageError failure) {
+                    throw new IllegalStateException("Downloaded audio native probe failed: " + cacheKey, failure);
+                }
+                throw new IllegalStateException("Downloaded payload has no decodable audio track: " + cacheKey);
             }
 
+            if (forceReload) {
+                // The alternate URL must replace the rejected raw source and every derived product.
+                // This runs only after the replacement download and native audio probe succeeded.
+                AudioCacheFiles.invalidateCacheKey(musicCacheDir, cacheKey, temporaryMusic);
+            }
             File music = new File(musicCacheDir, cacheKey + "." + actualType);
             if (music.exists()) {
                 String existingType = AudioContainerSupport.detectContainer(music);
@@ -3035,12 +3060,11 @@ public class CloudMusic implements SharedConstants {
         }
 
         /**
- * JSyn 可以直接流式播放 MP3 和 WAV。FLAC、AAC/ADTS、OGG 与 ISO-BMFF 载荷会被解码
- * 一次并写入经过校验的 WAV 边车。解码器只接受 AAC 音轨，因此纯视频、
- * DRM 保护或不支持的 MP4 流仍然会安全失败。
+ * 所有文件由统一 JavaCPP FFmpeg 探测并解码为经过完整校验的 float32 WAV。
+ * 音轨选择由 native 核心完成；当前 JSyn 只消费磁盘 PCM，不再自行选择压缩解码器。
  */
         static File resolvePlayableAudioFile(File sourceFile, Music song) {
-            // AAC/WAV 边车也只能有一个写入者；锁在转码结束就释放，不包含模型分析。
+            // 文件 PCM 缓存只能有一个写入者；锁在准备结束就释放，不包含模型分析。
             synchronized (audioPreparationLock(song, sourceFile.getAbsolutePath())) {
                 if (Thread.currentThread().isInterrupted()) throw new IllegalStateException("Audio preparation cancelled");
                 return resolvePlayableAudioFileLocked(sourceFile, song);
@@ -3048,73 +3072,39 @@ public class CloudMusic implements SharedConstants {
         }
 
         private static File resolvePlayableAudioFileLocked(File sourceFile, Music song) {
-            String container = AudioContainerSupport.detectContainer(sourceFile);
-            if (!AudioContainerSupport.isSupportedContainer(container)) {
-                throw new IllegalStateException("Cached audio has an unsupported or invalid container: "
-                        + sourceFile.getName());
-            }
-            if (!AudioContainerSupport.requiresAacDecode(container)
-                    && !AudioContainerSupport.requiresOggDecode(container)
-                    && !AudioContainerSupport.requiresFlacDecode(container)) {
-                return sourceFile;
-            }
-
             File decodedFile = AudioCacheFiles.getDecodedWavFile(sourceFile);
-            if (AudioCacheFiles.isReusableDecodedWav(sourceFile, decodedFile)) {
-                return decodedFile;
+            if (AudioCacheFiles.isReusableDecodedWav(sourceFile, decodedFile)) return decodedFile;
+            String container = AudioContainerSupport.detectContainer(sourceFile);
+            if (container == null) {
+                // Preserve the native failure/cause rather than calling a load error "bad extension".
+                try {
+                    NativeAudioPreparation.probe(sourceFile);
+                } catch (IOException | LinkageError failure) {
+                    throw new IllegalStateException("Native audio probe failed: " + sourceFile.getName(), failure);
+                }
+                throw new IllegalStateException("Native audio probe returned no container: " + sourceFile.getName());
             }
-            if (decodedFile.exists() && !decodedFile.delete()) {
-                throw new IllegalStateException("Unable to replace invalid decoded audio cache: "
-                        + decodedFile.getName());
-            }
-            // 本地文件的边车落在模组缓存深处（按路径哈希分目录），父目录可能还不存在；
-            // 下载缓存里的边车目录本来就是现成的，多调一次无妨。
-            if (decodedFile.getParentFile() != null) {
-                decodedFile.getParentFile().mkdirs();
-            }
-
             long transcodeStartedAt = System.currentTimeMillis();
-            // 卡片上写歌名和真实容器，别再暴露 <缓存键>_<音质>.mp4 这种磁盘名；
-            // 拿不到歌名时 trackDisplayName 会退到「当前歌曲」。
             String trackName = trackDisplayName(song, null);
             String targetFormat = audioFileExtension(decodedFile.getName());
-            // 房间预热走到这里时不给当前曲目挂「转码中」卡片：转的不是正在播的这一首。
             final boolean quietTranscode = quietDownload();
             if (!quietTranscode) {
                 DownloadDynamicIsland.beginTranscode(trackName, container, targetFormat);
             }
             try {
-                // 两个解码器的进度回调共用同一个挡点闭包：转码卡片挡点保持 4 处
-                // （begin/进度/cancel/finish，RoomPrefetchStaticTest 的哨兵计数钉着）。
-                final java.util.function.DoubleConsumer transcodeProgress =
-                        progress -> {
-                            if (!quietTranscode) {
-                                DownloadDynamicIsland.updateTranscodeProgress(trackName, progress);
-                            }
-                        };
-                if (AudioContainerSupport.requiresOggDecode(container)) {
-                    OggAudioDecoder.decodeToWav(sourceFile, decodedFile, transcodeProgress::accept);
-                } else if (AudioContainerSupport.requiresFlacDecode(container)) {
-                    FlacAudioDecoder.decodeToWav(sourceFile, decodedFile, transcodeProgress);
-                } else {
-                    AacAudioDecoder.decodeToWav(sourceFile, container, decodedFile, transcodeProgress::accept);
-                }
-                if (!AudioCacheFiles.isReusableDecodedWav(sourceFile, decodedFile)) {
-                    throw new IOException("Decoded audio cache is invalid: " + sourceFile.getName());
-                }
-            } catch (Throwable exception) {
+                final java.util.function.DoubleConsumer transcodeProgress = progress -> {
+                    if (!quietTranscode) {
+                        DownloadDynamicIsland.updateTranscodeProgress(trackName, progress);
+                    }
+                };
+                // All inputs, including MP3/WAV and audio tracks in video containers, use one decoder.
+                NativeAudioPreparation.decodeToWav(sourceFile, decodedFile, transcodeProgress);
+            } catch (IOException | LinkageError failure) {
                 if (!quietTranscode) {
                     DownloadDynamicIsland.cancelTranscode(trackName);
                 }
-                if (decodedFile.exists()) {
-                    decodedFile.delete();
-                }
-                if (AudioCacheFiles.isManagedCacheFile(sourceFile)
-                        && sourceFile.exists() && !sourceFile.delete()) {
-                    System.err.println("[NCM] Unable to remove undecodable audio cache: " + sourceFile.getName());
-                }
-                throw new IllegalStateException("Unable to decode " + container
-                        + " audio into a playable WAV cache", exception);
+                // The transaction owns only its .part; source and previous completed PCM survive.
+                throw new IllegalStateException("Native audio decode failed: " + sourceFile.getName(), failure);
             }
             MusicAudioCache.enforceLimitAsync();
             if (!quietTranscode) {
@@ -3134,13 +3124,6 @@ public class CloudMusic implements SharedConstants {
                 return null;
             }
             return fileName.substring(extensionIndex + 1).toLowerCase(java.util.Locale.ROOT);
-        }
-
-        private void discardLegacyDecodedWav(File sourceFile) {
-            File decodedFile = AudioCacheFiles.getDecodedWavFile(sourceFile);
-            if (decodedFile.exists() && !decodedFile.delete()) {
-                System.err.println("[NCM] Unable to remove legacy MP4 decoded cache: " + decodedFile.getName());
-            }
         }
 
         private static void removeOtherQualityCaches(File musicCacheDir, Music song, String currentQuality) {
@@ -3731,7 +3714,7 @@ public class CloudMusic implements SharedConstants {
                         closeQuietly(deck);
                         deck = null;
                         try {
-                            file.delete();
+                            AudioCacheFiles.invalidatePlayableAudio(file);
                         } catch (Throwable ignored) {
                         }
                         armTrialClipRescue(song, index, armGeneration, armRevision);
@@ -4521,7 +4504,7 @@ public class CloudMusic implements SharedConstants {
                                 } else {
                                     closeQuietly(deck);
                                     deck = null;
-                                    file.delete();
+                                    AudioCacheFiles.invalidatePlayableAudio(file);
                                     throw new IllegalStateException(trialFailureReason(song));
                                 }
                             }
@@ -5410,13 +5393,6 @@ public class CloudMusic implements SharedConstants {
         return external != null ? external : music.getBlurredCoverLocation();
     }
 
-    /**
-     * 动态封面所需的 ffmpeg 是否就绪。返回 1 已找到、-1 探测过但没找到、0 尚未探测。
-     * 只读缓存结论,可以安全地在渲染线程里调用(HUD 编辑器用它给开关加一行提示)。
-     */
-    public static int animatedCoverToolingState() {
-        return MusicCoverService.ffmpegState();
-    }
     public static BufferedImage gaussianBlur(BufferedImage imgIn, int blur) {
         return MusicCoverService.gaussianBlur(imgIn, blur);
     }
@@ -5621,18 +5597,14 @@ public class CloudMusic implements SharedConstants {
     /**
      * 只找<b>已经存在</b>的可播文件，绝不转码、绝不删文件。
      *
-     * <p>与 {@link PlayThread#resolvePlayableAudioFile} 的区别就在这儿：那一条发现边车无效时会
-     * 删掉重转一遍，是播放路径的活儿；本方法是「现在就想知道有没有」，读不到就算没有。
-     * 压缩容器认那张可复用的 {@code .decoded.wav} 边车，其它容器就是缓存本体。</p>
+     * <p>所有文件都使用 native 准备出的 float32 PCM 缓存。本方法仅校验已存在的产物，
+     * 不解码、不删除源文件或旧成品；缺失或身份/完整性校验失败时返回 {@code null}。
+     * 文件哈希属于后台准备工作，不能在渲染或音频线程调用。</p>
      */
     static File existingPlayableAudioFile(Music song) {
         File cached = cachedAudioFileFor(song);
         if (cached == null || !cached.isFile()) return null;
         try {
-            String container = AudioContainerSupport.detectContainer(cached);
-            if (!AudioContainerSupport.requiresAacDecode(container)
-                    && !AudioContainerSupport.requiresOggDecode(container)
-                    && !AudioContainerSupport.requiresFlacDecode(container)) return cached;
             File decoded = AudioCacheFiles.getDecodedWavFile(cached);
             return AudioCacheFiles.isReusableDecodedWav(cached, decoded) ? decoded : null;
         } catch (Throwable ignored) {

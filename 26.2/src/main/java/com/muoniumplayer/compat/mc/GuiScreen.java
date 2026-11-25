@@ -20,7 +20,7 @@ import java.util.List;
  *
  * <p>只暴露本项目实际用到的那部分生命周期与工具方法，方法名/签名/protected 修饰
  * 全部与 1.8.9 一致，因此 {@code NCMScreen} / {@code CoverflowOverlay} /
- * {@code GuiHudEditor(Pro)} / {@code GuiFfmpegNotice} 只需要改 import。
+ * {@code GuiHudEditor(Pro)} 只需要改 import。
  *
  * <p>键盘事件的形状差异是移植里唯一需要留意的地方：1.8.9 一次
  * {@code keyTyped(char, int)} 同时给出字符和键码；原版拆成
@@ -42,7 +42,7 @@ public abstract class GuiScreen extends Screen {
     /**
      * 当前帧的 GUI 采集器，仅在 {@link #extractRenderState} 期间非 null。
      *
-     * <p>字段名保留 {@code currentDrawContext}：调用点（GuiFfmpegNotice 等）按这个名字读，
+     * <p>字段名保留 {@code currentDrawContext}：现有调用点按这个名字读，
      * 改名只是把一次类型变更放大成一片无意义的改动。26.2 里它的类型是
      * {@link GuiGraphicsExtractor}——GUI 绘制在 26.x 是「往 render state 里追加」，
      * 不再是即时绘制。

@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "reviewedOn": "2026-11-25",
+  "preset": {
+    "repository": "https://github.com/bytedeco/javacpp-presets",
+    "tag": "1.5.14",
+    "commit": "d57d8a28635211e174df378611cb1952f751c943",
+    "referenceScript": "ffmpeg/cppbuild.sh",
+    "referenceOnly": "Preset full build includes video/tools and extra third-party libraries. This recipe uses the release Java bindings + official FFmpeg source, without unrelated preset video patches."
+  },
+  "sources": {
+    "ffmpeg": {
+      "url": "https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz",
+      "sha256": "464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c",
+      "file": "ffmpeg-8.1.2.tar.xz",
+      "root": "ffmpeg-8.1.2"
+    },
+    "openssl": {
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz",
+      "sha256": "a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8",
+      "file": "openssl-3.5.7.tar.gz",
+      "root": "openssl-3.5.7"
+    },
+    "zlib": {
+      "url": "https://zlib.net/fossils/zlib-1.3.1.tar.gz",
+      "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+      "file": "zlib-1.3.1.tar.gz",
+      "root": "zlib-1.3.1"
+    },
+    "javacpp": {
+      "url": "https://repo.maven.apache.org/maven2/org/bytedeco/javacpp/1.5.14/javacpp-1.5.14.jar",
+      "sha256": "cb95a82ce1c337690436017eb8886597de71c1463dc16a3570f6a96b7c98a82b",
+      "file": "javacpp-1.5.14.jar"
+    },
+    "ffmpegJava": {
+      "url": "https://repo.maven.apache.org/maven2/org/bytedeco/ffmpeg/8.1.2-1.5.14/ffmpeg-8.1.2-1.5.14.jar",
+      "sha256": "1bc7d6db5ef4d8fee1b3be8cd6b2e3ef8409cb7be630f290c4d5d82d2a2fa079",
+      "file": "ffmpeg-8.1.2-1.5.14.jar"
+    },
+    "certifi": {
+      "url": "https://files.pythonhosted.org/packages/6d/39/5eec3296860b94ac20bb8ed807725b88f6adfab3f343df592afd975f5f86/certifi-2026.11.20-py3-none-any.whl",
+      "sha256": "7422df25243767b9877031a2248cb14d09ddac9beee846f4cef3d5c9191d488f",
+      "file": "certifi-2026.11.20-py3-none-any.whl"
+    }
+  },
+  "android": {
+    "ndkRevision": "28.2.13676358",
+    "api": 24,
+    "host": "linux-x86_64",
+    "pageAlignmentBytes": 16384,
+    "status": "Cross compile only in this workflow; launcher/device smoke still required",
+    "repositoryMetadata": "https://dl.google.com/android/repository/repository2-3.xml",
+    "sdkManagerPackage": "ndk;28.2.13676358",
+    "officialLinuxArchive": {
+      "url": "https://dl.google.com/android/repository/android-ndk-r28c-linux.zip",
+      "bytes": 722261334,
+      "sha1FromGoogleRepositoryMetadata": "a7b54a5de87fecd125a17d54f73c446199e72a64",
+      "downloadPolicy": "sdkmanager-managed toolchain; not embedded in MOD; archive not downloaded during this review"
+    }
+  },
+  "patches": [
+    {
+      "file": "patches/hls-tls-options.patch",
+      "sha256": "8996a15915b60ab84fb94114d375c1fbf36ad5b6eafb350822ae0b5c044749ae",
+      "target": "libavformat/aviobuf.c",
+      "upstreamSha256": "9d598da0b856348dcf39f020538309a615cbfb4f5ea72bd0e11fbfe8ed9ecf92",
+      "patchedSha256": "6a5bf7d9d816b4ed04e836b90c3c2b7d6682b0d84556f2491887dd84811b4281",
+      "reason": "Forward explicit TLS verify / CA settings from an existing HTTPS AVIOContext into HLS playlist/segment/key requests. Plain HTTP/local entry changing to HTTPS still requires application io_open trust injection.",
+      "profile": "tls-hardening",
+      "enabledByDefault": false,
+      "status": "deferred optional follow-up; not a core build gate"
+    },
+    {
+      "file": "patches/openssl-numeric-ip-identity.patch",
+      "sha256": "2fc90378e4072c9eeb8a533cd3ca5681991682e501269ff7a6d367bf46f1667c",
+      "target": "libavformat/tls_openssl.c",
+      "upstreamSha256": "3b59111c4bbdef0ed9f0773e7e0d7a63e55f8497c307d248ac742bfe14e6c3ab",
+      "patchedSha256": "18724909e6c1d4a4ed3860ef1d02c13c39ca4ecf87522961a9fd80744a8d8b35",
+      "profile": "tls-hardening",
+      "enabledByDefault": false,
+      "status": "deferred optional follow-up; not a core build gate",
+      "reason": "FFmpeg n8.1.2 OpenSSL sets hostname identity only for non-numeric targets. Use X509_VERIFY_PARAM_set1_ip_asc before SSL_connect for numeric clients; keep SNI hostname-only. Requires actual identity/redirect/HLS-child tests; not a stock security claim."
+    },
+    {
+      "file": "patches/disabled-dtls-udp-helper-guard.patch",
+      "sha256": "9ad7ef945d88c9e86c8abde23003dc19f33bf1b226fa8ab356ce1171226a4a0a",
+      "target": "libavformat/tls_openssl.c",
+      "upstreamSha256": "3b59111c4bbdef0ed9f0773e7e0d7a63e55f8497c307d248ac742bfe14e6c3ab",
+      "patchedSha256": "77ba219979a3dd00cdaaa2059960ca6f34cb2771f9cea4e21b79308de542542c",
+      "enabledByDefault": true,
+      "profileHashes": {
+        "tls-hardening": {
+          "upstreamSha256": "18724909e6c1d4a4ed3860ef1d02c13c39ca4ecf87522961a9fd80744a8d8b35",
+          "patchedSha256": "fe5250e22ca380285e3521abbc614b8595822d9ad01766c3961789e67a171075"
+        }
+      },
+      "reason": "Mandatory OpenSSL audio-only build fix: guard DTLS-only UDP helper references with CONFIG_DTLS_PROTOCOL from config_components.h when DTLS/UDP are disabled. Keep normal TLS/HTTPS enabled; apply after optional identity patches in lock order.",
+      "status": "required default source patch; separate from deferred certificate identity hardening"
+    }
+  ],
+  "licenseInventory": {
+    "file": "licenses/licenses.lock.json",
+    "sha256": "1a8e0b66cf8ac1e2dd7cd93174c93bb0150a277a85f04c8020f210397f224baa",
+    "destination": "META-INF/muonium/ffmpeg/licenses/",
+    "scope": "listed core/default-build dependencies; stock external-dependency notices are not claimed complete"
+  }
+}

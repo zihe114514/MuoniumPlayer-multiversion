@@ -1,0 +1,6 @@
+# Hash-pinned build inputs must be byte-stable on Windows and Linux.
+*.json text eol=lf
+*.py text eol=lf
+*.java text eol=lf
+*.sh text eol=lf
+*.patch -text -whitespace

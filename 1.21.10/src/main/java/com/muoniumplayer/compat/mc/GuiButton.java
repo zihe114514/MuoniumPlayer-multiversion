@@ -8,8 +8,7 @@ import net.minecraft.network.chat.Component;
 /**
  * 1.8.9 {@code net.minecraft.client.gui.GuiButton} 的兼容替身。
  *
- * <p>继承 1.20.1 的 {@link AbstractButton} 以复用原版按钮贴图与 hover/disabled 三态渲染
- * （GuiFfmpegNotice 明确要求「用原版控件，不依赖 Mod 自己的渲染栈」）。
+ * <p>继承 1.20.1 的 {@link AbstractButton} 以复用原版按钮贴图与 hover/disabled 三态渲染。
  * 1.8.9 的 {@code enabled} / {@code visible} / {@code displayString} 等公开字段
  * 在每次渲染前同步给父类的 {@code active} / {@code visible} / message。
  */

@@ -406,7 +406,7 @@ class QishuiThreadDecouplingStaticTest {
                 "要有平台支持判定（签名器 bdms.node 是 Windows 客户端原生模块）");
         String gate = methodBody(download, "public static boolean supportedPlatform()");
         assertTrue(gate.contains("os.name") && gate.contains("win"),
-                "判定按 os.name 含 win，与 FfmpegNotice.isWindows 同款（安卓 os.name=Linux 不会误判）");
+                "判定按 os.name 含 win（安卓 os.name=Linux 不会误判）");
         // 三个入口都要先过闸
         String missing = methodBody(download, "static void onBackendMissing()");
         assertTrue(missing.contains("!supportedPlatform()"),

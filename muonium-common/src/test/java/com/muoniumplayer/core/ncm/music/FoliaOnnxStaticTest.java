@@ -311,10 +311,10 @@ class FoliaOnnxStaticTest {
     void androidRoutesToOnnxWithoutTouchingJavaSound() throws IOException {
         String player = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music",
                 "AudioPlayer.java"));
-        int androidGate = player.indexOf("mappedPlatform().startsWith(\"android\")");
-        int javaSoundCtor = player.indexOf("new JavaSoundAudioDevice()");
-        assertTrue(androidGate >= 0 && javaSoundCtor > androidGate,
-                "安卓分支必须挡在 JavaSoundAudioDevice 构造之前");
+        assertTrue(player.contains("OpenALAudioDevice.createIfAvailable()"),
+                "所有平台的音乐输出安装同一 OpenAL 后端");
+        assertFalse(player.contains("new JavaSoundAudioDevice()"),
+                "不得初始化会在 Android 上与游戏抢上下文的 JavaSound bridge");
         String beat = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music",
                 "FoliaBeatThis.java"));
         assertTrue(beat.contains("preferOnnxInference()"),
