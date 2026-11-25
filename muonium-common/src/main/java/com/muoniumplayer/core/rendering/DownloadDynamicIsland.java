@@ -1,10 +1,13 @@
 package com.muoniumplayer.core.rendering;
 
+import com.muoniumplayer.automix.ui.AutomixIslandRenderer;
+import com.muoniumplayer.automix.ui.AutomixTransitionAnimation;
+
 import com.muoniumplayer.compat.gl.GL11;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
-import com.muoniumplayer.core.ncm.music.AutomixSettings;
+import com.muoniumplayer.automix.config.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.party.ui.PartyIcons;
@@ -2327,8 +2330,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             double mixWidth = AutomixIslandRenderer.targetWidth(screenWidth, configuredScale);
             double mixHeight = Math.min(AutomixIslandRenderer.MAX_HEIGHT,
                     Math.max(AutomixIslandRenderer.TARGET_HEIGHT, compactHeight + 2.0));
-            targetExpandedWidth = DynamicIslandMath.lerp(compactWidth, mixWidth, mixFrame.opacity);
-            targetExpandedHeight = DynamicIslandMath.lerp(compactHeight, mixHeight, mixFrame.opacity);
+            targetExpandedWidth = DynamicIslandMath.lerp(compactWidth, mixWidth, mixFrame.opacity());
+            targetExpandedHeight = DynamicIslandMath.lerp(compactHeight, mixHeight, mixFrame.opacity());
         }
         double expandedWidth;
         double expandedHeight;

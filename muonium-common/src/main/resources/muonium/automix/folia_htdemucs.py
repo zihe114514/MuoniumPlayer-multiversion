@@ -34,11 +34,13 @@ def build_window(segment):
 
 def make_session(model_path):
     options = ort.SessionOptions()
-    # These two flags are the reason this work runs under Python: they keep this graph's peak
-    # resident memory far below onnxruntime's defaults.
-    options.enable_cpu_mem_arena = False
-    options.enable_mem_reuse = False
-    options.intra_op_num_threads = 4
+    # 推理是后台预备任务，只保留一到两条算子线程，把渲染和音频核心让出来。
+    threads = max(1, min(2, (os.cpu_count() or 2) - 2))
+    options.intra_op_num_threads = threads
+    options.inter_op_num_threads = 1
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    options.add_session_config_entry("session.inter_op.allow_spinning", "0")
     return ort.InferenceSession(model_path, sess_options=options, providers=["CPUExecutionProvider"])
 
 

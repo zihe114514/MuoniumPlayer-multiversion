@@ -6,7 +6,7 @@ package com.muoniumplayer.core.ncm.music;
  * <p>当前音频准备使用磁盘 float32 PCM 与有界预取；此预算保留原容量策略，
  * 不再代表整首采样会常驻堆。RIFF 与旧 deck 的采样索引仍限制最大产物。</p>
  */
-final class PlaybackMemoryLimits {
+public final class PlaybackMemoryLimits {
 
     /** 16 位 PCM 在播放器的采样缓冲中变成 32 位浮点。 */
     private static final long HEAP_BYTES_PER_PCM_BYTE = 2L;
@@ -22,7 +22,7 @@ final class PlaybackMemoryLimits {
     }
 
     /** 可在不冒内存不足失败风险的情况下加载的最大已解码 PCM 载荷。 */
-    static long maxDecodedPcmBytes() {
+    public static long maxDecodedPcmBytes() {
         long heap = Runtime.getRuntime().maxMemory();
         long budget = heap == Long.MAX_VALUE ? MAX_PCM_BYTES * HEAP_BYTES_PER_PCM_BYTE : heap / HEAP_FRACTION;
         long pcmBytes = budget / HEAP_BYTES_PER_PCM_BYTE;

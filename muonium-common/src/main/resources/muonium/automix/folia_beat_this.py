@@ -2,6 +2,7 @@
 # Folia-compatible Beat This ONNX runner for MuoniumPlayer Folia mode.
 # The mel front-end and peak post-processing mirror the Folia reference contract.
 import json
+import os
 import sys
 
 import numpy as np
@@ -136,7 +137,13 @@ def main():
         raise RuntimeError('input is too short for Beat This')
 
     options = ort.SessionOptions()
-    options.intra_op_num_threads = 4
+    # 推理是后台预备任务，只保留一到两条算子线程，把渲染和音频核心让出来。
+    threads = max(1, min(2, (os.cpu_count() or 2) - 2))
+    options.intra_op_num_threads = threads
+    options.inter_op_num_threads = 1
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    options.add_session_config_entry("session.inter_op.allow_spinning", "0")
     session = ort.InferenceSession(
         model_path, sess_options=options, providers=['CPUExecutionProvider'])
     input_name = session.get_inputs()[0].name

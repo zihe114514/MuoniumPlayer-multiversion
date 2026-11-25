@@ -4,10 +4,26 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
+import com.muoniumplayer.automix.analysis.AutomixEnvelope;
+import com.muoniumplayer.automix.analysis.FoliaTrackProfiler;
+import com.muoniumplayer.automix.config.AutomixSettings;
+import com.muoniumplayer.automix.inference.AutomixWork;
+import com.muoniumplayer.automix.model.FoliaModelManager;
+import com.muoniumplayer.automix.planning.AutomixPlan;
+import com.muoniumplayer.automix.planning.AutomixPlanCache;
+import com.muoniumplayer.automix.planning.AutomixPlanner;
+import com.muoniumplayer.automix.planning.FoliaAutomixPlanner;
+import com.muoniumplayer.automix.planning.FoliaTransitionStyle;
+import com.muoniumplayer.automix.playback.AutomixAudioTasks;
+import com.muoniumplayer.automix.playback.AutomixTransitionEngine;
+import com.muoniumplayer.automix.playback.FoliaVocalStem;
+import com.muoniumplayer.automix.playback.RoomAutomix;
+import com.muoniumplayer.automix.ui.AutomixCueMarker;
+import com.muoniumplayer.automix.ui.AutomixTransitionAnimation;
+import com.muoniumplayer.automix.ui.AutomixTransitionCurve;
 import lombok.Getter;
 import lombok.SneakyThrows;
 import repackage.com.jsyn.exceptions.ChannelMismatchException;
-import repackage.processing.sound.Engine;
 import com.muoniumplayer.api.enums.EnumChatColor;
 import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.interfaces.SharedConstants;
@@ -17,7 +33,6 @@ import com.muoniumplayer.core.ncm.kugou.KuGouMusicApi;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.ncm.music.dto.User;
-import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.texture.DynamicTexture;
 import com.muoniumplayer.core.rendering.texture.Textures;
@@ -59,6 +74,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -951,7 +969,7 @@ public class CloudMusic implements SharedConstants {
      * 播放牌的缓冲）。把那段读数拿去比硬阈值，就会在淡入还没结束时对刚进来的播放牌做一次硬跳
      * —— 用户报的「automix 听感被截断」正是这么来的。</p>
      *
-     * <p>读的是渐变自己的进度：{@code AutomixFade.startedAt} 在暂停时会被平移，所以暂停中的
+     * <p>读的是执行器自己的渐变进度：暂停时由执行器平移内部时钟，所以暂停中的
      * 混音不会一边不动、一边把保护窗越推越长。</p>
      */
     public static long roomBlendRemainingMillis() {
@@ -1357,7 +1375,7 @@ public class CloudMusic implements SharedConstants {
 
     /**
      * 切换当前播放的暂停/继续。播放器界面的空格键与全局快捷键共用这一条路径，避免两处各写一份判空
-     * 逻辑之后行为慢慢分叉；正在进行的无缝淡化由 {@code driveAutomixFade} 一并挂起，这里不必特殊处理。
+     * 逻辑之后行为慢慢分叉；正在进行的无缝淡化由 {@code automixPlayback.tick} 一并挂起，这里不必特殊处理。
      *
      * @return 本次调用的实际结果；没有可操作的播放时返回 {@link PlayPauseResult#UNAVAILABLE}
      */
@@ -1829,6 +1847,8 @@ public class CloudMusic implements SharedConstants {
             } else if (active != null) {
                 active.interrupt();
             }
+            // 全局分析池只在游戏退出时关闭，普通切歌只取消所属任务。
+            AutomixWork.shutdown();
         }, "MuoniumPlayer-PlaybackShutdown"));
     }
 
@@ -1857,6 +1877,14 @@ public class CloudMusic implements SharedConstants {
         private volatile long islandRequestSession = Long.MIN_VALUE;
         /** 后台预备任务运行期间为 true，确保同一时间只有一次预备在进行。 */
         private volatile boolean arming;
+        /** 当前预备的所有权令牌；队列修订时取消其独占分析任务。 */
+        private volatile ArmPreparation armPreparation;
+
+        private static final class ArmPreparation {
+            private volatile boolean cancelled;
+            private volatile CompletableFuture<Void> analysis;
+            private final AtomicReference<AudioPlayer> pendingDeck = new AtomicReference<>();
+        }
         /** 当前曲目已进行的预备尝试次数：瞬时失败会重试，而彻底损坏则停止。 */
         private volatile int armAttempts;
         /** 下一次预备尝试可以开始的最早墙钟时间，即重试冷却时间。 */
@@ -1892,14 +1920,27 @@ public class CloudMusic implements SharedConstants {
         private volatile int audioPrefetchAttempts;
         /** 下一次音频预取可以开始的最早墙钟时间。 */
         private volatile long nextAudioPrefetchAt;
-        private volatile AutomixFade activeFade;
+        /** 仅托管宿主播放牌；曲线、暂停时钟和音频任务归独立执行器。 */
+        private final AutomixTransitionEngine<AudioPlayer> automixPlayback =
+                new AutomixTransitionEngine<>(AUTOMIX_DECKS, AutomixAudioTasks.INSTANCE,
+                        new AutomixTransitionEngine.Listener<AudioPlayer>() {
+                            @Override
+                            public void setPaused(boolean paused) {
+                                if (playThread == PlayThread.this) AutomixTransitionAnimation.setPaused(paused);
+                            }
+
+                            @Override
+                            public void releaseOutgoing(AudioPlayer outgoing) {
+                                releaseFadedDeck(outgoing);
+                            }
+                        });
         /**
          * 混音进行中有人拖了进度条，见 {@link #recordSeek()}。
          *
          * <p>与 {@link #manualSkipRequested} 同一套「别的线程只置位，本线程的 10 ms tick 消费」：
          * 收尾要动两张牌（把进场方拉平、把出场方放掉）还要撤掉过渡动画，那些都归这根线程管。
-         * 从界面线程直接 {@code finishAutomixFade()} 会跟正在跑的 {@code driveAutomixFade} 抢
-         * 同一个 {@code activeFade}，最坏的情况是两张牌各自被释放一次。</p>
+         * 从界面线程直接 {@code finishAutomixFade()} 会跟正在跑的 {@code automixPlayback.tick} 抢
+         * 同一个 {@code automixPlayback.current()}，最坏的情况是两张牌各自被释放一次。</p>
          */
         private volatile boolean seekDuringFadeRequested;
         /**
@@ -1909,22 +1950,50 @@ public class CloudMusic implements SharedConstants {
         private volatile long seamHoldUntil;
 
 
-        /**
- * 在监督 tick 收回曲线写入权之前，{@link AutomixFade#audioDrivenAt} 可以陈旧多久。
- *
- * <p>大约几个音频缓冲区的时长：足够长，使错过一个缓冲区不会让写入方来回切换；
- * 足够短，使死掉的音频任务在一个 10 ms tick 内就会被发现。</p>
- */
-        private static final long AUDIO_DRIVEN_WINDOW_MILLIS = 40L;
+        /** 包内播放牌方法的宿主适配；不在此计算曲线，也不改变原有直写路径。 */
+        private static final AutomixTransitionEngine.DeckAccess<AudioPlayer> AUTOMIX_DECKS =
+                new AutomixTransitionEngine.DeckAccess<AudioPlayer>() {
+                    @Override
+                    public boolean isPaused(AudioPlayer deck) {
+                        return deck.isUsable() && !deck.isFinished() && deck.isPausing();
+                    }
 
-        /**
- * 交叉淡化曲线的音频线程写入者，在混音运行的整个期间注册。
- *
- * <p>关于为什么值得拥有它，见 {@link #registerAutomixAudioTask()}；
- * 关于轮到它时做什么，见 {@link #writeTransitionFrameOnAudioThread()}。</p>
- */
-        private final Runnable automixAudioTask = this::writeTransitionFrameOnAudioThread;
-        private volatile boolean automixAudioTaskRegistered;
+                    @Override
+                    public boolean canPause(AudioPlayer deck) {
+                        return deck.isUsable() && !deck.isPausing();
+                    }
+
+                    @Override
+                    public void pause(AudioPlayer deck) { deck.pause(); }
+
+                    @Override
+                    public void resume(AudioPlayer deck) { deck.unpause(); }
+
+                    @Override
+                    public void stopForReplacement(AudioPlayer deck) { deck.stopForReplacement(); }
+
+                    @Override
+                    public void restore(AudioPlayer deck) {
+                        deck.setFadeGain(1.0f);
+                        deck.resetAutomixProcessing();
+                    }
+
+                    @Override
+                    public float loudnessGain(AudioPlayer deck) { return deck.appliedTrackLoudnessGain(); }
+
+                    @Override
+                    public void writeIncoming(AudioPlayer deck, float gain, float bassDb,
+                                              float vocalDepth, float midDb, float highDb) {
+                        deck.applyAutomixFrame(gain, bassDb, vocalDepth, midDb, highDb);
+                    }
+
+                    @Override
+                    public void writeOutgoing(AudioPlayer deck, float gain, float bassDb,
+                                              float vocalDepth, float midDb, float highDb,
+                                              float tempo, float pitch) {
+                        deck.applyOutgoingAutomixFrame(gain, bassDb, vocalDepth, midDb, highDb, tempo, pitch);
+                    }
+                };
 
         public PlayThread(List<Music> songs, int startIdx) {
             this(songs, startIdx, 0L);
@@ -2067,25 +2136,23 @@ public class CloudMusic implements SharedConstants {
             interrupt();
             AudioPlayer activePlayer;
             ArmedTrack prepared;
-            AutomixFade fade;
+            AutomixTransitionEngine.Transition<AudioPlayer> fade;
             synchronized (PLAYER_STATE_LOCK) {
                 cancelNaturalSelection();
                 cancelManualSelection();
                 activePlayer = ownedPlayer;
+                cancelArmPreparation();
                 prepared = armed;
                 armed = null;
-                fade = activeFade;
-                activeFade = null;
+                cancelTrackAnalysis(prepared);
+                fade = automixPlayback.detachForReplacement();
                 manualSkipRequested = false;
                 roomHandoverRequested = false;
                 seamHoldUntil = 0L;
-                unregisterAutomixAudioTask();
                 if (activePlayer != null) activePlayer.stopForReplacement();
                 if (prepared != null && prepared.deck != null) prepared.deck.stopForReplacement();
                 if (fade != null) {
-                    if (fade.outgoing != null) fade.outgoing.stopForReplacement();
-                    if (fade.incoming != null) fade.incoming.stopForReplacement();
-                    if (fadingOutPlayer == fade.outgoing) fadingOutPlayer = null;
+                    if (fadingOutPlayer == fade.outgoing()) fadingOutPlayer = null;
                 }
                 if (playThread == this) {
                     playing.set(false);
@@ -2103,8 +2170,8 @@ public class CloudMusic implements SharedConstants {
                     closeQuietly(activePlayer);
                     if (prepared != null) closeQuietly(prepared.deck);
                     if (fade != null) {
-                        closeQuietly(fade.outgoing);
-                        closeQuietly(fade.incoming);
+                        closeQuietly(fade.outgoing());
+                        closeQuietly(fade.incoming());
                     }
                 }
             });
@@ -2539,7 +2606,7 @@ public class CloudMusic implements SharedConstants {
                     seekDuringFadeRequested = false;
                     finishAutomixFade();
                 }
-                driveAutomixFade();
+                automixPlayback.tick(ownedPlayer);
                 if (manualSelection != null) {
                     if (tryManualSelectionHandover(activePlayer)) {
                         automixHandover = true;
@@ -3280,6 +3347,8 @@ public class CloudMusic implements SharedConstants {
             private volatile int replanCount;
             /** 复查正在后台算：算完把结果放进 {@link #replannedPlan}，由播放线程决定装不装。 */
             private volatile boolean replanning;
+            /** 队列作废或交接时主动中断，避免单工作线程继续计算过期计划。 */
+            private volatile CompletableFuture<Void> replanFuture;
             /**
              * 后台算好的新计划，等播放线程装上；没有就为 {@code null}。
              *
@@ -3306,59 +3375,6 @@ public class CloudMusic implements SharedConstants {
                 this.index = index;
                 this.generation = generation;
                 this.queueRevision = queueRevision;
-            }
-        }
-
-        /**
- * 进行中的交叉淡化。由墙钟驱动，使延迟尖峰无法拉长渐变，
- * 但播放暂停时时钟被保持静止——否则混音期间的暂停
- * 会让渐变在只有离场播放牌出声的情况下跑完。
- */
-        private static final class AutomixFade {
-            private final AudioPlayer outgoing;
-            private final AudioPlayer incoming;
-            private final AutomixPlan plan;
-            /**
- * 有效渐变长度。通常为 {@code plan.overlapMillis}，但当交接触发较晚时会缩短：
- * 在离场曲目已经结束后用四秒渐入，会让新歌从近乎静默中打开。
- */
-            private final long overlapMillis;
-            /**
- * 渐变读取进度 0 时的墙钟时间。
- *
- * <p>{@code volatile} 因为 JSyn 音频任务也会采样它：见
- * {@link #writeTransitionFrameOnAudioThread()}。</p>
- */
-            private volatile long startedAt;
-            private long tickedAt;
-            /** 仅当该淡化暂停了离场播放牌时为 true，确保它绝不会被意外恢复。 */
-            private boolean outgoingPaused;
-            /**
- * 活动播放牌暂停时要保持的进度，渐变运行时为 {@code -1}。
- *
- * <p>{@link #driveAutomixFade()} 在暂停时已经冻结 {@link #startedAt}，但它
- * 每个 tick 只能做一次；tick 之间墙钟会继续移动音频任务正在采样的渐变。
- * 发布保持的进度可以让音频任务在这些 tick 之间静止不动，
- * 而不是前冲之后再被拉回来。</p>
- */
-            private volatile double pausedProgress = -1.0;
-            /**
- * 音频任务写入最后一帧的墙钟时间，从未写入时为 {@code 0}。
- *
- * <p>tick 读取它来决定是否仍拥有曲线写入权：一个未能注册、抛错或不再被调用的
- * 音频任务只是停止更新它，tick 会在 {@code AUDIO_DRIVEN_WINDOW_MILLIS} 内重新接管。
- * 这样更高分辨率的路径永远不会把正常的过渡变成卡死的过渡。</p>
- */
-            private volatile long audioDrivenAt;
-
-            private AutomixFade(AudioPlayer outgoing, AudioPlayer incoming, AutomixPlan plan,
-                                long overlapMillis, long startedAt) {
-                this.outgoing = outgoing;
-                this.incoming = incoming;
-                this.plan = plan;
-                this.overlapMillis = Math.max(1L, overlapMillis);
-                this.startedAt = startedAt;
-                this.tickedAt = startedAt;
             }
         }
 
@@ -3398,15 +3414,15 @@ public class CloudMusic implements SharedConstants {
          * 用"播放下一首"排队其他内容会改变这一预测，因此修订号是有效性检查的一部分。
          */
         private boolean armStillValid(long armGeneration, long armRevision) {
-            return !isPlaybackCancelled() && !playListChanged() && !doBreak
-                    && manualSelection == null
+            return !Thread.currentThread().isInterrupted() && !isPlaybackCancelled()
+                    && !playListChanged() && !doBreak && manualSelection == null
                     && generation.get() == armGeneration
                     && CloudMusic.queueRevision == armRevision
                     && AutomixSettings.isEnabled();
         }
 
         private void maybePrepareNextForCrossfade(AudioPlayer activePlayer) {
-            if (manualSelection != null || naturalSelection != null || armed != null || activeFade != null) return;
+            if (manualSelection != null || naturalSelection != null || armed != null || automixPlayback.isActive()) return;
             if (AutomixSettings.isEnabled() && armAttempts < MAX_ARM_ATTEMPTS) return;
             if (naturalPrepareAttempts >= MAX_NATURAL_PREPARE_ATTEMPTS) return;
             if (awaitingPlaybackAction || dontAdd || personalFmActive || activePlayer == null
@@ -3628,24 +3644,30 @@ public class CloudMusic implements SharedConstants {
 
             armAttempts++;
             nextArmAt = now + ARM_RETRY_MILLIS;
-            arming = true;
+            final ArmPreparation preparation = new ArmPreparation();
+            synchronized (PLAYER_STATE_LOCK) {
+                if (!isSessionUsable(session)) return;
+                arming = true;
+                armPreparation = preparation;
+            }
             final long armGeneration = generation.get();
             final Music song = nextSong;
             final int index = nextIndex;
             final long armRevision = revision;
-            // 低优先级池：这条链是整首歌解码 + 若干次 ffmpeg 分析窗口，是本项目最重的后台活。
-            // 用户并没有在等它（等不到就退回普通切歌），所以绝不该和渲染线程争 CPU。
-            BackgroundWork.submit(() -> armTrack(song, index, armGeneration, armRevision));
+            // 下载和解码沿用通用后台池；只有计划分析进入 AUTOMIX 的独占有界队列。
+            BackgroundWork.submit(() -> armTrack(preparation, song, index, armGeneration, armRevision))
+                    .whenComplete((ignored, failure) -> {
+                        if (failure != null) finishArmPreparation(preparation);
+                    });
         }
 
         /** 解析、下载、解码并持有下一首曲目。运行于播放线程之外。 */
-        private void armTrack(Music song, int index, long armGeneration, long armRevision) {
+        private void armTrack(ArmPreparation preparation, Music song, int index,
+                              long armGeneration, long armRevision) {
             AudioPlayer deck = null;
-            // 真人要的那一次交接开始了：房间 profile 预热看到这一位就让路，不再启动新的一首
-            // （见 CloudMusic#automixAnalysisBusy）。只置一个位，不改下面任何判断。
-            AUTOMIX_ANALYSIS_BUSY.set(true);
+            boolean analysisSubmitted = false;
             try {
-                if (!armStillValid(armGeneration, armRevision)) return;
+                if (!preparationStillValid(preparation, armGeneration, armRevision)) return;
 
                 // 自定义源还在起的时候，先在这条允许阻塞的后台线程上把它等就绪，再去解析。
                 // getPlayUrl() 里的那一跳只敢等 8 秒（链的另一头可能是游戏主线程），而脚本发
@@ -3667,10 +3689,10 @@ public class CloudMusic implements SharedConstants {
                     armNoStreamRescue(song, index, armGeneration, armRevision);
                     return;
                 }
-                if (!armStillValid(armGeneration, armRevision)) return;
+                if (!preparationStillValid(preparation, armGeneration, armRevision)) return;
 
                 File file = getMusicFile(playUrl, song);
-                if (file == null || !file.isFile() || !armStillValid(armGeneration, armRevision)) return;
+                if (file == null || !file.isFile() || !preparationStillValid(preparation, armGeneration, armRevision)) return;
 
                 // 第二个活跃播放牌会使常驻 PCM 翻倍，因此过大的曲目绝不会被预备。
                 long limit = AutomixSettings.maxDeckBytes();
@@ -3688,7 +3710,7 @@ public class CloudMusic implements SharedConstants {
                 // 第三方搜索结果不带时长；解码器现在知道真实时长了。
                 long decodedMillis = (long) deck.getTotalTimeMillis();
                 song.applyDecodedDuration(decodedMillis);
-                if (!armStillValid(armGeneration, armRevision)) return;
+                if (!preparationStillValid(preparation, armGeneration, armRevision)) return;
 
                 // 试听片段判定的第四条路径：开着 automix 时「下一曲」根本走不到 playSong ——
                 // 它在上面这里被解析、下载、解码，然后在交接点直接出声，三级换源触发谁也看不见
@@ -3722,6 +3744,70 @@ public class CloudMusic implements SharedConstants {
                     }
                 }
 
+                final AudioPlayer preparedDeck = deck;
+                final File preparedFile = file;
+                preparation.pendingDeck.set(preparedDeck);
+                deck = null;
+                analysisSubmitted = true;
+                CompletableFuture<Void> analysis = AutomixWork.submit(() -> {
+                    AudioPlayer claimed = preparation.pendingDeck.getAndSet(null);
+                    if (claimed != null) analyseArmedTrack(preparation, song, index, armGeneration,
+                            armRevision, preparedFile, claimed, decodedMillis);
+                });
+                preparation.analysis = analysis;
+                analysis.whenComplete((ignored, failure) -> {
+                    closeQuietly(preparation.pendingDeck.getAndSet(null));
+                    finishArmPreparation(preparation);
+                });
+                if (preparation.cancelled || armPreparation != preparation) analysis.cancel(true);
+            } catch (Throwable failure) {
+                if (!(failure instanceof CancellationException)) {
+                    System.err.println("[Automix] 无法预备 " + song.getName() + "：" + failure.getMessage());
+                }
+            } finally {
+                closeQuietly(deck);
+                if (!analysisSubmitted) finishArmPreparation(preparation);
+            }
+        }
+
+        private boolean preparationStillValid(ArmPreparation preparation, long expectedGeneration,
+                                              long expectedRevision) {
+            return armPreparation == preparation && !preparation.cancelled
+                    && !Thread.currentThread().isInterrupted()
+                    && armStillValid(expectedGeneration, expectedRevision);
+        }
+
+        private void finishArmPreparation(ArmPreparation preparation) {
+            synchronized (PLAYER_STATE_LOCK) {
+                if (armPreparation == preparation) {
+                    armPreparation = null;
+                    arming = false;
+                }
+            }
+        }
+
+        private void cancelArmPreparation() {
+            ArmPreparation preparation;
+            synchronized (PLAYER_STATE_LOCK) {
+                preparation = armPreparation;
+                armPreparation = null;
+                arming = false;
+            }
+            if (preparation != null) {
+                preparation.cancelled = true;
+                CompletableFuture<Void> analysis = preparation.analysis;
+                if (analysis != null) analysis.cancel(true);
+            }
+        }
+
+        /** 计划、模型和素材准备只在 AUTOMIX 单工作线程内运行。 */
+        private void analyseArmedTrack(ArmPreparation preparation, Music song, int index,
+                                      long armGeneration, long armRevision, File file,
+                                      AudioPlayer deck, long decodedMillis) {
+            boolean transferred = false;
+            try {
+                AutomixWork.checkCancelled();
+                if (!preparationStillValid(preparation, armGeneration, armRevision)) return;
                 boolean roomOwns = RoomAutomix.handles(song);
                 boolean roomAnalyser = roomOwns && AutomixSettings.isFoliaEngine()
                         && RoomAutomix.analyzingHere();
@@ -3772,7 +3858,7 @@ public class CloudMusic implements SharedConstants {
                         AutomixPlanCache.store(ownedPlayer, deck, lastVocalEnd, track.plan);
                     }
                 }
-                if (track.plan == null || !armStillValid(armGeneration, armRevision)) return;
+                if (track.plan == null || !preparationStillValid(preparation, armGeneration, armRevision)) return;
 
                 // 启动所需的一切（除了发声之外）都在预备线程上完成：
                 // 给读取器设入点、接好低搁架滤波、从磁盘拉取第一个流式窗口。
@@ -3789,11 +3875,12 @@ public class CloudMusic implements SharedConstants {
                 deck.setVocalDuckDepth(track.plan.incomingVocalDepth(0.0));
                 deck.prepareStart(track.plan.incomingCueMillis - track.preRollMillis);
                 if (!deck.isPrepared()) return;
-                if (!armStillValid(armGeneration, armRevision)) return;
+                if (!preparationStillValid(preparation, armGeneration, armRevision)) return;
 
                 synchronized (PLAYER_STATE_LOCK) {
-                    if (!armStillValid(armGeneration, armRevision)) return;
+                    if (!preparationStillValid(preparation, armGeneration, armRevision)) return;
                     armed = track;
+                    transferred = true;
                     deck = null; // 在取消路径可见之前完成所有权交接。
                 }
                 // 上一张牌的记账不该跟着新牌活下来（顶住交接的截止时间、拖进度条的收尾位）。
@@ -3803,12 +3890,15 @@ public class CloudMusic implements SharedConstants {
                 System.out.println("[Automix] armed " + song.getName() + " · " + track.plan.summary);
                 DownloadDynamicIsland.showAutomixArmed(song.getName());
             } catch (Throwable failure) {
-                System.err.println("[Automix] unable to arm " + (song == null ? "next track" : song.getName())
-                        + ": " + failure.getMessage());
+                if (!(failure instanceof CancellationException)) {
+                    System.err.println("[Automix] unable to arm " + (song == null ? "next track" : song.getName())
+                            + ": " + failure.getMessage());
+                }
             } finally {
-                if (deck != null) closeQuietly(deck);
-                arming = false;
-                AUTOMIX_ANALYSIS_BUSY.set(false);
+                if (!transferred) {
+                    closeQuietly(deck);
+                }
+                // 只有交给 armed 的播放牌才由播放线程收尾；被取消或失败的分析由本任务释放。
             }
         }
 
@@ -4154,7 +4244,15 @@ public class CloudMusic implements SharedConstants {
             final long generation = track.generation;
             final long revision = track.queueRevision;
             try {
-                BackgroundWork.submit(() -> replanArmedTrack(track, generation, revision));
+                CompletableFuture<Void> future = AutomixWork.submit(() -> replanArmedTrack(track, generation, revision));
+                track.replanFuture = future;
+                future.whenComplete((ignored, failure) -> {
+                    if (failure != null) {
+                        track.replanning = false;
+                        track.replanned = true;
+                    }
+                });
+                if (armed != track || !armStillValid(generation, revision)) future.cancel(true);
             } catch (Throwable rejected) {
                 // 池子拒了（关服、队列满）就当这次没复查，绝不留一个永远为真的进行中位。
                 track.replanning = false;
@@ -4162,15 +4260,24 @@ public class CloudMusic implements SharedConstants {
             }
         }
 
-        /** {@link #maybeReplanArmedTrack} 的算的那一半，跑在低优先级池上，一个采样都不改。 */
+        private void cancelTrackAnalysis(ArmedTrack track) {
+            if (track == null) return;
+            CompletableFuture<Void> future = track.replanFuture;
+            track.replanFuture = null;
+            if (future != null) future.cancel(true);
+        }
+
+        /** {@link #maybeReplanArmedTrack} 的分析部分，只在 AUTOMIX 独占工作队列运行。 */
         private void replanArmedTrack(ArmedTrack track, long armGeneration, long armRevision) {
             try {
+                AutomixWork.checkCancelled();
                 if (!armStillValid(armGeneration, armRevision) || armed != track) return;
                 AudioPlayer outgoing = ownedPlayer;
                 if (outgoing == null) return;
                 long lastVocalEnd = estimateLastVocalEndMillis(outgoing);
                 AutomixPlan plan = AutomixPlanner.plan(outgoing, track.deck, lastVocalEnd);
-                if (plan == null) return;
+                AutomixWork.checkCancelled();
+                if (plan == null || !armStillValid(armGeneration, armRevision) || armed != track) return;
                 // 落盘放在这条后台线程上：install 跑在 10 ms 监督 tick 里，那里一次都不许写文件。
                 // 存了之后万一装不上（跑道不够、已经预卷），这份计划也只是多缓存了一对
                 // 有证据的位置 —— 它按同一对歌与同样的设置算出来，下次命中是对的。
@@ -4179,8 +4286,10 @@ public class CloudMusic implements SharedConstants {
                 AutomixPlanCache.store(outgoing, track.deck, lastVocalEnd, plan);
                 track.replannedPlan = plan;
             } catch (Throwable failure) {
-                System.err.println("[Automix] unable to re-plan " + track.song.getName() + ": "
-                        + failure.getMessage());
+                if (!(failure instanceof CancellationException)) {
+                    System.err.println("[Automix] unable to re-plan " + track.song.getName() + ": "
+                            + failure.getMessage());
+                }
             } finally {
                 track.replanning = false;
                 track.replanned = true;
@@ -4191,7 +4300,7 @@ public class CloudMusic implements SharedConstants {
          * 见 {@link CloudMusic#onSeekApplied()}：别的线程只留个记号，收尾排在这根线程的 tick 上。
          */
         void recordSeek() {
-            if (activeFade != null) seekDuringFadeRequested = true;
+            if (automixPlayback.isActive()) seekDuringFadeRequested = true;
         }
 
         /**
@@ -4602,7 +4711,7 @@ public class CloudMusic implements SharedConstants {
 
         private boolean tryNaturalSelectionHandover(AudioPlayer outgoing, ManualSelection selection) {
             synchronized (PLAYER_STATE_LOCK) {
-                if (selection == null || naturalSelection != selection || activeFade != null
+                if (selection == null || naturalSelection != selection || automixPlayback.isActive()
                         || manualSelection != null || selection.ready == null
                         || selection.ready.deck == null || !selection.ready.deck.isPrepared()
                         || selection.queueRevision != queueRevision
@@ -4694,7 +4803,7 @@ public class CloudMusic implements SharedConstants {
             if (manualSkipRequested || manualSelection != null) return false;
             // 混音仍在进行。现在提升第三个播放牌会让两首曲目与新的一首同时可闻，
             // 因此这次切换必须走常规的硬切。
-            if (activeFade != null) return false;
+            if (automixPlayback.isActive()) return false;
 
             AudioPlayer active = ownedPlayer;
             if (active == null || !active.isUsable() || active.isFinished() || active.isPausing()) return false;
@@ -4733,20 +4842,9 @@ public class CloudMusic implements SharedConstants {
             roomHandoverRequested = true;
             return true;
         }
-        /**
-         * 当前交叠还剩多少毫秒；没有在交叠、或渐变已经走完时为 0。
-         *
-         * <p>用 {@link #progressAt} 而不是「墙钟减 {@code startedAt}」：暂停时渐变时钟被冻住，
-         * 剩余长度必须跟着冻住，否则调用方（一起听的纠偏那层）会按一个跑得更快的时钟去延长
-         * 它的保护窗。</p>
-         */
+        /** 一起听保护窗复用执行器的暂停时钟。 */
         long blendRemainingMillis() {
-            AutomixFade fade = activeFade;
-            if (fade == null) return 0L;
-            double progress = progressAt(fade, System.currentTimeMillis());
-            if (progress >= 1.0) return 0L;
-            if (progress <= 0.0) return fade.overlapMillis;
-            return (long) Math.ceil((1.0 - progress) * fade.overlapMillis);
+            return automixPlayback.remainingMillis();
         }
 
         /**
@@ -4835,7 +4933,7 @@ public class CloudMusic implements SharedConstants {
          *
          * <p>两个来源、两种归属，顺序不能反：交接<b>已经发生</b>时进度条显示的是进场那一首，
          * 位置只能取计划的 {@code incomingCueMillis}；还没交接时进度条是出场曲的，取
-         * {@code fireMillis}。先问 {@code activeFade} 也正是这个意思——交接一旦开始，
+         * {@code fireMillis}。先问 {@code automixPlayback.current()} 也正是这个意思——交接一旦开始，
          * {@code currentlyPlaying} 就已经换成新歌了。</p>
          *
          * <p>读的全是 {@code volatile} 引用与 {@code final} 字段，不加锁也不写任何东西：
@@ -4843,12 +4941,12 @@ public class CloudMusic implements SharedConstants {
          * 界面只可能被滞后一帧看见，不可能看见半个计划。</p>
          */
         private AutomixCueMarker automixCueView() {
-            AutomixFade fade = activeFade;
-            if (fade != null && fade.plan != null) {
-                long duration = deckDurationMillis(fade.incoming);
+            AutomixTransitionEngine.Transition<AudioPlayer> fade = automixPlayback.current();
+            if (fade != null) {
+                long duration = deckDurationMillis(fade.incoming());
                 if (duration <= 0L) return null;
-                return new AutomixCueMarker(fade.plan.incomingCueMillis,
-                        fade.plan.incomingCueMillis + fade.overlapMillis, duration, true);
+                return new AutomixCueMarker(fade.plan().incomingCueMillis,
+                        fade.plan().incomingCueMillis + fade.overlapMillis(), duration, true);
             }
             ArmedTrack track = armed;
             if (track == null || track.plan == null) return null;
@@ -4888,6 +4986,7 @@ public class CloudMusic implements SharedConstants {
         private boolean performAutomixHandover(AudioPlayer outgoing, ArmedTrack track,
                                                long overlapOverrideMillis, ManualSelection selection) {
             armed = null;
+            cancelTrackAnalysis(track);
             // 交接已经开始，等一条更好的接缝这件事到此为止（预算与截止时间都归零）。
             seamHoldUntil = 0L;
             // 手动下一首与选歌用同一套短 EQ 曲线，不能继承自动计划的 cue/分轨参数。
@@ -5039,12 +5138,7 @@ public class CloudMusic implements SharedConstants {
                 player = incoming;
                 ownedPlayer = incoming;
                 fadingOutPlayer = outgoing;
-                activeFade = new AutomixFade(outgoing, incoming, plan, effectiveOverlap,
-                        System.currentTimeMillis());
-                // 仅在混音期间注册：音频任务将此线程作为
-                // 捕获的引用持有，因此让它在淡出结束后仍保持注册会使一个已结束的
-                // 播放 session 在游戏剩余时间里一直存活。
-                registerAutomixAudioTask();
+                automixPlayback.start(outgoing, incoming, plan, effectiveOverlap);
                 playing.set(true);
             }
 
@@ -5085,169 +5179,10 @@ public class CloudMusic implements SharedConstants {
             return true;
         }
 
-        /**
-         * 推进等功率渐变。从监督播放的同一个 10 ms tick 调用。
-         *
-         * <p>曲线写入本身通常属于 JSyn 音频任务（见
-         * {@link #writeTransitionFrameOnAudioThread()}），该任务每个输出缓冲
-         * 区获得一次执行机会，而不是每个 tick 一次。本方法负责维持生命周期——
-         * 暂停、恢复、结束混音——并在该任务未运行时担任写入者，因此过渡
-         * 永远不依赖它。</p>
-         */
-        private void driveAutomixFade() {
-            AutomixFade fade = activeFade;
-            if (fade == null) return;
-
-            long now = System.currentTimeMillis();
-            AudioPlayer active = ownedPlayer;
-            boolean paused = active != null && active.isUsable() && !active.isFinished() && active.isPausing();
-            if (paused) {
-                AutomixTransitionAnimation.setPaused(true);
-                // 保持渐变，而不是让挂钟时间在暂停期间继续流逝，并将
-                // 退出播放牌随活动播放牌一起关闭——播放器中没有其他部分知道它的存在。
-                fade.startedAt += Math.max(0L, now - fade.tickedAt);
-                fade.tickedAt = now;
-                // 将 startedAt 平移空闲间隔正是让 now - startedAt 成为
-                // 被保持的已用时间的做法，因此这是音频任务必须停留在其上的冻结进度。
-                fade.pausedProgress = progressAt(fade, now);
-                if (!fade.outgoingPaused && fade.outgoing != null && fade.outgoing.isUsable()
-                        && !fade.outgoing.isPausing()) {
-                    fade.outgoing.pause();
-                    fade.outgoingPaused = true;
-                }
-                return;
-            }
-            AutomixTransitionAnimation.setPaused(false);
-            if (fade.outgoingPaused && fade.outgoing != null) {
-                // 仅当本次淡出是暂停它的那次淡出时才恢复：unpause() 会重新启动一个
-                // 自行停止的播放牌从其入点位置继续，这会导致重新播放
-                // 退出曲目从头开始。
-                fade.outgoing.unpause();
-                fade.outgoingPaused = false;
-            }
-            fade.pausedProgress = -1.0;
-            fade.tickedAt = now;
-
-            double progress = progressAt(fade, now);
-            if (now - fade.audioDrivenAt >= AUDIO_DRIVEN_WINDOW_MILLIS) {
-                // 最近没有音频任务写入过帧——从未注册、抛出异常，或者引擎
-                // 已经消失——因此完全像它存在之前那样回退到 tick。
-                writeTransitionFrame(fade, progress);
-            }
-            if (progress < 1.0) return;
-
-            // 在下面将播放牌扁平化之前清除。音频任务已经在处理中的帧
-            // 最坏情况下会重写计划自身的结束状态——对于进入播放牌来说，这个状态是
-            // 完全平坦的——而且它是直接的端口写入，而下面的重置则通过
-            // 命令队列进行，因此在它之后才被排空。
-            activeFade = null;
-            unregisterAutomixAudioTask();
-            if (fade.incoming != null) {
-                fade.incoming.setFadeGain(1.0f);
-                // 曲目剩余部分采用平坦响应和自然速度：混音不留下任何痕迹
-                // 可能会延续到普通播放中。
-                fade.incoming.resetAutomixProcessing();
-            }
-            releaseFadedDeck(fade.outgoing);
-        }
-
-        /** 在 {@code now} 处的渐变位置，以渐变长度计；计划本身会对越界值做截断。 */
-        private static double progressAt(AutomixFade fade, long now) {
-            return (now - fade.startedAt) / (double) fade.overlapMillis;
-        }
-
-        /**
-         * 在 {@code progress} 处对计划中的每条曲线采样，并写入两个播放牌。
-         *
-         * <p>一份实现，两个调用方：监督 tick 与 JSyn 音频任务都经过这里，因此回退帧与音频线程帧形态完全一致，二者对某个 progress 应当听感如何永远不会出现分歧。写入本身经由 {@code AudioPlayer.applyAutomixFrame}，它直接写端口而不把命令入队——参见 {@link repackage.processing.sound.SoundFile#setAmplitudeNow(float)}。</p>
-         */
-        private void writeTransitionFrame(AutomixFade fade, double progress) {
-            if (fade.incoming != null) {
-                double loudnessRatio = fade.outgoing == null ? 1.0
-                        : fade.outgoing.appliedTrackLoudnessGain()
-                                / Math.max(.000001f, fade.incoming.appliedTrackLoudnessGain());
-                fade.incoming.applyAutomixFrame(fade.plan.incomingGain(progress, loudnessRatio),
-                        fade.plan.incomingBassDb(progress),
-                        fade.plan.incomingVocalDepth(progress),
-                        fade.plan.incomingMidDb(progress),
-                        fade.plan.incomingHighDb(progress));
-            }
-            if (fade.outgoing != null) {
-                // 依据实际正在运行的渐变来评估，而非计划中的渐变：缩短的渐变
-                // 绝不能把一个半音的 tempo 锁定压缩到区区几百毫秒内。
-                // 速度与音高分开给：节奏锁定只动速度（WSOLA，音高不变），整半音吸附只动音高
-                // （重采样 + WSOLA 把时长还原）。合成一个数会让 WSOLA 把「移调」当成「变速」。
-                fade.outgoing.applyOutgoingAutomixFrame(fade.plan.outgoingGain(progress),
-                        fade.plan.outgoingBassDb(progress),
-                        fade.plan.outgoingVocalDepth(progress),
-                        fade.plan.outgoingMidDb(progress),
-                        fade.plan.outgoingHighDb(progress),
-                        fade.plan.outgoingTempo(progress, fade.overlapMillis),
-                        fade.plan.outgoingPitch(progress, fade.overlapMillis));
-            }
-        }
-
-        /**
-         * 曲线写入器，运行在 JSyn 音频线程上，每个输出缓冲区执行一次（64 帧，即
-         * 44.1 kHz 下约 1.5 ms），而非每个 10 ms 监督 tick 一次。
-         *
-         * <p>这正是关键所在：监督 tick 是一个休眠循环，与歌词查询、历史上报和 arm（预备）检查共享同一线程，因此它的节奏既更粗又不均匀，而它写入的渐变也继承了这种不均匀。音频线程依据声音时钟运行，而那才是渐变实际对照的时钟。</p>
-         *
-         * <p><b>纯粹附加。</b>此处没有任何承重逻辑：tick 用同样的公式写入同样的曲线，只有在 {@link AutomixFade#audioDrivenAt} 持续被刷新时才让出给本任务。异常会被吞掉并停止刷新，从而在下一个 tick 把写回交还给 tick。</p>
-         */
-        private void writeTransitionFrameOnAudioThread() {
-            try {
-                AutomixFade fade = activeFade;
-                if (fade == null) return;
-                double held = fade.pausedProgress;
-                long now = System.currentTimeMillis();
-                double progress = held >= 0.0 ? held : progressAt(fade, now);
-                writeTransitionFrame(fade, progress);
-                fade.audioDrivenAt = now;
-            } catch (Throwable ignored) {
-                // 刻意保持静默，也刻意不标记该帧：tick 会接手
-                // 把写入重新接回，因此一次失败付出的代价只是分辨率下降。
-            }
-        }
-
-        /**
-         * 将曲线写入交由音频线程，持续长度为一次混音。
-         *
-         * <p>尽力而为：引擎尚未就绪，或拒绝该任务时，仍由 tick 担任写入者，其余一切不变。按每次混音注册、而非在整个线程生命周期注册，是刻意为之——任务会被捕获进引擎自己的列表，因此若注册存活过了它的渐变，就会把一个已结束的播放 session 滞留在内存中。</p>
-         */
-        private void registerAutomixAudioTask() {
-            if (automixAudioTaskRegistered) return;
-            try {
-                Engine.addAudioTask(automixAudioTask);
-                automixAudioTaskRegistered = true;
-            } catch (Throwable ignored) {
-                automixAudioTaskRegistered = false;
-            }
-        }
-
-        private void unregisterAutomixAudioTask() {
-            if (!automixAudioTaskRegistered) return;
-            automixAudioTaskRegistered = false;
-            try {
-                Engine.removeAudioTask(automixAudioTask);
-            } catch (Throwable ignored) {
-            }
-        }
-
-        /** 提前结束一次混音（取消、手动切换），且不留下任何一个播放牌仍在发声。 */
+        /** 宿主只处理动画归属，曲线收尾与音频任务撤销由执行器负责。 */
         private void finishAutomixFade() {
             if (playThread == this) AutomixTransitionAnimation.cancel();
-            AutomixFade fade = activeFade;
-            activeFade = null;
-            // 这同时也是 session 拆除路径（见 PlayThread.run），因此音频任务在此被丢弃
-            // 而不是仅在混音自然走到结束处才丢弃。
-            unregisterAutomixAudioTask();
-            if (fade == null) return;
-            if (fade.incoming != null && fade.incoming == ownedPlayer) {
-                fade.incoming.setFadeGain(1.0f);
-                fade.incoming.resetAutomixProcessing();
-            }
-            releaseFadedDeck(fade.outgoing);
+            automixPlayback.finish(ownedPlayer);
         }
 
         private void releaseFadedDeck(AudioPlayer deck) {
@@ -5267,8 +5202,10 @@ public class CloudMusic implements SharedConstants {
 
         /** 丢弃一个从未触发的 arm（预备），释放其已解码的采样。 */
         private void cancelArmedTrack() {
+            cancelArmPreparation();
             ArmedTrack track = armed;
             armed = null;
+            cancelTrackAnalysis(track);
             // 已没有可交接的对象，因此一个挂起的手动请求只能回退到
             // 普通切换，而不是等待一个已不复存在的播放牌。
             manualSkipRequested = false;
@@ -5469,15 +5406,6 @@ public class CloudMusic implements SharedConstants {
     }
 
     /**
-     * 真人那一次交接的分析此刻是不是正在跑（{@code armTrack} 从取流到出计划的全过程）。
-     *
-     * <p>房间 profile 预热挂在这个位子上让路：它每次要开动一首之前先看一眼，正在忙就不启动新的
-     * 一首。预热是「可能白烧一次 Python」的活，真人交接是「几秒后就要出声」的活，两者抢同一套
-     * 串行的 Python 子进程时永远让后者先走。</p>
-     */
-    private static final AtomicBoolean AUTOMIX_ANALYSIS_BUSY = new AtomicBoolean(false);
-
-    /**
      * 把房间队列里的一首按<b>与实播完全相同</b>的缓存键落到磁盘。
      *
      * <p>语义就是「等它真轮到时，播放线程直接命中磁盘」：命中已有缓存时立刻返回，不发任何网络
@@ -5573,8 +5501,7 @@ public class CloudMusic implements SharedConstants {
      *
      * <p>判据与 {@code MpPlayback.capabilityEngine()} 报 {@code "model"} 的那一条一致：
      * 引擎选了智能混音 <b>且</b>运行时与两套权重（Beat This! 出节拍栅格、HTDemucs 出
-     * 人声素材）都在盘上。缺一样时 Folia 内部会退回纯信号处理，那套根本不用 Python，
-     * 预热它没有任何意义，只是白起一次子进程。多加一条「用户开着无缝切换」：
+     * 人声素材）都在盘上。模型缺失时不启动推测性预热，避免重复扫描。多加一条「用户开着无缝切换」：
      * 关了 automix 就没有任何东西会用这份 profile。</p>
      */
     public static boolean automixProfileWarmupReady() {
@@ -5589,9 +5516,10 @@ public class CloudMusic implements SharedConstants {
         }
     }
 
-    /** 真人那一次交接的分析是不是正在跑。见 {@link #AUTOMIX_ANALYSIS_BUSY}。 */
+    /** 交接预备或独占分析队列忙碌时，房间的推测性预热让路。 */
     public static boolean automixAnalysisBusy() {
-        return AUTOMIX_ANALYSIS_BUSY.get();
+        Thread active = playThread;
+        return AutomixWork.isBusy() || active instanceof PlayThread && ((PlayThread) active).arming;
     }
 
     /**
@@ -5638,7 +5566,8 @@ public class CloudMusic implements SharedConstants {
         }
         if (!PAIR_ENVELOPE_IN_FLIGHT.add(key)) return;
         try {
-            BackgroundWork.submit(() -> {
+            CompletableFuture<Void> future = AutomixWork.submit(() -> {
+                AutomixWork.checkCancelled();
                 try {
                     AutomixEnvelope.ensure(source, duration);
                 } catch (Throwable failure) {
@@ -5647,67 +5576,79 @@ public class CloudMusic implements SharedConstants {
                     PAIR_ENVELOPE_IN_FLIGHT.remove(key);
                 }
             });
+            // 队列拒绝或取消尚未启动的任务时，任务内部的 finally 不会执行。
+            future.whenComplete((ignored, failure) -> PAIR_ENVELOPE_IN_FLIGHT.remove(key));
         } catch (Throwable rejected) {
             PAIR_ENVELOPE_IN_FLIGHT.remove(key);
         }
     }
 
     /**
-     * 预热这一首的 <b>automix 单曲 profile</b>：把 Folia 那套 Python 分析（节拍栅格 + stem 分离）
-     * 的结果落进 {@code MuoniumPlayer/cache/automix-profiles}，等它真轮到交接时直接读盘。
+     * 为已缓存歌曲预热单曲特征，不计算与当前出场歌曲绑定的配对计划。
      *
-     * <h3>刻意不算配对计划（pair plan）</h3>
-     * {@code AutomixPlanCache.keyOf} 的键带着「退出曲的最后一句人声位置」与两路 deck 的缓存文件名，
-     * 前者要歌词、后者要正在预备的那对 deck —— 提前算必然算出不命中的键，还会因歌词没加载而
-     * 白烧一次 Python。所以这里只做 {@code FoliaTrackProfiler.loadOrAnalyse(deck, false)}
-     * 那一半（这一首将来是「进来」的那一首），pair 计划留给交接点前那次真正的预备。
+     * <p>调用方必须是允许等待的后台线程。下载与解码仍在原后台调用链，模型分析提交到
+     * AUTOMIX 独占有界队列；等待线程被中断时取消所属 future。播放牌由分析任务自己创建和
+     * 释放，取消等待不会抢先关闭仍被原生推理读取的资源。</p>
      *
-     * <h3>profile 键必须和实播算出来的那个是同一个</h3>
-     * profile 的盘键是「音频文件绝对路径 + 长度 + mtime + 模型集」，而实播 deck 建在
-     * {@link PlayThread#resolvePlayableAudioFile} 的结果上（AAC/MP4 是 {@code .decoded.wav} 边车，
-     * 不是下载到的原始文件）。所以这里也先解析再建牌：直接用原始文件建牌会写出一份键不同的
-     * profile，看着像预热过了，真交接时照样重跑一遍。
-     *
-     * <p>调用方必须在非渲染帧的低优先级线程上：这里会解码整曲、起 Python 子进程（一次 120–180 秒）。
-     * 播放牌是局部的、用完即关，不挂进 {@link #player}，也不碰 {@code armed}。</p>
-     *
-     * <p>「一键排列」里量不出特征的那些就走这一条补料，见 {@link QueueFlowSorter}。</p>
-     *
-     * @return 这一首的 profile 现在是不是已经在盘上（命中缓存也算 true）
+     * @return 本次单曲分析是否成功完成
      */
     public static boolean warmAutomixProfile(Music song) {
         if (!automixProfileWarmupReady()) return false;
         File cached = cachedAudioFileFor(song);
-        if (cached == null) return false;   // 还没下载好：什么都不做，更不联网
-        AudioPlayer deck = null;
+        if (cached == null) return false;
+        CompletableFuture<Void> analysis = null;
         QUIET_DOWNLOAD.set(Boolean.TRUE);
         try {
-            File playable = PlayThread.resolvePlayableAudioFile(cached, song);
+            AutomixWork.checkCancelled();
+            final File playable = PlayThread.resolvePlayableAudioFile(cached, song);
             long limit = AutomixSettings.maxDeckBytes();
             if (playable.length() > limit) {
-                // 与预备同一道闸：两个活跃播放牌的常驻 PCM 会翻倍，预热没有资格把它抬高。
                 System.out.println("[MpPrefetch] 跳过 profile 预热 " + song.getName() + "："
                         + PlaybackMemoryLimits.megabytes(playable.length()) + "MB 超出 "
                         + PlaybackMemoryLimits.megabytes(limit) + "MB 的播放牌预算");
                 return false;
             }
-            deck = new AudioPlayer(playable);
-            deck.setTrackName(PlayThread.trackDisplayName(song, playable));
-            FoliaTrackProfiler.loadOrAnalyse(deck, false);
-            if (AutomixSettings.isFoliaEngine()) {
-                AutomixEnvelope.ensure(playable, (long) deck.getTotalTimeMillis());
-            }
+            analysis = AutomixWork.submit(() -> warmProfileOnAnalysisThread(song, playable));
+            analysis.get();
             return true;
+        } catch (InterruptedException cancelled) {
+            if (analysis != null) analysis.cancel(true);
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (CancellationException cancelled) {
+            return false;
         } catch (Throwable failure) {
-            System.out.println("[MpPrefetch] profile 预热失败 " + song.getName() + "：" + failure);
+            Throwable cause = failure instanceof ExecutionException ? failure.getCause() : failure;
+            System.out.println("[MpPrefetch] profile 预热失败 " + song.getName() + "：" + cause);
             return false;
         } finally {
             QUIET_DOWNLOAD.remove();
+        }
+    }
+
+    /** 播放牌的整个分析生命周期都留在独占任务中，外部取消只发中断信号。 */
+    private static void warmProfileOnAnalysisThread(Music song, File playable) {
+        AudioPlayer deck = null;
+        try {
+            AutomixWork.checkCancelled();
+            deck = new AudioPlayer(playable);
+            deck.setTrackName(PlayThread.trackDisplayName(song, playable));
+            FoliaTrackProfiler.loadOrAnalyse(deck, false);
+            AutomixWork.checkCancelled();
+            if (AutomixSettings.isFoliaEngine()) {
+                AutomixEnvelope.ensure(playable, (long) deck.getTotalTimeMillis());
+            }
+            AutomixWork.checkCancelled();
+        } catch (CancellationException cancelled) {
+            throw cancelled;
+        } catch (Exception failure) {
+            throw new IllegalStateException("AUTOMIX 单曲预热失败：" + song.getName(), failure);
+        } finally {
             if (deck != null) {
                 try {
                     deck.close();
                 } catch (Throwable ignored) {
-                    // 一个从未完成初始化的播放牌绝不能阻塞预热。
+                    // 初始化未完成的播放牌也必须尝试释放，不能覆盖原始分析错误。
                 }
             }
         }
@@ -6003,7 +5944,7 @@ public class CloudMusic implements SharedConstants {
      *   <li>系统播放器镜像态（{@link ExternalPlayback#isMirroring()}）——出声的是外部播放器，
      *       本机的音频链路完全没参与，一份本机计划都不存在；</li>
      *   <li>播放线程还没换到这一代（{@code playThread} 声明成 {@code Thread}，拿不到
-     *       {@code PlayThread} 上的 {@code armed} / {@code activeFade}）。</li>
+     *       {@code PlayThread} 上的 {@code armed} / {@code automixPlayback.current()}）。</li>
      * </ul>
      */
     public static AutomixCueMarker automixCueNow() {
