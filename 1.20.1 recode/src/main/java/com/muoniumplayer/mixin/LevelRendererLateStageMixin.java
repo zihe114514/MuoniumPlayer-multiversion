@@ -56,9 +56,6 @@ abstract class LevelRendererLateStageMixin {
                                          boolean renderBlockOutline, Camera camera,
                                          GameRenderer gameRenderer, LightTexture lightTexture,
                                          Matrix4f projectionMatrix, CallbackInfo ci) {
-        // 「更激进的适配」（光影包 → HUD 阶段直画）开启时，歌词要推迟到 HUD 阶段，
-        // 这里不能抢画 —— 否则光影后处理会把它当世界内容二次加工（Bridge 类注释）。
-        if (WorldLyricsBridge.defersToHudPhase()) return;
         WorldLyricsBridge.worldRenderEnd();
     }
 }

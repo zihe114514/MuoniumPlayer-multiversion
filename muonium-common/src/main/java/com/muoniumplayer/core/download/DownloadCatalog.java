@@ -9,6 +9,7 @@ import com.muoniumplayer.core.ncm.music.FfmpegInstaller;
 import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.QishuiCompanionDownload;
 import com.muoniumplayer.core.ncm.music.ZstdNativeDownload;
+import com.muoniumplayer.core.screens.hud.HudInitialSelection;
 import com.muoniumplayer.core.screens.hud.MuoniumConfigDownload;
 import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.settings.JsonConfigStorage;
@@ -167,6 +168,11 @@ public final class DownloadCatalog {
     }
 
     private static void addMuoniumConfig(List<Item> items) {
+        if (HudInitialSelection.isMuoniumConfigBlocked()) {
+            items.add(item("muoniumconfig", "MuoniumConfig", "HUD 设置中心", "mods/",
+                    Group.TOOLS, Status.UNSUPPORTED, 0, "检测到其他界面模组，已阻止自动下载。", false, "", null));
+            return;
+        }
         MuoniumConfigDownload.State state = MuoniumConfigDownload.state();
         Status status;
         switch (state.phase()) {

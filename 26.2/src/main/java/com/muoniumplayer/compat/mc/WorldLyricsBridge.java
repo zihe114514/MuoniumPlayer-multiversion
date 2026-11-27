@@ -133,6 +133,9 @@ public final class WorldLyricsBridge {
             // 0. 光影包探测（帧头一次，本帧内渲染层读缓存值）：
             //    光影包激活时 WorldBillboard 改走信标全亮程序（ShaderPackProbe 类注释）
             ShaderPackProbe.refresh();
+            if (ShaderPackProbe.isActive()) {
+                return;
+            }
             boolean shaderActiveNow = ShaderPackProbe.isActive();
             if (TRACE) {
                 if (shaderActiveNow != tracedShaderActive) {

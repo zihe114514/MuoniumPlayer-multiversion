@@ -49,7 +49,7 @@ class HudSettingsTaxonomyStaticTest {
      * <p>2026-11-21「追踪柔度」追加到娱乐页：26.3 娱乐页 22 → 23、总数 202 → 203；其余六树娱乐页 22 → 23、总数 199 → 201。</p>
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(12, 22, 10, 31, 4, 33, 30, 23, 31, 4, 3);
+            Arrays.asList(12, 22, 10, 31, 4, 33, 31, 23, 31, 4, 3);
 
     /**
      * 「常用」页只在 26.3 起存在。
@@ -74,11 +74,11 @@ class HudSettingsTaxonomyStaticTest {
         if (hasFavoritesPage()) {
             return COUNTS;
         }
-        return Arrays.asList(28, 31, 10, 31, 30, 23, 33, 6, 4, 3);
+        return Arrays.asList(28, 31, 10, 31, 31, 23, 33, 6, 4, 3);
     }
 
     private static int expectedTotal() {
-        return hasFavoritesPage() ? TOTAL : 199;
+        return hasFavoritesPage() ? TOTAL : 200;
     }
 
     private static String versionName() {
@@ -162,7 +162,8 @@ class HudSettingsTaxonomyStaticTest {
     // 2026-11-16 七树灵动岛追加「音乐胶囊最大长度」滑块：每页 30 → 31，26.3 总数 200，其余六树 196。
     // 2026-11-17 七树「播放」页追加「智能动态均衡」toggle（automix 学习式 EQ）：
     //            播放页 29 → 30，26.3 总数 200 → 201，其余六树 196 → 197。
-    private static final int TOTAL = 203;
+    // 2026-11-26 七树播放设置新增环境选曲开关。
+    private static final int TOTAL = 204;
 
     @Test
     @DisplayName("分类顺序、每页条目数和独立模板栏目不许悄悄变")

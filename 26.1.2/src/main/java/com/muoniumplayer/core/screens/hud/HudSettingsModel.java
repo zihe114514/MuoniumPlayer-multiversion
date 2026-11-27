@@ -2,6 +2,7 @@ package com.muoniumplayer.core.screens.hud;
 
 import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
+import com.muoniumplayer.core.ncm.music.ambient.AmbientSettings;
 import com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings;
 import com.muoniumplayer.core.ncm.music.ExternalPlayback;
 import com.muoniumplayer.core.ncm.music.FocusVolumeDucker;
@@ -1683,6 +1684,9 @@ public final class HudSettingsModel {
                                 }, AutomixSettings::isFoliaEngine),
                                 button("恢复默认模型位置", "恢复为 config/muonium/models。", () -> FoliaModelManager.resetDirectory(), AutomixSettings::isFoliaEngine),
                                 button("删除所有模型", "删除 Beat This!、HTDemucs 和运行组件，不会删除歌曲缓存。", HudSettingsModel::deleteModels, AutomixSettings::isFoliaEngine)),
+                        new Group("环境选曲", HudSettingsIcons.ALBUM,
+                                toggle("环境选曲", "按洞穴、森林、夜晚等环境自动选曲，修改即时生效。",
+                                        AmbientSettings::isEnabled, AmbientSettings::toggleEnabled)),
                         new Group("场景声学", HudSettingsIcons.ALBUM,
                                 toggle("场景声学", "打开后，播放输出会随听者所处位置的声学环境实时变化；效果挂在主效果链之后一节，改动即时生效。",
                                         new BooleanSupplier() {
@@ -1940,7 +1944,9 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 cycleUiLayer();
                                             }
-                                        }, new String[] {"内置", "MuoniumConfig", "OneConfig", "ModernUI"},
+                                        }, HudInitialSelection.isMuoniumConfigBlocked()
+                                                ? new String[] {"内置", "OneConfig", "ModernUI"}
+                                                : new String[] {"内置", "MuoniumConfig", "OneConfig", "ModernUI"},
                                                 HudSettingsModel::setUiLayerChoice,
                                                 new String[] {"自绘经典界面，不依赖任何 mod。",
                                                         "自绘现代化界面（MuoniumConfig），同样不依赖任何 mod。",
@@ -2602,7 +2608,8 @@ public final class HudSettingsModel {
     private static void cycleUiLayer() {
         String current = HudConfig.hudEditorUi;
         if (HudConfig.HUD_EDITOR_UI_BUILTIN.equals(current)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MCONFIG;
+            HudConfig.hudEditorUi = HudInitialSelection.isMuoniumConfigBlocked()
+                    ? HudConfig.HUD_EDITOR_UI_ONECONFIG : HudConfig.HUD_EDITOR_UI_MCONFIG;
         } else if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(current)) {
             HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
         } else if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(current)) {
@@ -2616,7 +2623,7 @@ public final class HudSettingsModel {
     private static void setUiLayerChoice(String value) {
         if (value == null) return;
         if ("MuoniumConfig".equalsIgnoreCase(value)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MCONFIG;
+            HudConfig.hudEditorUi = HudInitialSelection.allowedUi(HudConfig.HUD_EDITOR_UI_MCONFIG);
         } else if ("OneConfig".equalsIgnoreCase(value)) {
             HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
         } else if ("ModernUI".equalsIgnoreCase(value)) {

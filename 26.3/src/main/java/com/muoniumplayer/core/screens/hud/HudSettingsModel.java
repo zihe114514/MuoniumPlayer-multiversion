@@ -2,6 +2,7 @@ package com.muoniumplayer.core.screens.hud;
 
 import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
+import com.muoniumplayer.core.ncm.music.ambient.AmbientSettings;
 import com.muoniumplayer.core.ncm.music.ExternalPlayback;
 import com.muoniumplayer.core.ncm.music.FocusVolumeDucker;
 import com.muoniumplayer.core.ncm.music.FoliaModelManager;
@@ -1543,11 +1544,13 @@ public final class HudSettingsModel {
                                         () -> HudConfig.dynamicIslandEnabled))),
 
                 new Category("播放", "两首歌自动衔接不断片，外加场景音效", 0xFF5FD3E8, HudSettingsIcons.SPEED,
+                        new Group("环境选曲", HudSettingsIcons.ALBUM,
+                                toggle("环境选曲", "按洞穴、森林、夜晚等环境自动选曲，修改即时生效。",
+                                        AmbientSettings::isEnabled, AmbientSettings::toggleEnabled)),
                         new Group("场景声学", HudSettingsIcons.SPEED,
                                 toggle("场景声学总开关", "按听者所处声学环境实时修饰播放输出；关闭后输出直通，不付任何 DSP 成本。",
                                         AcousticsSettings::isEnabled,
-                                        () -> AcousticsSettings.setEnabled(!AcousticsSettings.isEnabled()),
-                                        () -> HudConfig.worldLyricsEnabled),
+                                        () -> AcousticsSettings.setEnabled(!AcousticsSettings.isEnabled())),
                                 toggle("水面之下", "耳朵没进水里才算数；湿透的输出会在半秒内闷下来。",
                                         AcousticsSettings::isSubmersion,
                                         () -> AcousticsSettings.setSubmersion(!AcousticsSettings.isSubmersion())),
@@ -1952,7 +1955,9 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 cycleUiLayer();
                                             }
-                                        }, new String[] {"MuoniumConfig", "ModernUI"},
+                                        }, HudInitialSelection.isMuoniumConfigBlocked()
+                                                ? new String[] {"内置", "ModernUI"}
+                                                : new String[] {"MuoniumConfig", "ModernUI"},
                                                 HudSettingsModel::setUiLayerChoice,
                                                 new String[] {"本项目魔改的 OneConfig，界面与条目统一在这里维护（默认）。",
                                                         "玩家自己装的 ModernUI，需本 Minecraft 版本有对应构件。"})),
@@ -2620,6 +2625,10 @@ public final class HudSettingsModel {
             String status = ModernUiHudBridge.statusLabel();
             return "可用".equals(status) ? "ModernUI" : "ModernUI（" + status + "·回退 MuoniumConfig）";
         }
+        if (HudInitialSelection.isMuoniumConfigBlocked()
+                && HudConfig.HUD_EDITOR_UI_BUILTIN.equals(HudConfig.hudEditorUi)) {
+            return "内置（MuoniumConfig 兼容性保护）";
+        }
         // MuoniumConfig 与 OneConfig 走同一套 API，由 OneConfigHudBridge 统一打开。
         // 未安装时写清「回退自绘」——玩家得知道按 H 出来的是哪一层、为什么。
         return OneConfigHudBridge.isAvailable() ? "MuoniumConfig" : "MuoniumConfig（未安装·回退自绘）";
@@ -2633,7 +2642,7 @@ public final class HudSettingsModel {
      */
     private static void cycleUiLayer() {
         HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)
-                ? HudConfig.HUD_EDITOR_UI_MCONFIG
+                ? HudInitialSelection.allowedUi(HudConfig.HUD_EDITOR_UI_MCONFIG)
                 : HudConfig.HUD_EDITOR_UI_MODERNUI;
         saveNow();
     }
@@ -2641,7 +2650,7 @@ public final class HudSettingsModel {
     private static void setUiLayerChoice(String value) {
         HudConfig.hudEditorUi = "ModernUI".equalsIgnoreCase(value)
                 ? HudConfig.HUD_EDITOR_UI_MODERNUI
-                : HudConfig.HUD_EDITOR_UI_MCONFIG;
+                : HudInitialSelection.allowedUi(HudConfig.HUD_EDITOR_UI_MCONFIG);
         saveNow();
     }
 
