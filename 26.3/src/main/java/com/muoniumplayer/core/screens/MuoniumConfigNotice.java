@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.screens;
 
+import com.muoniumplayer.core.screens.hud.HudInitialSelection;
 import com.muoniumplayer.core.screens.hud.MuoniumConfigDownload;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -34,6 +35,7 @@ public final class MuoniumConfigNotice {
 
     private static final int MARGIN = 4;
     private static final int LINE_HEIGHT = 10;
+    private static final int WARNING_COLOR = 0xFFFF5555;
     private static final int TEXT_COLOR = 0xFFE6E6E6;
     private static final int BACKDROP = 0xC0101014;
 
@@ -47,6 +49,7 @@ public final class MuoniumConfigNotice {
 
     /** 画一帧提示；不可见的帧什么都不做。 */
     public static void draw(GuiGraphicsExtractor graphics, boolean onScreen) {
+        boolean compatibilityWarning = HudInitialSelection.noticeVisible();
         MuoniumConfigDownload.Phase phase = MuoniumConfigDownload.state().phase();
         long now = System.nanoTime();
         boolean failed = phase == MuoniumConfigDownload.Phase.FAILED;
@@ -57,7 +60,7 @@ public final class MuoniumConfigNotice {
         } else {
             failureSince = null;
         }
-        boolean visible = MuoniumConfigDownload.noticeVisible()
+        boolean visible = MuoniumConfigDownload.noticeVisible(compatibilityWarning)
                 || (failed && now - failureSince < FAILURE_WINDOW_NANOS);
         if (!visible) {
             return;
@@ -65,17 +68,17 @@ public final class MuoniumConfigNotice {
 
         Font font = Minecraft.getInstance().font;
         int screenWidth = Minecraft.getInstance().getWindow().getGuiScaledWidth();
-        List<String> lines = MuoniumConfigDownload.noticeLines();
+        List<String> lines = MuoniumConfigDownload.noticeLines(compatibilityWarning);
         if (lines.isEmpty()) {
             return;
         }
-        String[] clipped = clipAll(lines, font, screenWidth - MARGIN * 2);
+        String[] clipped = clipAll(lines, font, screenWidth - MARGIN * 4);
 
         int widest = 0;
         for (String line : clipped) {
             widest = Math.max(widest, font.width(line));
         }
-        boolean downloading = phase == MuoniumConfigDownload.Phase.DOWNLOADING;
+        boolean downloading = !compatibilityWarning && phase == MuoniumConfigDownload.Phase.DOWNLOADING;
         int height = clipped.length * LINE_HEIGHT + MARGIN * 2
                 + (downloading ? BAR_GAP + BAR_HEIGHT : 0);
         int x = MARGIN;
@@ -83,7 +86,7 @@ public final class MuoniumConfigNotice {
         graphics.fill(x, y, x + widest + MARGIN * 2, y + height, BACKDROP);
         for (int index = 0; index < clipped.length; index++) {
             graphics.text(font, clipped[index], x + MARGIN, y + MARGIN + index * LINE_HEIGHT,
-                    TEXT_COLOR, false);
+                    compatibilityWarning ? WARNING_COLOR : TEXT_COLOR, false);
         }
         if (downloading) {
             drawProgressBar(graphics, x + MARGIN,
@@ -119,7 +122,7 @@ public final class MuoniumConfigNotice {
         }
     }
 
-    /** 按可用宽度截断，超出的部分用省略号收尾（与 RenderLayerNotice 同一条规则）。 */
+    /** 按原版字体的实际像素宽度折行。 */
     private static String[] clipAll(List<String> lines, Font font, int maxWidth) {
         List<String> out = new java.util.ArrayList<>();
         for (String line : lines) {
@@ -129,7 +132,13 @@ public final class MuoniumConfigNotice {
             }
             String remainder = line;
             while (font.width(remainder) > maxWidth && remainder.length() > 1) {
-                int cut = Math.max(1, Math.min(remainder.length() - 1, maxWidth));
+                int cut = 0;
+                do {
+                    cut += Character.charCount(remainder.codePointAt(cut));
+                } while (cut < remainder.length()
+                        && font.width(remainder.substring(0,
+                        cut + Character.charCount(remainder.codePointAt(cut)))) <= maxWidth);
+                if (cut == remainder.length()) break;
                 out.add(remainder.substring(0, cut));
                 remainder = remainder.substring(cut);
             }

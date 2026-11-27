@@ -297,7 +297,8 @@ public final class WorldLyricsHudDraw {
      * 渲染/后处理/合成之后，画上的像素物理上不可能再被任何 pass 加工。
      */
     public static void presentComposite() {
-        if (!HudConfig.worldLyricsEnabled) {
+        if (!HudConfig.worldLyricsEnabled || ShaderPackProbe.isActive()) {
+            snapValid = false;
             LyricPresentRenderer.reset();
             return;
         }

@@ -108,6 +108,10 @@ public final class WorldLyricsBridge {
             // 0. 光影包探测（帧头一次，本帧内渲染层读缓存值）：
             //    光影包激活时 WorldBillboard 改走信标全亮程序（ShaderPackProbe 类注释）
             ShaderPackProbe.refresh();
+            if (ShaderPackProbe.isActive()) {
+                hudCameraValid = false;
+                return;
+            }
             // 「更激进的适配」关闭沿检测：HUD 阶段的连续失败可能把渲染器锁死，
             // 用户关掉开关回到世界阶段路径时立即恢复（不用重启游戏）。
             if (tracedHudDraw && !HudConfig.worldLyricsHudDraw) {
@@ -243,6 +247,10 @@ public final class WorldLyricsBridge {
         hudDrawMisses = 0;
         try {
             Minecraft mc = Minecraft.getInstance();
+            if (mc != null && mc.screen != null) {
+                hudCameraValid = false;
+                return;
+            }
             if (mc == null || mc.player == null || mc.level == null) return;
 
             org.joml.Matrix4f previousProjection = new org.joml.Matrix4f(RenderSystem.getProjectionMatrix());

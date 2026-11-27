@@ -2,20 +2,18 @@ package com.muoniumplayer.core.screens.hud;
 
 import com.muoniumplayer.core.settings.HudConfig;
 
-/**
- * 检测到独立 OneConfig 时，避免它与 MuoniumConfig 冲突。
- *
- * <p>已接入检测的 Fabric 入口使用加载器查询 mod ID {@code oneconfig}，并将结果传入本类。
- * 已核对的 MuoniumConfig 1.8.0 Fabric 包的 mod ID 是 {@code muoniumconfigv1}，
- * 与独立 OneConfig 不同；单独安装该包不会因其自身 ID 命中这项检测。</p>
- *
- * <p>检测到独立 OneConfig 且当前选择为 {@code mconfig} 时，将
- * {@link HudConfig#hudEditorUi} 切换为 {@code builtin}，并调用 {@link HudConfig#save()}
- * 保存；OneConfig 仍存在时，启动检查再次遇到 {@code mconfig} 也会重新切换。</p>
- */
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+/** Owns the compatibility decision before the optional HUD dependency is downloaded. */
 public final class HudInitialSelection {
+    private static final Map<String, String> CONFLICTING_MODS = Map.of(
+            "oneconfig", "OneConfig", "modernui", "Modern UI", "reglass", "ReGlass");
+
     private static volatile boolean oneConfigInstalled;
-    private static volatile boolean detectionReady;
+    private static volatile List<String> conflicts = List.of();
     private static volatile boolean noticePending;
     private static long noticeShownAt;
 
@@ -23,11 +21,21 @@ public final class HudInitialSelection {
 
     public static void setOneConfigInstalled(boolean installed) {
         oneConfigInstalled = installed;
-        detectionReady = true;
     }
 
-    public static boolean isOneConfigInstalled() {
-        return oneConfigInstalled;
+    public static boolean isMuoniumConfigBlocked() {
+        return oneConfigInstalled || !conflicts.isEmpty();
+    }
+
+    public static String allowedUi(String requested) {
+        return choose(true, isMuoniumConfigBlocked(), requested);
+    }
+
+    static List<String> warningLines() {
+        return List.of("致命崩溃警告 · 已阻止下载 MuoniumConfig",
+                "检测到其他界面模组：" + String.join("、", conflicts),
+                "强行安装 MuoniumConfig 可能导致游戏在下次启动时致命崩溃。",
+                "MuoniumPlayer 的内置设置界面仍可使用。");
     }
 
     static boolean wantsMuoniumConfig(boolean oneConfig, boolean selected) {
@@ -39,23 +47,32 @@ public final class HudInitialSelection {
                 ? HudConfig.HUD_EDITOR_UI_BUILTIN : current;
     }
 
-    /**
-     * 检测到独立 OneConfig 且当前界面为 {@code mconfig} 时，切换到内置界面并保存。
-     *
-     * @see HudConfig#save()
-     */
-    public static synchronized void initialize() {
-        String selected = choose(detectionReady, oneConfigInstalled, HudConfig.hudEditorUi);
-        if (selected.equals(HudConfig.hudEditorUi)) {
-            return;
+    /** Called after loading HUD settings and before starting the download checks. */
+    public static void initialize() {
+        initialize(new File("mods"));
+    }
+
+    static synchronized void initialize(File modsDir) {
+        List<String> detected = new ArrayList<>();
+        for (String id : MuoniumConfigJarProbe.conflictingModIds(modsDir, CONFLICTING_MODS.keySet())) {
+            detected.add(CONFLICTING_MODS.get(id));
         }
-        HudConfig.hudEditorUi = selected;
-        HudConfig.save();
+        if (oneConfigInstalled && !detected.contains("OneConfig")) {
+            detected.add("OneConfig");
+        }
+        detected.sort(String::compareToIgnoreCase);
+        conflicts = List.copyOf(detected);
 
+        String selected = allowedUi(HudConfig.hudEditorUi);
+        if (!selected.equals(HudConfig.hudEditorUi)) {
+            HudConfig.hudEditorUi = selected;
+            HudConfig.save();
+        }
         noticeShownAt = 0L;
-        noticePending = true;
-
-        System.out.println("[MuoniumPlayer] 检测到已安装 OneConfig，为避免冲突已将 HUD 设置界面切换为内置界面，并且不下载MuoniumConfig");
+        noticePending = isMuoniumConfigBlocked();
+        if (noticePending) {
+            System.out.println("[MuoniumPlayer] 已阻止 MuoniumConfig 下载，检测到：" + String.join("、", conflicts));
+        }
     }
 
     /**

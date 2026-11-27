@@ -25,6 +25,17 @@ class WorldLyricsStaticTest {
     }
 
     @Test
+    @DisplayName("光影包开启时，即使没有打开菜单也要跳过世界歌词")
+    void shaderPackPausesWorldLyricsOutsideMenus() throws IOException {
+        String source = read(ProjectPaths.versionJava().resolve(
+                "com/muoniumplayer/compat/mc/WorldLyricsBridge.java"));
+        String frame = source.substring(source.indexOf("ShaderPackProbe.refresh();"))
+                .replaceAll("\\s+", " ");
+        assertTrue(frame.startsWith("ShaderPackProbe.refresh(); if (ShaderPackProbe.isActive()) { return;")
+                || frame.startsWith("ShaderPackProbe.refresh(); if (ShaderPackProbe.isActive()) { hudCameraValid = false; return;"));
+    }
+
+    @Test
     @DisplayName("3D 歌词的发光必须走 TextGlow 单一入口，不得自写模糊")
     void glowGoesThroughTextGlowOnly() throws IOException {
         String atlas = read(shared("LyricGlyphAtlas.java"));

@@ -396,7 +396,7 @@ public final class MuoniumConfigDownload {
     /** 根据 OneConfig 探测结果和当前界面选择判断是否应下载/更新。 */
     private static boolean wantsMuoniumConfig() {
         return HudInitialSelection.wantsMuoniumConfig(
-                HudInitialSelection.isOneConfigInstalled(),
+                HudInitialSelection.isMuoniumConfigBlocked(),
                 HudConfig.HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi));
     }
 
@@ -827,7 +827,11 @@ public final class MuoniumConfigDownload {
      * （纯外观损失，常驻会变成骚扰），由各树渲染器自己管窗口。</p>
      */
     public static boolean noticeVisible() {
-        if (HudInitialSelection.noticeVisible()) return true;
+        return noticeVisible(HudInitialSelection.noticeVisible());
+    }
+
+    public static boolean noticeVisible(boolean compatibilityWarning) {
+        if (compatibilityWarning) return true;
         State current = state();
         if (current.phase() == Phase.DOWNLOADING || current.phase() == Phase.DONE) {
             return true;
@@ -850,8 +854,12 @@ public final class MuoniumConfigDownload {
      * 而它至少能解释为什么没动静。</p>
      */
     public static List<String> noticeLines() {
-        if (HudInitialSelection.noticeVisible()) {
-            return List.of("检测到已安装 OneConfig，为避免冲突", "已将 HUD 设置界面切换为内置界面，并且不下载MuoniumConfig");
+        return noticeLines(HudInitialSelection.noticeVisible());
+    }
+
+    public static List<String> noticeLines(boolean compatibilityWarning) {
+        if (compatibilityWarning) {
+            return HudInitialSelection.warningLines();
         }
         State current = state();
         List<String> lines = new ArrayList<>();

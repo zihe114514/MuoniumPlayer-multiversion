@@ -50,6 +50,12 @@ public final class AmbientSettings {
         write(value, null);
     }
 
+    public static void toggleEnabled() {
+        boolean enabled = !isEnabled();
+        setEnabled(enabled);
+        if (enabled) AmbientMusicController.reset();
+    }
+
     /** 稳定期毫秒（自动钳到 {@link #STABLE_MS_MIN}..{@link #STABLE_MS_MAX}）；立即落盘。 */
     public static void setStableMs(int value) {
         write(null, value);

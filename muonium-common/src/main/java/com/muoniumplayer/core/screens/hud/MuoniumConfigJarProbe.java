@@ -8,6 +8,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -106,6 +110,46 @@ final class MuoniumConfigJarProbe {
             Info info = readInfo(file);
             if (info != null) {
                 found.add(info);
+            }
+        }
+        return found;
+    }
+
+    private static final Pattern TOML_MOD = Pattern.compile(
+            "(?m)^\\s*\\[\\[mods\\]\\]\\s*([\\s\\S]*?)(?=^\\s*\\[|\\z)");
+
+    /** Matches only declared mod IDs in enabled JARs, never filenames or dependency IDs. */
+    static Set<String> conflictingModIds(File modsDir, Set<String> knownIds) {
+        Set<String> found = new HashSet<>();
+        File[] jars = modsDir.listFiles(file -> file.isFile()
+                && file.getName().toLowerCase(Locale.ROOT).endsWith(".jar"));
+        if (jars == null) return found;
+
+        for (File jar : jars) {
+            try (ZipFile zip = new ZipFile(jar)) {
+                for (String name : METADATA_ENTRIES) {
+                    ZipEntry entry = zip.getEntry(name);
+                    if (entry == null) continue;
+                    String metadata = readEntry(zip, entry);
+                    if (metadata == null) continue;
+                    if (name.endsWith(".json")) {
+                        var json = com.google.gson.JsonParser.parseString(metadata);
+                        if (!json.isJsonObject()) continue;
+                        var id = json.getAsJsonObject().get("id");
+                        if (id != null && id.isJsonPrimitive() && id.getAsJsonPrimitive().isString()
+                                && knownIds.contains(id.getAsString())) {
+                            found.add(id.getAsString());
+                        }
+                    } else {
+                        Matcher mods = TOML_MOD.matcher(metadata);
+                        while (mods.find()) {
+                            String id = firstGroup(mods.group(1), "(?m)^\\s*modId\\s*=\\s*[\"']([^\"']+)[\"']");
+                            if (knownIds.contains(id)) found.add(id);
+                        }
+                    }
+                }
+            } catch (java.io.IOException | com.google.gson.JsonParseException ignored) {
+                // The mod loader handles invalid jars.
             }
         }
         return found;

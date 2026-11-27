@@ -77,15 +77,6 @@ public final class WorldLyricsBridge {
     static volatile WorldLyricsSettings currentSettings;
 
     /**
-     * 「更激进的适配」是否把本帧绘制推迟到 HUD 阶段（光影包激活且开关开着）。
-     * {@code LevelRendererLateStageMixin} 据此让位 —— 光影后处理会把世界阶段的
-     * 绘制二次加工，歌词必须等 Oculus 合成完再画（见 {@link #hudPhaseDraw}）。
-     */
-    public static boolean defersToHudPhase() {
-        return ShaderPackProbe.isActive() && HudConfig.worldLyricsHudDraw;
-    }
-
-    /**
      * 世界渲染结束入口 —— <b>1.20.1 的唯一调用者是 {@code LevelRendererLateStageMixin}</b>。
      *
      * <p>为什么不再挂加载器事件：Fabric 的 {@code WorldRenderEvents.LAST} 注入在
@@ -133,6 +124,10 @@ public final class WorldLyricsBridge {
             // 0. 光影包探测（帧头一次，本帧内渲染层读缓存值）：
             //    光影包激活时 WorldBillboard 改走信标全亮程序（ShaderPackProbe 类注释）
             ShaderPackProbe.refresh();
+            if (ShaderPackProbe.isActive()) {
+                hudCameraValid = false;
+                return;
+            }
             // 「更激进的适配」关闭沿检测：HUD 阶段的连续失败可能把渲染器锁死，
             // 用户关掉开关回到世界阶段路径时立即恢复（不用重启游戏）。
             if (tracedHudDraw && !HudConfig.worldLyricsHudDraw) {
@@ -268,6 +263,10 @@ public final class WorldLyricsBridge {
         }
         try {
             Minecraft mc = Minecraft.getInstance();
+            if (mc != null && mc.screen != null) {
+                hudCameraValid = false;
+                return;
+            }
             if (mc == null || mc.player == null || mc.level == null) return;
 
             org.joml.Matrix4f previousProjection = new org.joml.Matrix4f(RenderSystem.getProjectionMatrix());
